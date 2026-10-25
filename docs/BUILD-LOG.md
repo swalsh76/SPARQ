@@ -51,3 +51,15 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 - The test frame helper evaluated a constant rule as one value; a series missing from the fit part made a filter null rather than false. Fixed (the rule is null-safe).
 - On the analytics node the login shell is zsh, which does not split an unquoted variable into arguments, so the first run was refused at the argument check before anything was read; the run now goes through a bash script.
 
+### S1.1b R4 refined on old data, the forward test registered (2026-10-25, registered; the verdict waits for the window)
+
+**Built.** Rules gain quiet bounds (`quiet_lo_s`, `quiet_hi_s`), left out of the digest while unset so that S1.1's locked digest still reproduces (a test checks it against the value recorded on the analytics node); `evaluate_rule` takes the settings and the tail, so a scan is not held to the twelve-rule limit of a registration; `scan.py` (the declared grid, its variants and the choosing rule); `forward.py` (the frozen activity file and its hash, the forward registration, and a forward study whose single part is reachable only through its ledger); the commands `rules-scan`, `forward-register` and `forward-verdict`; decision D10 in the plan; the grid `docs/research/r4-grid.json`.
+
+**Verified (local).** 13 forward tests; the full suite 1,642 passed and 197 skipped; ruff and mypy clean; the new modules fully covered. Planted bugs: 13, of which 3 survived the first run (a scan reading every part, the activity frozen from the validate part, the forward command's own split check); a test was added for each, and all 13 are now caught.
+
+**Verified (analytics node, real data).** The 36-variant scan on the fit and validate parts (the test part not read): the fixed rule chose **quiet 60 seconds to 1 hour, activity 1,000 to 100,000, yes price 20 to 80 cents** (fit +0.30 cents, lower -2.48, 4,420 events; validate +11.99, -4.47, 1,004 events). The frozen activity file hash `edf3189cf82a...`; the forward registration digest `0af9ea44be7f...` (one rule, tail 0.025), with no ledger yet: nothing is opened. **The scan's main finding:** on the fit part (7 August to 28 September) R4 is -0.86 cents and only two of the 36 variants are positive, so the human-paced maker's edge comes only from the later periods (late September on): a change of season or chance. S1.1's candidate list had been chosen from the validate part alone and did not show this. Pre-registration note: `docs/research/forward-test.md`.
+
+**Problems and fixes.** In the first version of the scan test, two variants selected the same trades (the thin series' activity, 84, sits below both lower edges), so the simplest correctly won; the test now uses edges that differ. The scan of 72 scorings at 10,000 resamples takes over ten minutes on the analytics node.
+
+**Still to do in S1.1b.** After the window closes on 2026-11-23 and its markets settle (allow a few days): re-run KAPS's downloader for the forward days (trades, then markets; owner approved, D10), then `s11b_run.sh verdict` once, and the write-up.
+

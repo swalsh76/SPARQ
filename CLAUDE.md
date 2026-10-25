@@ -15,7 +15,9 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-25 (S1.1 done: NO-GO; S1 stopped for a rethink, waiting for the owner).*
+*Last updated 2026-10-25 (S1.1 NO-GO; S1.1b registered, the forward verdict waits for the window to close on 2026-11-23).*
+
+- **S1.1b (branch `s1/1b-forward`, stacked on `s1/1-middle-tier`; owner approved 2026-10-25, D10):** R4 refined by the 36-variant scan on the fit and validate parts; the chosen rule (quiet 60 s to 1 h, activity 1k to 100k, price 20 to 80 cents; `docs/research/forward-rule.json`) is **registered** (digest `0af9ea44be7fa121f36db9d5d52629e2768da910532eea390a06c9a9b4859b01`, frozen activity hash `edf3189cf82aa9f340aaf3b9798c7a0465c17a643e64b5b9ab36e1b9b6e7abf8`); nothing is opened. The scan showed R4 negative on the fit part (-0.86): the edge appears only from late September. **To finish (from about 2026-11-26):** on the analytics node re-run KAPS's downloader for the forward days only (`run-download.sh` resumes newest-first; stop once 2026-10-26 to 2026-11-22 are complete, then the `markets` step), then `bash /Volumes/External2TB/sparq/s11b_run.sh verdict` once (it opens the window through `forward-ledger.json` in `sparq/study/s1.1b`), and the write-up. GO resumes S1 at S1.2; NO-GO stops the maker direction.
 
 - **S1.1 done, NO-GO (branch `s1/1-middle-tier`, PR open):** the four approved rules on the test part (digest `95eec43a8d2d…`, opened once 2026-10-25 20:49 UTC): R1 -0.09 cents (lower -2.00), R2 +2.71 (-3.66), R4 +2.51 (-1.30), R5 -1.29 (-3.98). Write-up `docs/research/middle-tier.md`. Under D3 S1 stops: S1.2 to S1.4 are not started. **Next: the owner's rethink** (options in the write-up: stop; a forward test of the human-paced maker on trades recorded after 22 October; another strand from PLAN §9). The rules ledger on the analytics node locks this test part.
 

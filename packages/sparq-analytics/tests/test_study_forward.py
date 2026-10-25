@@ -115,6 +115,8 @@ def test_a_grid_must_contain_its_base_and_state_its_quiet_window() -> None:
             busy=((100, 1e5),),
             price=((0, 1),),
         )
+    with pytest.raises(ValueError, match="at least one value"):
+        Grid(base, quiet=(), busy=((100, 100_000),), price=((0, 1_000_001),))
 
 
 def row(name: str, changes: int, fit: tuple[float, float], validate_point: float) -> ScanRow:

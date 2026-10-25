@@ -1,0 +1,18 @@
+{
+  "rules": [
+    {
+      "name": "quiet 60-3600s, busy 1000-100000, price 20-80c",
+      "side": "maker",
+      "busy_lo": 1000.0,
+      "busy_hi": 100000.0,
+      "pace": "any",
+      "category": null,
+      "ny_hours": null,
+      "price_lo_e6": 200000,
+      "price_hi_e6": 800000,
+      "exploratory": false,
+      "quiet_lo_s": 60.0,
+      "quiet_hi_s": 3600.0
+    }
+  ]
+}

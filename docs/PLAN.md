@@ -89,7 +89,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | S1.1 | The pre-registered middle-tier test: the rules from D2 coded on KAPS's study harness, the rule list for the owner's approval, the test part opened once, the write-up in `docs/research/` | D3 | **done: NO-GO** (BUILD-LOG S1.1, `docs/research/middle-tier.md`) |
 | S1.2 | The shadow quoter: the order-book feed for chosen markets, fair value v0, simulated quotes and strict fills, markouts, a 10-day run | D5 | not started (S1.1 did not pass) |
 | S1.3 | The write path, risk layer and kill switch on demo, with the key custody design | Proven on demo: every route, every limit refusal, the kill switch, an unclear-order look-up | not started |
-| S1.1b | R4 refined on the fit and validate parts (D10), the chosen rule pre-registered, the forward days downloaded after the window closes, the forward test opened once, the write-up | D10 | in progress |
+| S1.1b | R4 refined on the fit and validate parts (D10), the chosen rule pre-registered, the forward days downloaded after the window closes, the forward test opened once, the write-up | D10 | **registered 2026-10-25** (digest `0af9ea44be7f...`, `docs/research/forward-test.md`); the verdict after the window closes on 2026-11-23 |
 | S1.4 | The tiny live pilot | D8 | not started |
 
 ## 7. Risks
