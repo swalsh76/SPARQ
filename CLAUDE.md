@@ -15,7 +15,9 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-25 (S1.1 NO-GO; S1.1b registered, the forward verdict waits for the window to close on 2026-11-23).*
+*Last updated 2026-10-25 (S1.1 NO-GO; S1.1b registered, the forward verdict waits for the window to close on 2026-11-23; S1.2a started in parallel, D11).*
+
+- **S1.2a, what the live book shows (branch `s1/2a-live-book`; owner approved 2026-10-25, D11):** read-only measurement over the ingest's data in KAPS's production database (top of book with sizes, trades, lifecycle; recording since 2026-10-24 21:13 UTC). **Access (owner chose the production database):** the main cluster already accepts the analytics node over TLS with `scram-sha-256`; the missing piece is a read-only role `sparq_reader`, created by the owner on the server host (privileged; the agent account has no `sudo`), with its password in `~/.pgpass` on the analytics node and the server's certificate pinned there. The role is outside `kaps-admin install`'s management. **Guard (D11):** no edge to settlement on forward-test events (opened from 2026-10-26, closing before 2026-11-23) until S1.1b's verdict; book measures and markouts up to 10 minutes are allowed. S1.2 follows only if the quote-refresh check does not show bots already requoting after every trade.
 
 - **S1.1b (branch `s1/1b-forward`, stacked on `s1/1-middle-tier`; owner approved 2026-10-25, D10):** R4 refined by the 36-variant scan on the fit and validate parts; the chosen rule (quiet 60 s to 1 h, activity 1k to 100k, price 20 to 80 cents; `docs/research/forward-rule.json`) is **registered** (digest `0af9ea44be7fa121f36db9d5d52629e2768da910532eea390a06c9a9b4859b01`, frozen activity hash `edf3189cf82aa9f340aaf3b9798c7a0465c17a643e64b5b9ab36e1b9b6e7abf8`); nothing is opened. The scan showed R4 negative on the fit part (-0.86): the edge appears only from late September. **To finish (from about 2026-11-26):** on the analytics node re-run KAPS's downloader for the forward days only (`run-download.sh` resumes newest-first; stop once 2026-10-26 to 2026-11-22 are complete, then the `markets` step), then `bash /Volumes/External2TB/sparq/s11b_run.sh verdict` once (it opens the window through `forward-ledger.json` in `sparq/study/s1.1b`), and the write-up. GO resumes S1 at S1.2; NO-GO stops the maker direction.
 
@@ -49,7 +51,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
   - **One user, the owner** (PLAN decision 38). No named users, roles, per-user tokens or per-user settings; the web/API is protected by one owner credential. Kalshi's Developer Agreement limits API use to the member's own trading, and a single user keeps SPARQ within that.
   - The web/API port is the only port exposed (to the owner's browser). PostgreSQL accepts connections only from localhost and the analytics node, using `scram-sha-256` and least-privilege roles.
   - Self-signed TLS with trust-on-first-use pinning.
-- **Storage:** a governed budget of about **500 GB** on the server host.
+- **Storage:** a governed budget of about **700 GB** on the server host (raised from 500 GB by the owner on 2026-10-25, after the first compression measurement; ASSESSMENT.md "Storage budget").
 - **Deployable without the repository.**
   - Each production role installs, upgrades and recovers from its release bundle and the guides in `docs/deploy/` alone (KAPS PLAN.md §6.1).
   - Backups go to the NAS share named in the server's local configuration (`backup.target`); its real path is never written in the repository.

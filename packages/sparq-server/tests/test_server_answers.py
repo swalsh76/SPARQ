@@ -42,7 +42,7 @@ def test_the_example_answer_file_in_the_guide_is_valid() -> None:
 def test_a_minimal_file_gets_the_documented_defaults() -> None:
     host = parse_answers(MINIMAL).database_host
     assert host is not None
-    assert (host.storage.budget_gb, host.postgres.port, host.web.port) == (500, 5432, 443)
+    assert (host.storage.budget_gb, host.postgres.port, host.web.port) == (700, 5432, 443)
     assert host.backup.retention_full_weeks == 5
     assert host.postgres.allowed_clients == []
 

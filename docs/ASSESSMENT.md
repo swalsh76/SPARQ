@@ -59,7 +59,7 @@ Figures marked *KalTerm3* were measured by the earlier .NET line. They are kept 
 - About **200,000 markets** had a ticker update or a trade in a 24-hour window.
 - Raw ticker data in SQL Server's ordered columnstore: about **2.2 GB a day**.
 
-### Storage budget on the server host (1 TB drive; keep a governed budget of about 500 GB)
+### Storage budget on the server host (1 TB drive; a governed budget of about 700 GB, raised from 500 GB on 2026-10-25)
 
 | Item | Estimate | Note |
 |---|---|---|
@@ -70,6 +70,8 @@ Figures marked *KalTerm3* were measured by the earlier .NET line. They are kept 
 | Order-book deltas | About 2 GB a day per 50 busy markets (KalshiTerm2) | Not affordable for every market. See below. |
 
 At about 3 GB a day, 500 GB keeps about **5 months** of raw ticker data in the database, plus the history and candles for good. Older raw days are not lost: each day is written to a Parquet cold archive on the NAS share and verified before the database drops it, and the archive keeps 3 years (PLAN.md §6.3). Retention is set from the K1b measurement.
+
+**Measured 2026-10-25 (the ingest's first closed chunks, 2.8 hours of 24 October, compressed by hand):** the ticker compressed 10.5 times (2,962 MB to 282 MB for 11.65 M rows over 87,805 markets, about 24 bytes a row) and trades 6.6 times (625 MB to 95 MB for 2.13 M rows, about 45 bytes a row). These are floors: each market had about 133 rows to compress together, against about 1,000 in a full day. Volumes are far above the estimates above: about 89 M ticker rows and 14 M non-combo trades a day (KalTerm3's 25,000 and 4,000 a minute came from its first minutes and caught about half of that hour's trades; Kalshi's trade count also grew about 65% from mid-August to mid-October). Uncompressed, a day takes about 23.5 GB with indexes; compressed, about 2.8 GB. The drive is 937 GB with 847 GB free, so the owner raised the budget to 700 GB, which lasts about 7.5 months at today's volume and about 4.5 to 5 months if the growth continues. The budget is not enforced yet (the governor was never built): until a retention rule exists, the limits that act are the watchdog's alert at 80% of the drive and the ingest's stop at 90%. The full-day ratio is read after the policy compresses 25 October's chunk (27 October, 08:48 UTC).
 
 ### Order-book data
 

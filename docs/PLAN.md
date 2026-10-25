@@ -63,7 +63,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | # | Milestone | Gate | Status |
 |---|---|---|---|
 | **S0** | **The fork:** the repository, the renamed packages, the founding documents, CI in the new repository, one live check | CI green on Ubuntu and macOS and the database job; `test_live_public` passes; the owner merges | done (BUILD-LOG S0) |
-| **S1** | **Evidence for the quoter** (§6.1): S1.1 the pre-registered middle-tier test; S1.2 the shadow quoter; S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | Each slice's gate in §6.1; a slice starts only when the one before it passes | approved 2026-10-25; **S1.1 NO-GO**, S1 stopped for a rethink |
+| **S1** | **Evidence for the quoter** (§6.1): S1.1 the pre-registered middle-tier test; S1.2 the shadow quoter; S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | Each slice's gate in §6.1; a slice starts only when the one before it passes | approved 2026-10-25; **S1.1 NO-GO**; S1.1b's forward test registered; S1.2a under way in parallel (D11) |
 
 ### 6.1 S1 Evidence for the quoter: decisions and slices (approved 2026-10-25)
 
@@ -81,13 +81,15 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | D8 | **The pilot (S1.4) is tiny and bounded**, and needs the owner's go-ahead before it starts: at most 10 markets, a fixed small size, a total exposure cap and a daily loss stop (amounts set in S1.4's plan with the owner), for 10 trading days. Within those bounds the owner's go-ahead covers the pilot's quotes as a whole; anything outside them is refused by the risk layer. The pilot's gate: profit and markouts positive after fees, and the simulator's fills match the real ones closely enough to trust it. |
 | D9 | **Kalshi only in S1.** Polymarket US waits for a passed S1. |
 | D10 | **D3 amended (owner, 2026-10-25): one forward test after S1.1's NO-GO.** R4 (the human-paced maker) is refined on the fit and validate parts only, from a fixed grid of 36 variants (quiet window x activity range x price band) by a choosing rule fixed in advance, and the one chosen rule is tested **forward** on events that open on or after 2026-10-26 and close before 2026-11-23, at a one-sided tail of 0.025 over at least 300 events, with series activity frozen from the original fit part. GO resumes S1 at S1.2; NO-GO stops the maker direction. The forward days are added by re-running KAPS's downloader for them only. |
+| D11 | **D4 and D10 amended (owner, 2026-10-25): live-data work runs in parallel with the forward test.** S1.2a reads what KAPS's ingest records (top of book with sizes, trades, lifecycle) from the production database through a read-only role, from the analytics node over TLS. **Guard:** until S1.1b's verdict, no live-data work computes an edge to settlement on events the forward test scores (opened on or after 2026-10-26 and closing before 2026-11-23); book measures and markouts of 10 minutes or less are allowed anywhere. The forward test is not changed, stopped early or re-run because of anything the live data shows. **S1.2** (the shadow quoter) follows S1.2a only if S1.2a's quote-refresh check does not show bots already requoting after every trade. **S1.4** (real money) needs both a passed S1.2 and a passed forward test. |
 
 **Slices.**
 
 | Slice | What it builds | Gate | Status |
 |---|---|---|---|
 | S1.1 | The pre-registered middle-tier test: the rules from D2 coded on KAPS's study harness, the rule list for the owner's approval, the test part opened once, the write-up in `docs/research/` | D3 | **done: NO-GO** (BUILD-LOG S1.1, `docs/research/middle-tier.md`) |
-| S1.2 | The shadow quoter: the order-book feed for chosen markets, fair value v0, simulated quotes and strict fills, markouts, a 10-day run | D5 | not started (S1.1 did not pass) |
+| S1.2a | What the live book shows (D11): read-only queries over the ingest's data in the forward rule's markets and the busy ones for comparison: quoted spreads and top sizes, a queue-aware fill rule against S1.1's strict rule, markouts at 5 s, 1 min and 10 min by taker side, and how fast quotes refresh after a trade | Decides nothing alone; fixes S1.2's fill model and markout settings, and stops before S1.2 if bots already requote after every trade | **in progress** (branch `s1/2a-live-book`) |
+| S1.2 | The shadow quoter: the order-book feed for chosen markets, fair value v0, simulated quotes and strict fills, markouts, a 10-day run | D5 | not started (after S1.2a, D11) |
 | S1.3 | The write path, risk layer and kill switch on demo, with the key custody design | Proven on demo: every route, every limit refusal, the kill switch, an unclear-order look-up | not started |
 | S1.1b | R4 refined on the fit and validate parts (D10), the chosen rule pre-registered, the forward days downloaded after the window closes, the forward test opened once, the write-up | D10 | **registered 2026-10-25** (digest `0af9ea44be7f...`, `docs/research/forward-test.md`); the verdict after the window closes on 2026-11-23 |
 | S1.4 | The tiny live pilot | D8 | not started |
