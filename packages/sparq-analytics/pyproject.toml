@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sparq-analytics"
+version = "0.0.0"
+description = "Features, models, recommendations and the trading service (runs on the analytics node)"
+license = "MIT"
+license-files = ["../../LICENSE"]
+requires-python = ">=3.12"
+dependencies = ["sparq-core", "numpy>=2.1", "polars>=1.30", "pyarrow>=21", "tzdata; sys_platform == 'win32'"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sparq_analytics"]
+
+[tool.uv.sources]
+sparq-core = { workspace = true }

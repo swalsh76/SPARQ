@@ -1,0 +1,42 @@
+# sparq-admin answer file for the database host. It holds no secrets: keys and the share credential
+# are set with `sparq-admin secrets set`. Addresses here are documentation addresses (RFC 5737);
+# replace them with the real ones in your own copy, which is never committed.
+role = "database_host"
+
+[database_host.backup]
+target = "/mnt/sparq-backup"    # where the share is mounted; the marker file must be inside it
+retention_full_weeks = 5      # full backups kept, one a week
+encrypt = true               # encrypt the repository on the share; keep the passphrase offline
+
+[database_host.storage]
+budget_gb = 500
+
+[database_host.postgres]
+port = 5432
+allowed_clients = ["192.0.2.20"]    # the analytics node; PostgreSQL also accepts localhost
+
+[database_host.tls]
+mode = "new"                         # or "restore" with restore_from = "/path/to/certificate"
+
+[database_host.web]
+port = 443
+
+[database_host.recovery]
+from_backup = false                  # true, with backup_set = "<name>", to recover from a backup
+
+[database_host.test_cluster]
+enabled = false                      # true: a second cluster on its own port, for the database tests
+port = 5433
+allowed_clients = []                 # the workstation's address, when enabled
+
+[database_host.ingest]
+enabled = true                       # the ingest service (SERVER.md step 13); false leaves it out
+checkout = "/var/lib/sparq/src"       # the checkout of step 9, which the program is built from
+uv = "/var/lib/sparq/.local/bin/uv"   # the uv program that builds it
+disk_stop_percent = 90               # the service stops, and is not restarted, at this disk use
+
+[database_host.alerts]
+enabled = true                       # the ingest watchdog (SERVER.md step 14); needs the ingest enabled
+server = "https://ntfy.sh"           # the ntfy server; the topic is stored as a credential, not here
+silence_seconds = 600                # alert when no frame has arrived for this long
+disk_warn_percent = 80               # alert when the data drive reaches this use

@@ -1,0 +1,36 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# research output and local data: never commit
+*.parquet
+*.duckdb
+notebooks/.ipynb_checkpoints/
+data/
+models/
+
+# secrets and local config: never commit
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+secrets/
+*.bak
+
+# editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
