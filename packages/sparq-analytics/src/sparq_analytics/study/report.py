@@ -213,6 +213,34 @@ def rules_section(verdict: dict[str, Any], part: str) -> str:
     )
 
 
+def scan_section(rows: list[dict[str, Any]], chosen: str | None) -> str:
+    """S1.1b's scan: every variant on the fit and validate parts, best fit lower bound first."""
+    ordered = sorted(rows, key=lambda row: -row["fit"]["lower_e6"])
+    body = []
+    for row in ordered:
+        eligible = row["fit"]["point_e6"] > 0 and (
+            row["validate"]["point_e6"] >= 0.5 * row["fit"]["point_e6"]
+        )
+        mark = "**chosen**" if row["rule"]["name"] == chosen else ("eligible" if eligible else "")
+        body.append(
+            [
+                row["rule"]["name"],
+                row["changes"],
+                f"{row['fit']['events']:,}",
+                with_bound(row["fit"]),
+                f"{row['validate']['events']:,}",
+                with_bound(row["validate"]),
+                mark,
+            ]
+        )
+    headers = ["Variant", "Changes", "Fit events", "Fit", "Validate events", "Validate", ""]
+    verdict = f"chosen: {chosen}" if chosen else "no variant is eligible"
+    return (
+        f"**Scan of {len(rows)} variants ({verdict}).** Cents a contract after fees, lower bound "
+        "at a one-sided 0.025 in brackets.\n\n" + table(headers, body)
+    )
+
+
 def render(folder: Path) -> str:
     """Every section whose file exists, as one markdown text."""
     parts: list[str] = []
@@ -251,4 +279,10 @@ def render(folder: Path) -> str:
         rules = _load(folder, name)
         if rules:
             parts += [f"## Rules on the {part} part", rules_section(rules["verdict"], part)]
+    scan = _load(folder, "rules-scan.json")
+    if scan:
+        parts += ["## The scan (fit and validate)", scan_section(scan["rows"], scan["chosen"])]
+    forward = _load(folder, "forward-verdict.json")
+    if forward:
+        parts += ["## The forward test", rules_section(forward["verdict"], "forward")]
     return "\n\n".join(parts) + "\n"

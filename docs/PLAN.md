@@ -80,6 +80,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | D7 | **The write path (S1.3) is built and proven on demo only:** a fixed list of order routes (create, cancel, amend, batch, and reads of orders, fills and positions), post-only quotes, an expiry on every quote, look-up by `client_order_id` instead of a resend, limits per market, event, category and day enforced before an order leaves, and a kill switch that cancels everything. It first reads `/account/limits` and `/account/endpoint_costs` (GET only). |
 | D8 | **The pilot (S1.4) is tiny and bounded**, and needs the owner's go-ahead before it starts: at most 10 markets, a fixed small size, a total exposure cap and a daily loss stop (amounts set in S1.4's plan with the owner), for 10 trading days. Within those bounds the owner's go-ahead covers the pilot's quotes as a whole; anything outside them is refused by the risk layer. The pilot's gate: profit and markouts positive after fees, and the simulator's fills match the real ones closely enough to trust it. |
 | D9 | **Kalshi only in S1.** Polymarket US waits for a passed S1. |
+| D10 | **D3 amended (owner, 2026-10-25): one forward test after S1.1's NO-GO.** R4 (the human-paced maker) is refined on the fit and validate parts only, from a fixed grid of 36 variants (quiet window x activity range x price band) by a choosing rule fixed in advance, and the one chosen rule is tested **forward** on events that open on or after 2026-10-26 and close before 2026-11-23, at a one-sided tail of 0.025 over at least 300 events, with series activity frozen from the original fit part. GO resumes S1 at S1.2; NO-GO stops the maker direction. The forward days are added by re-running KAPS's downloader for them only. |
 
 **Slices.**
 
@@ -88,6 +89,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | S1.1 | The pre-registered middle-tier test: the rules from D2 coded on KAPS's study harness, the rule list for the owner's approval, the test part opened once, the write-up in `docs/research/` | D3 | **done: NO-GO** (BUILD-LOG S1.1, `docs/research/middle-tier.md`) |
 | S1.2 | The shadow quoter: the order-book feed for chosen markets, fair value v0, simulated quotes and strict fills, markouts, a 10-day run | D5 | not started (S1.1 did not pass) |
 | S1.3 | The write path, risk layer and kill switch on demo, with the key custody design | Proven on demo: every route, every limit refusal, the kill switch, an unclear-order look-up | not started |
+| S1.1b | R4 refined on the fit and validate parts (D10), the chosen rule pre-registered, the forward days downloaded after the window closes, the forward test opened once, the write-up | D10 | in progress |
 | S1.4 | The tiny live pilot | D8 | not started |
 
 ## 7. Risks
