@@ -15,7 +15,9 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-25 (S0 done; S1 proposed).*
+*Last updated 2026-10-25 (S1 approved; S1.1 in progress: code done, validate reading done, rule list waiting for the owner).*
+
+- **S1.1 (branch `s1/1-middle-tier`, owner approved the plan 2026-10-25):** the rules code, stratified bootstrap and commands are built (21 rules tests, 18 planted bugs caught, the bootstrap refactor reproduces K0.5 exactly). On the analytics node SPARQ's clone is `~/sparq/check`; outputs and the rules ledger go to the external drive's `sparq/study` folder (KAPS's study folder is never written). The **validate reading** of the seven candidates (`rules-candidates.json` there) is done: R1 +2.34 (lower -2.29), R2 +5.79 (-1.61), R3 +2.35 (-2.31), R4 +3.91 (-2.26), R5 +4.66 (-1.82), R6 short of events (127), R7 +2.22 (-2.73), at a tail of 0.00357. **Next: the owner approves the final rule list; then `rules-register`, `rules-verdict --open-test` once, the write-up.** The test part is not opened yet.
 
 - **S1 proposal (branch `s1/proposal`):** awaiting the owner. Open points for the owner inside it: the S1.1 rule list (approved before the test part is read), a separate read-only key on the analytics node for S1.2, the trading key's custody (S1.3), and the pilot's caps (S1.4). KAPS's hourly download check was removed (KAPS frozen, download paused).
 
