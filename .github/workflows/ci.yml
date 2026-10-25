@@ -86,6 +86,11 @@ jobs:
 
       - name: Start a test cluster with TimescaleDB loaded
         run: |
+          # the package may create a default cluster when it installs (it began doing so on the
+          # runner on 2026-10-25); ours is created fresh with data checksums, so drop that one first
+          if pg_lsclusters -h | awk '$1=="18" && $2=="main"' | grep -q .; then
+            sudo pg_dropcluster --stop 18 main
+          fi
           sudo pg_createcluster 18 main -- --data-checksums
           sudo pg_conftool 18 main set shared_preload_libraries timescaledb
           sudo pg_ctlcluster 18 main start
