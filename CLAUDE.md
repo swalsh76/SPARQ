@@ -15,7 +15,9 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-25 (S0 done; S1 proposed).*
+*Last updated 2026-10-25 (S1.1 done: NO-GO; S1 stopped for a rethink, waiting for the owner).*
+
+- **S1.1 done, NO-GO (branch `s1/1-middle-tier`, PR open):** the four approved rules on the test part (digest `95eec43a8d2d…`, opened once 2026-10-25 20:49 UTC): R1 -0.09 cents (lower -2.00), R2 +2.71 (-3.66), R4 +2.51 (-1.30), R5 -1.29 (-3.98). Write-up `docs/research/middle-tier.md`. Under D3 S1 stops: S1.2 to S1.4 are not started. **Next: the owner's rethink** (options in the write-up: stop; a forward test of the human-paced maker on trades recorded after 22 October; another strand from PLAN §9). The rules ledger on the analytics node locks this test part.
 
 - **S1 proposal (branch `s1/proposal`):** awaiting the owner. Open points for the owner inside it: the S1.1 rule list (approved before the test part is read), a separate read-only key on the analytics node for S1.2, the trading key's custody (S1.3), and the pilot's caps (S1.4). KAPS's hourly download check was removed (KAPS frozen, download paused).
 

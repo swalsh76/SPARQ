@@ -11,6 +11,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 import polars as pl
 
@@ -112,6 +113,19 @@ class Prereg:
         """
         return self.config.family_alpha / sum(1 for s in self.segments if not s.exploratory)
 
+    @property
+    def size(self) -> int:
+        return len(self.segments)
+
+
+class Registration(Protocol):
+    """What the ledger needs from a pre-registration: its digest and how many entries it names."""
+
+    def digest(self) -> str: ...
+
+    @property
+    def size(self) -> int: ...
+
 
 class PreregLedger:
     """The file that remembers which pre-registration the test was first opened under."""
@@ -119,7 +133,7 @@ class PreregLedger:
     def __init__(self, path: Path) -> None:
         self.path = path
 
-    def open_test(self, prereg: Prereg) -> None:
+    def open_test(self, prereg: Registration) -> None:
         digest = prereg.digest()
         if self.path.exists():
             recorded = json.loads(self.path.read_text(encoding="utf-8"))["digest"]
@@ -132,7 +146,7 @@ class PreregLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "digest": digest,
-            "segments": len(prereg.segments),
+            "segments": prereg.size,
             "opened_at": datetime.now(UTC).isoformat(),
         }
         self.path.write_text(json.dumps(record), encoding="utf-8")

@@ -172,6 +172,47 @@ def verdict_section(verdict: dict[str, Any]) -> str:
     )
 
 
+def rules_section(verdict: dict[str, Any], part: str) -> str:
+    """The rules' table (S1.1): what decides each rule, with the other measures for context."""
+    rows = []
+    for result in verdict["results"]:
+        rule, est = result["rule"], result["estimates"]
+        decides = est["decides"]
+        verdict_cell = "yes" if result["go"] else "no"
+        if result["short_of_events"]:
+            verdict_cell += " (short of events)"
+        if rule["exploratory"]:
+            verdict_cell += " (exploratory, does not decide)"
+        rows.append(
+            [
+                rule["name"],
+                rule["side"],
+                f"{decides['events']:,}",
+                f"{result['trades']:,}",
+                with_bound(decides),
+                with_bound(est["maker"]),
+                cents(est["maker_optimistic"]["point_e6"]),
+                with_bound(est["taker"]),
+                verdict_cell,
+            ]
+        )
+    headers = [
+        "Rule",
+        "Scored for",
+        "Events",
+        "Trades",
+        "Decides, cents (lower bound)",
+        "Maker strict",
+        "Maker optimistic",
+        "Taker",
+        "GO",
+    ]
+    return (
+        f"**Rules on the {part} part: {verdict['outcome']}** (each rule at a one-sided tail of "
+        f"{verdict['tail']:.5f}).\n\n" + table(headers, rows)
+    )
+
+
 def render(folder: Path) -> str:
     """Every section whose file exists, as one markdown text."""
     parts: list[str] = []
@@ -206,4 +247,8 @@ def render(folder: Path) -> str:
             "## Verdict on the test part",
             verdict_section(verdict["verdict"]),
         ]
+    for name, part in (("rules-validate.json", "validate"), ("rules-verdict.json", "test")):
+        rules = _load(folder, name)
+        if rules:
+            parts += [f"## Rules on the {part} part", rules_section(rules["verdict"], part)]
     return "\n\n".join(parts) + "\n"
