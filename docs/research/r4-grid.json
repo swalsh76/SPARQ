@@ -1,0 +1,6 @@
+{
+ "base": {"name": "R4 100 to 100k, human pace, maker", "side": "maker", "busy_lo": 100, "busy_hi": 100000, "quiet_lo_s": 1, "quiet_hi_s": 3600, "reason": "S1.1's R4 written with explicit quiet bounds (1 second to 1 hour, the same trades as pace human)"},
+ "quiet": [[1, 3600], [1, 600], [10, 3600], [60, 3600]],
+ "busy": [[100, 100000], [1000, 100000], [100, 10000]],
+ "price": [[0, 1000001], [100000, 900000], [200000, 800000]]
+}

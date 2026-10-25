@@ -18,8 +18,10 @@ from sparq_analytics.study.rules import (
     RuleVerdict,
     add_rule_features,
     busy_table,
+    evaluate_rule,
     evaluate_rules,
 )
+from sparq_analytics.study.scan import Grid, ScanRow, variants
 from sparq_analytics.study.segments import Prereg, PreregLedger, Registration, add_bands
 from sparq_analytics.study.split import assign_parts
 from sparq_analytics.study.verdict import Verdict, evaluate
@@ -62,6 +64,19 @@ class Study:
     def rules_on_validate(self, prereg: RulePrereg) -> RuleVerdict:
         """The rules scored on the validate part, to choose them; nothing is locked."""
         return evaluate_rules(add_rule_features(self.validate, self.busy()), prereg)
+
+    def scan(self, grid: Grid) -> tuple[ScanRow, ...]:
+        """Every variant of ``grid`` on the fit and the validate part, at the nominal tail (S1.1b);
+        the test part is not read."""
+        fit = add_rule_features(self.fit, self.busy())
+        validate = add_rule_features(self.validate, self.busy())
+        tail = self.config.family_alpha
+        rows = []
+        for rule, changes in variants(grid):
+            on_fit = evaluate_rule(fit, rule, self.config, tail).estimates["decides"]
+            on_validate = evaluate_rule(validate, rule, self.config, tail).estimates["decides"]
+            rows.append(ScanRow(rule, changes, on_fit, on_validate))
+        return tuple(rows)
 
     def rules_verdict(self, prereg: RulePrereg) -> RuleVerdict:
         """The rules scored on the test part, after they are locked in the ledger."""

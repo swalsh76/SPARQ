@@ -12,6 +12,10 @@
     python -m sparq_analytics.study rules-explore  --rules FILE (all settings, as for register)
     python -m sparq_analytics.study rules-register --rules FILE (all settings)
     python -m sparq_analytics.study rules-verdict  --rules FILE (all settings) --open-test
+    python -m sparq_analytics.study rules-scan     --grid FILE (all settings, fit and validate only)
+    python -m sparq_analytics.study forward-register --rules FILE --busy FILE (window, shares)
+    python -m sparq_analytics.study forward-verdict  --rules FILE --busy FILE (window, shares)
+        --open-test
 
 Run it on the analytics node against the downloaded history (``--data-dir`` or ``SPARQ_DATA_DIR``;
 the study's outputs go in ``<data-dir>/study``, never in git). ``snapshot`` and ``reference`` read
@@ -39,9 +43,11 @@ from sparq_analytics.study.calibration import calibration_table
 from sparq_analytics.study.cells import cell_table
 from sparq_analytics.study.config import StudyConfig
 from sparq_analytics.study.dataset import StudyDataError, exclusion_counts, tag_trades
+from sparq_analytics.study.forward import ForwardPrereg, ForwardStudy, busy_digest, write_busy
 from sparq_analytics.study.reference import measure_reference
 from sparq_analytics.study.rules import RulePrereg, rules_from_json
 from sparq_analytics.study.sample import DEFAULT_CEILING, plan_shares
+from sparq_analytics.study.scan import choose, grid_from_json
 from sparq_analytics.study.segments import Prereg, PreregistrationError, Segment
 from sparq_analytics.study.session import Study
 from sparq_analytics.study.snapshot import build_snapshot, category_stats
@@ -57,6 +63,9 @@ COMMANDS = (
     "rules-explore",
     "rules-register",
     "rules-verdict",
+    "rules-scan",
+    "forward-register",
+    "forward-verdict",
 )
 
 
@@ -95,6 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--open-test", action="store_true", help="allow verdict to open the test")
     parser.add_argument("--out", type=Path, help="report: write to this file instead of stdout")
     parser.add_argument("--rules", type=Path, help="JSON file of the rules (S1.1)")
+    parser.add_argument("--grid", type=Path, help="JSON file of the variant grid (S1.1b)")
+    parser.add_argument("--busy", type=Path, help="the frozen activity file (S1.1b forward test)")
     parser.add_argument(
         "--study-dir", type=Path, help="where outputs and ledgers go (default: <data-dir>/study)"
     )
@@ -106,12 +117,17 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
 
 
-def _config(args: argparse.Namespace, root: Path, *, explicit: bool) -> StudyConfig:
-    """The study's settings; ``explicit`` demands that nothing is worked out from the data."""
+def _config(
+    args: argparse.Namespace, root: Path, *, explicit: bool, split: bool = True
+) -> StudyConfig:
+    """The study's settings; ``explicit`` demands that nothing is worked out from the data;
+    ``split=False`` is a forward window, which has no fit or validate part."""
     if explicit and (args.window_start is None or args.window_end is None or args.share is None):
         raise UsageError("--window-start, --window-end and --share must all be given")
-    if args.fit_end is None or args.validate_end is None:
+    if split and (args.fit_end is None or args.validate_end is None):
         raise UsageError("--fit-end and --validate-end must both be given")
+    if not split and (args.fit_end is not None or args.validate_end is not None):
+        raise UsageError("a forward test has no fit or validate part: leave out the split dates")
     shares = dict(_category_shares(args.category_share))
     share = args.share
     if share is None:
@@ -291,6 +307,72 @@ def _rules_verdict(args: argparse.Namespace, root: Path, out: Path) -> int:
     return 0
 
 
+FORWARD_LEDGER = "forward-ledger.json"  # S1.1b's lock
+
+
+def _rules_scan(args: argparse.Namespace, root: Path, out: Path) -> int:
+    if args.grid is None:
+        raise UsageError("--grid is required")
+    grid = grid_from_json(json.loads(args.grid.read_text(encoding="utf-8")))
+    config = _config(args, root, explicit=True)
+    study = Study(tag_trades(root, config, drop_unsampled=True), config, out / RULES_LEDGER)
+    rows = study.scan(grid)
+    chosen = choose(rows)
+    busy_hash = write_busy(study.busy(), out / "busy-fit.json")
+    _write_json(
+        out / "rules-scan.json",
+        {
+            "config": asdict(config),
+            "busy_hash": busy_hash,
+            "rows": [asdict(row) for row in rows],
+            "chosen": None if chosen is None else chosen.rule.name,
+        },
+    )
+    if chosen is not None:
+        _write_json(out / "chosen-rule.json", {"rules": [asdict(chosen.rule)]})
+    print(
+        report.scan_section(
+            [asdict(row) for row in rows], None if chosen is None else chosen.rule.name
+        )
+    )
+    print(f"frozen activity file busy-fit.json, hash {busy_hash}")
+    return 0
+
+
+def _forward_prereg(args: argparse.Namespace, root: Path) -> ForwardPrereg:
+    if args.rules is None or args.busy is None:
+        raise UsageError("--rules (one rule) and --busy are required")
+    rules = rules_from_json(json.loads(args.rules.read_text(encoding="utf-8")))
+    if len(rules) != 1:
+        raise UsageError(f"a forward test registers exactly one rule, not {len(rules)}")
+    config = _config(args, root, explicit=True, split=False)
+    return ForwardPrereg(rules[0], config, busy_digest(args.busy))
+
+
+def _forward_register(args: argparse.Namespace, root: Path, out: Path) -> int:
+    prereg = _forward_prereg(args, root)
+    print(f"1 rule, one-sided tail {prereg.rules.alpha():.5f}")
+    print(f"pre-registration digest {prereg.digest()}")
+    return 0
+
+
+def _forward_verdict(args: argparse.Namespace, root: Path, out: Path) -> int:
+    if not args.open_test:
+        raise UsageError("forward-verdict opens the forward window: pass --open-test to confirm")
+    prereg = _forward_prereg(args, root)
+    tagged = tag_trades(root, prereg.config, drop_unsampled=True)
+    verdict = ForwardStudy(tagged, prereg.config, out / FORWARD_LEDGER).verdict(prereg, args.busy)
+    result: dict[str, Any] = {
+        "digest": prereg.digest(),
+        "config": asdict(prereg.config),
+        "busy_hash": prereg.busy_hash,
+        "verdict": asdict(verdict),
+    }
+    _write_json(out / "forward-verdict.json", result)
+    print(report.rules_section(result["verdict"], "forward"))
+    return 0
+
+
 def _report(args: argparse.Namespace, root: Path, out: Path) -> int:
     text = report.render(out)
     if args.out is not None:
@@ -315,6 +397,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "rules-explore": _rules_explore,
         "rules-register": _rules_register,
         "rules-verdict": _rules_verdict,
+        "rules-scan": _rules_scan,
+        "forward-register": _forward_register,
+        "forward-verdict": _forward_verdict,
     }
     try:
         return handlers[args.command](args, root, out)

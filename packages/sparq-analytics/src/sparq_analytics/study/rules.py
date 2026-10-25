@@ -72,7 +72,9 @@ class Rule:
     None is open); ``pace`` is ``any``, ``human`` (1 second to an hour after the previous trade),
     ``never_stale`` (neither a first trade nor one after an hour of quiet) or ``first_trade``;
     ``ny_hours`` is a ``(from, to)`` hour range in New York, ``to`` exclusive; ``price_lo_e6`` and
-    ``price_hi_e6`` bound the trade's yes price in millionths of a dollar (upper exclusive).
+    ``price_hi_e6`` bound the trade's yes price in millionths of a dollar (upper exclusive);
+    ``quiet_lo_s`` and ``quiet_hi_s`` (S1.1b) bound the seconds since the market's previous trade
+    (upper exclusive), which leaves out first trades, and are used only with ``pace="any"``.
     """
 
     name: str
@@ -85,6 +87,8 @@ class Rule:
     price_lo_e6: int = 0
     price_hi_e6: int = 1_000_001
     exploratory: bool = False
+    quiet_lo_s: float | None = None
+    quiet_hi_s: float | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -101,6 +105,12 @@ class Rule:
                 raise ValueError("New York hours are 0 <= from < to <= 24")
         if not 0 <= self.price_lo_e6 < self.price_hi_e6:
             raise ValueError("an empty price range")
+        if self.quiet_lo_s is not None or self.quiet_hi_s is not None:
+            if self.pace != "any":
+                raise ValueError("quiet bounds replace the pace; use them with pace='any'")
+            low, high = self.quiet_lo_s or 0.0, self.quiet_hi_s
+            if low < 0 or (high is not None and low >= high):
+                raise ValueError("an empty quiet range")
 
     def expr(self) -> pl.Expr:
         keep = (pl.col("p") >= self.price_lo_e6) & (pl.col("p") < self.price_hi_e6)
@@ -116,6 +126,10 @@ class Rule:
             keep &= ~pl.col("first") & (pl.col("quiet_s") < QUIET_LIMIT_S)
         elif self.pace == "first_trade":
             keep &= pl.col("first")
+        if self.quiet_lo_s is not None or self.quiet_hi_s is not None:
+            keep &= ~pl.col("first") & (pl.col("quiet_s") >= (self.quiet_lo_s or 0.0))
+            if self.quiet_hi_s is not None:
+                keep &= pl.col("quiet_s") < self.quiet_hi_s
         if self.category is not None:
             keep &= pl.col("category") == self.category
         if self.ny_hours is not None:
@@ -123,11 +137,23 @@ class Rule:
         # an unknown feature (a series that is not in the fit part) never matches
         return keep.fill_null(False)
 
+    def locked(self) -> dict[str, Any]:
+        """The rule as the digest sees it. Fields added after S1.1 are left out while unset, so a
+        rule registered before they existed keeps its digest (S1.1's lock stays valid)."""
+        body = asdict(self)
+        for name in _ADDED_AFTER_S1_1:
+            if body[name] is None:
+                del body[name]
+        return body
+
     def definition(self) -> dict[str, Any]:
         """Everything that decides which trades count, without the name (for duplicate checks)."""
-        body = asdict(self)
+        body = self.locked()
         body.pop("name")
         return body
+
+
+_ADDED_AFTER_S1_1 = ("quiet_lo_s", "quiet_hi_s")
 
 
 def rules_from_json(data: dict[str, Any]) -> tuple[Rule, ...]:
@@ -167,7 +193,7 @@ class RulePrereg:
     def digest(self) -> str:
         body = {
             "kind": "rules",
-            "rules": [asdict(r) for r in self.rules],
+            "rules": [r.locked() for r in self.rules],
             "config": self.config.digest(),
         }
         return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
@@ -197,9 +223,9 @@ class RuleVerdict:
     results: tuple[RuleResult, ...]
 
 
-def evaluate_rule(frame: pl.LazyFrame, rule: Rule, prereg: RulePrereg) -> RuleResult:
-    """Score one rule on a part of the study frame that carries the rule features."""
-    config = prereg.config
+def evaluate_rule(frame: pl.LazyFrame, rule: Rule, config: StudyConfig, tail: float) -> RuleResult:
+    """Score one rule at a one-sided ``tail`` on a part of the study frame that carries the rule
+    features (a registration passes its corrected tail; a scan its nominal one)."""
     columns = sorted({name for pair in MEASURES.values() for name in pair})
     # each event's sums are weighted by one over its category's share; group_by order varies
     # between runs, so the events are sorted before the resampling sees them
@@ -223,7 +249,7 @@ def evaluate_rule(frame: pl.LazyFrame, rule: Rule, prereg: RulePrereg) -> RuleRe
             per_event[numerator].to_numpy(),
             per_event[denominator].to_numpy(),
             strata,
-            tail=prereg.alpha(),
+            tail=tail,
             resamples=config.resamples,
             seed=config.seed,
         )
@@ -249,5 +275,6 @@ def decide(results: tuple[RuleResult, ...]) -> str:
 
 
 def evaluate_rules(frame: pl.LazyFrame, prereg: RulePrereg) -> RuleVerdict:
-    results = tuple(evaluate_rule(frame, rule, prereg) for rule in prereg.rules)
-    return RuleVerdict(decide(results), prereg.alpha(), results)
+    tail = prereg.alpha()
+    results = tuple(evaluate_rule(frame, rule, prereg.config, tail) for rule in prereg.rules)
+    return RuleVerdict(decide(results), tail, results)
