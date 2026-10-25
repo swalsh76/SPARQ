@@ -9,13 +9,19 @@
     python -m sparq_analytics.study verdict  --segments FILE --window-start D --window-end D
         --fit-end D --validate-end D --share S --open-test
     python -m sparq_analytics.study report   [--out FILE]
+    python -m sparq_analytics.study rules-explore  --rules FILE (all settings, as for register)
+    python -m sparq_analytics.study rules-register --rules FILE (all settings)
+    python -m sparq_analytics.study rules-verdict  --rules FILE (all settings) --open-test
 
 Run it on the analytics node against the downloaded history (``--data-dir`` or ``SPARQ_DATA_DIR``;
 the study's outputs go in ``<data-dir>/study``, never in git). ``snapshot`` and ``reference`` read
 everything; ``explore`` reads only the fit and validate parts; ``register`` only checks a segments
 file; ``verdict`` is the one command that opens the test part, and refuses to run without
 ``--open-test`` and without every setting spelled out, because the pre-registration it locks must
-be exactly the one that was approved. Exit codes: 0 fine, 1 bad command line or data.
+be exactly the one that was approved. The ``rules-*`` commands do the same for S1.1's rules, with
+their own ledger; ``--study-dir`` puts the outputs and ledgers somewhere other than
+``<data-dir>/study`` (SPARQ reads KAPS's download without writing to its study folder). Exit codes:
+0 fine, 1 bad command line or data.
 """
 
 import argparse
@@ -34,13 +40,24 @@ from sparq_analytics.study.cells import cell_table
 from sparq_analytics.study.config import StudyConfig
 from sparq_analytics.study.dataset import StudyDataError, exclusion_counts, tag_trades
 from sparq_analytics.study.reference import measure_reference
+from sparq_analytics.study.rules import RulePrereg, rules_from_json
 from sparq_analytics.study.sample import DEFAULT_CEILING, plan_shares
 from sparq_analytics.study.segments import Prereg, PreregistrationError, Segment
 from sparq_analytics.study.session import Study
 from sparq_analytics.study.snapshot import build_snapshot, category_stats
 from sparq_analytics.study.split import SplitError
 
-COMMANDS = ("snapshot", "reference", "explore", "register", "verdict", "report")
+COMMANDS = (
+    "snapshot",
+    "reference",
+    "explore",
+    "register",
+    "verdict",
+    "report",
+    "rules-explore",
+    "rules-register",
+    "rules-verdict",
+)
 
 
 class UsageError(Exception):
@@ -77,6 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--segments", type=Path, help="JSON file of the pre-registered segments")
     parser.add_argument("--open-test", action="store_true", help="allow verdict to open the test")
     parser.add_argument("--out", type=Path, help="report: write to this file instead of stdout")
+    parser.add_argument("--rules", type=Path, help="JSON file of the rules (S1.1)")
+    parser.add_argument(
+        "--study-dir", type=Path, help="where outputs and ledgers go (default: <data-dir>/study)"
+    )
     return parser
 
 
@@ -220,6 +241,56 @@ def _verdict(args: argparse.Namespace, root: Path, out: Path) -> int:
     return 0
 
 
+RULES_LEDGER = "rules-ledger.json"  # S1.1's own lock, separate from the segments' one
+
+
+def _rules_prereg(args: argparse.Namespace, root: Path) -> RulePrereg:
+    if args.rules is None:
+        raise UsageError("--rules is required")
+    rules = rules_from_json(json.loads(args.rules.read_text(encoding="utf-8")))
+    return RulePrereg(rules, _config(args, root, explicit=True))
+
+
+def _rules_study(prereg: RulePrereg, root: Path, out: Path) -> Study:
+    tagged = tag_trades(root, prereg.config, drop_unsampled=True)
+    return Study(tagged, prereg.config, out / RULES_LEDGER)
+
+
+def _rules_explore(args: argparse.Namespace, root: Path, out: Path) -> int:
+    prereg = _rules_prereg(args, root)
+    verdict = _rules_study(prereg, root, out).rules_on_validate(prereg)
+    result: dict[str, Any] = {
+        "digest": prereg.digest(),
+        "config": asdict(prereg.config),
+        "verdict": asdict(verdict),
+    }
+    _write_json(out / "rules-validate.json", result)
+    print(report.rules_section(result["verdict"], "validate"))
+    return 0
+
+
+def _rules_register(args: argparse.Namespace, root: Path, out: Path) -> int:
+    prereg = _rules_prereg(args, root)
+    print(f"{prereg.size} rules, one-sided tail each {prereg.alpha():.5f}")
+    print(f"pre-registration digest {prereg.digest()}")
+    return 0
+
+
+def _rules_verdict(args: argparse.Namespace, root: Path, out: Path) -> int:
+    if not args.open_test:
+        raise UsageError("rules-verdict opens the test part: pass --open-test to confirm")
+    prereg = _rules_prereg(args, root)
+    verdict = _rules_study(prereg, root, out).rules_verdict(prereg)
+    result: dict[str, Any] = {
+        "digest": prereg.digest(),
+        "config": asdict(prereg.config),
+        "verdict": asdict(verdict),
+    }
+    _write_json(out / "rules-verdict.json", result)
+    print(report.rules_section(result["verdict"], "test"))
+    return 0
+
+
 def _report(args: argparse.Namespace, root: Path, out: Path) -> int:
     text = report.render(out)
     if args.out is not None:
@@ -233,7 +304,7 @@ def _report(args: argparse.Namespace, root: Path, out: Path) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = args.data_dir / "kalshi"
-    out = args.data_dir / "study"
+    out = args.study_dir if args.study_dir is not None else args.data_dir / "study"
     handlers = {
         "snapshot": _snapshot,
         "reference": _reference,
@@ -241,6 +312,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "register": _register,
         "verdict": _verdict,
         "report": _report,
+        "rules-explore": _rules_explore,
+        "rules-register": _rules_register,
+        "rules-verdict": _rules_verdict,
     }
     try:
         return handlers[args.command](args, root, out)

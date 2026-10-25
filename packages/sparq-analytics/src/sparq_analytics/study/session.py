@@ -13,7 +13,14 @@ from sparq_analytics.study import ladder as ladder_module
 from sparq_analytics.study.config import StudyConfig
 from sparq_analytics.study.dataset import used
 from sparq_analytics.study.edge import add_edges
-from sparq_analytics.study.segments import Prereg, PreregLedger, add_bands
+from sparq_analytics.study.rules import (
+    RulePrereg,
+    RuleVerdict,
+    add_rule_features,
+    busy_table,
+    evaluate_rules,
+)
+from sparq_analytics.study.segments import Prereg, PreregLedger, Registration, add_bands
 from sparq_analytics.study.split import assign_parts
 from sparq_analytics.study.verdict import Verdict, evaluate
 
@@ -25,6 +32,7 @@ class Study:
         banded = add_bands(used(tagged), config)
         parted, self.boundaries = assign_parts(banded, config)
         self._frame = add_edges(parted)
+        self._busy_table: pl.DataFrame | None = None
 
     @property
     def fit(self) -> pl.LazyFrame:
@@ -34,7 +42,7 @@ class Study:
     def validate(self) -> pl.LazyFrame:
         return self._frame.filter(pl.col("part") == "validate")
 
-    def open_test(self, prereg: Prereg) -> pl.LazyFrame:
+    def open_test(self, prereg: Registration) -> pl.LazyFrame:
         """The test part, after the pre-registration is locked in the ledger."""
         self._ledger.open_test(prereg)
         return self._frame.filter(pl.col("part") == "test")
@@ -44,3 +52,17 @@ class Study:
 
     def ladder(self, prereg: Prereg) -> ladder_module.Ladder:
         return ladder_module.ladder(self.fit, self.open_test(prereg))
+
+    def busy(self) -> pl.DataFrame:
+        """Each series' median contracts per market, from the **fit part only** (no look-ahead)."""
+        if self._busy_table is None:
+            self._busy_table = busy_table(self.fit)
+        return self._busy_table
+
+    def rules_on_validate(self, prereg: RulePrereg) -> RuleVerdict:
+        """The rules scored on the validate part, to choose them; nothing is locked."""
+        return evaluate_rules(add_rule_features(self.validate, self.busy()), prereg)
+
+    def rules_verdict(self, prereg: RulePrereg) -> RuleVerdict:
+        """The rules scored on the test part, after they are locked in the ledger."""
+        return evaluate_rules(add_rule_features(self.open_test(prereg), self.busy()), prereg)

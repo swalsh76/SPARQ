@@ -12,6 +12,7 @@ divides each resample's error by its own cluster-robust standard error and staye
 nominal rate in the same test.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -35,23 +36,20 @@ class Estimate:
 EMPTY = Estimate(float("nan"), float("nan"), float("nan"), 0, 0)
 
 
-def cluster_bootstrap(
-    numerator: NDArray[np.float64],
-    denominator: NDArray[np.float64],
+def _studentized(
+    num: NDArray[np.float64],
+    den: NDArray[np.float64],
+    draw: Callable[[np.random.Generator, int], NDArray[np.float64]],
     *,
     tail: float,
     resamples: int,
     seed: int,
 ) -> Estimate:
-    """The ratio of sums over events, with a studentized interval at ``tail`` on each side.
+    """The ratio of sums with a studentized interval; ``draw`` gives a block of resample counts.
 
-    ``numerator`` and ``denominator`` hold one entry per event; only events with a positive
-    denominator count as independent events that took part. The standard error is the
-    cluster-robust one for a ratio of sums: the root of the summed squared residuals
-    ``numerator - ratio x denominator``, over the total denominator.
+    The standard error is the cluster-robust one for a ratio of sums: the root of the summed
+    squared residuals ``numerator - ratio x denominator``, over the total denominator.
     """
-    keep = denominator > 0
-    num, den = numerator[keep], denominator[keep]
     n = int(num.size)
     if n == 0:
         return EMPTY
@@ -64,12 +62,11 @@ def cluster_bootstrap(
     num_sq, num_den, den_sq = num * num, num * den, den * den
     rng = np.random.default_rng(seed)
     chunk = max(1, _CELLS_PER_CHUNK // n)
-    probabilities = np.full(n, 1.0 / n)
     statistics: list[NDArray[np.float64]] = []
     remaining = resamples
     while remaining > 0:
         size = min(chunk, remaining)
-        counts = rng.multinomial(n, probabilities, size=size).astype(np.float64)
+        counts = draw(rng, size)
         top, bottom = counts @ num, counts @ den
         with np.errstate(divide="ignore", invalid="ignore"):
             ratio = top / bottom
@@ -82,3 +79,59 @@ def cluster_bootstrap(
     draws = np.concatenate(statistics)
     high, low = np.nanquantile(draws, [1.0 - tail, tail])
     return Estimate(point, float(point - se * high), float(point - se * low), n, contracts)
+
+
+def cluster_bootstrap(
+    numerator: NDArray[np.float64],
+    denominator: NDArray[np.float64],
+    *,
+    tail: float,
+    resamples: int,
+    seed: int,
+) -> Estimate:
+    """The ratio of sums over events, with a studentized interval at ``tail`` on each side.
+
+    ``numerator`` and ``denominator`` hold one entry per event; only events with a positive
+    denominator count as independent events that took part.
+    """
+    keep = denominator > 0
+    num, den = numerator[keep], denominator[keep]
+    n = int(num.size)
+    probabilities = np.full(n, 1.0 / n) if n else np.empty(0)
+
+    def draw(rng: np.random.Generator, size: int) -> NDArray[np.float64]:
+        return rng.multinomial(n, probabilities, size=size).astype(np.float64)
+
+    return _studentized(num, den, draw, tail=tail, resamples=resamples, seed=seed)
+
+
+def stratified_bootstrap(
+    numerator: NDArray[np.float64],
+    denominator: NDArray[np.float64],
+    strata: NDArray[np.str_],
+    *,
+    tail: float,
+    resamples: int,
+    seed: int,
+) -> Estimate:
+    """As :func:`cluster_bootstrap`, but events are resampled within their stratum.
+
+    The sample takes a different share of each category (D16 as amended), so each category is its
+    own stratum: a resample keeps every stratum's number of events, as the sampling design did. The
+    caller weights each event's sums by one over its stratum's share. With a single stratum this is
+    exactly :func:`cluster_bootstrap`.
+    """
+    keep = denominator > 0
+    num, den, groups = numerator[keep], denominator[keep], strata[keep]
+    names = np.unique(groups)
+    if names.size <= 1:
+        return cluster_bootstrap(num, den, tail=tail, resamples=resamples, seed=seed)
+    order = np.argsort(groups, kind="stable")
+    num, den, groups = num[order], den[order], groups[order]
+    sizes = [int((groups == name).sum()) for name in names]
+
+    def draw(rng: np.random.Generator, size: int) -> NDArray[np.float64]:
+        blocks = [rng.multinomial(k, np.full(k, 1.0 / k), size=size) for k in sizes]
+        return np.hstack(blocks).astype(np.float64)
+
+    return _studentized(num, den, draw, tail=tail, resamples=resamples, seed=seed)

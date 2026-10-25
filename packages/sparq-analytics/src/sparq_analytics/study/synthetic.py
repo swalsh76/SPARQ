@@ -11,6 +11,9 @@ contract, and the maker facing a taker who buys the biased side has the same edg
 * ``drift`` pulls later trade prices toward the outcome, which is how informed flow looks: a price
   that trades through a resting order's level then signals that the order was on the wrong side.
   With ``drift`` above zero the pessimistic maker fill rule loses what the optimistic one earns.
+* ``spread`` makes takers pay that much beyond the fair price on either side, which is the gain a
+  resting maker collects whatever the outcome; with ``planted_series`` the bias and the spread are
+  planted in one series only, and ``trades_by_series`` makes one series busier than the other.
 * Series 0 is "sports" with maker fees (a quarter share) and series 1 is "politics" without.
 """
 
@@ -51,6 +54,9 @@ class World:
     duration_hours: float = 24.0
     long_fraction: float = 0.0  # events that stay open 60 days, for the embargo
     seed: int = 7
+    planted_series: int | None = None  # plant bias and spread in this series only (None: all)
+    trades_by_series: tuple[int, ...] | None = None  # trades per market for each series
+    spread: float = 0.0  # takers pay this much (in dollars) beyond the fair price, on either side
 
 
 def _planted_shift(q: NDArray[np.float64], bias: float) -> NDArray[np.float64]:
@@ -82,12 +88,20 @@ def write_world(world: World, root: Path) -> dict[str, int]:
     for e in range(events):
         series_ticker = SERIES[series_of[e]][0]
         event_ticker = f"{series_ticker}-E{e:05d}"
+        planted = world.planted_series is None or series_of[e] == world.planted_series
+        bias = world.bias if planted else 0.0
+        spread_cents = round(world.spread * 100) if planted else 0
+        n = (
+            world.trades_by_series[series_of[e]]
+            if world.trades_by_series is not None
+            else world.trades_per_market
+        )
         open_time = START + dt.timedelta(seconds=float(close_s[e] - duration_s[e]))
         close_time = START + dt.timedelta(seconds=float(close_s[e]))
         for j in range(world.markets_per_event):
             ticker = f"{event_ticker}-M{j}"
             q = np.array([rng.integers(3, 98) / 100.0])
-            true = (q + _planted_shift(q, world.bias)).clip(0.01, 0.99)
+            true = (q + _planted_shift(q, bias)).clip(0.01, 0.99)
             logit = np.log(true / (1 - true)) + shock[e]
             outcome = int(rng.random() < 1 / (1 + np.exp(-logit[0])))
             yes_markets += outcome
@@ -99,12 +113,11 @@ def write_world(world: World, root: Path) -> dict[str, int]:
             market_rows["status"].append("finalized")
             market_rows["result"].append("yes" if outcome else "no")
             market_rows["market_type"].append("binary")
-            market_rows["volume_e2"].append(world.trades_per_market * 100)  # nominal, above zero
+            market_rows["volume_e2"].append(n * 100)  # nominal, above zero
             market_rows["open_time"].append(open_time)
             market_rows["created_time"].append(open_time - dt.timedelta(hours=1))
             market_rows["close_time"].append(close_time)
             market_rows["expected_expiration_time"].append(close_time)
-            n = world.trades_per_market
             offsets = np.sort(rng.choice(int(duration_s[e]) - 1, size=n, replace=False)) + 1
             progress = np.arange(1, n + 1) / n
             path = q[0] + world.drift * (outcome - q[0]) * progress
@@ -115,9 +128,12 @@ def write_world(world: World, root: Path) -> dict[str, int]:
                 trade_rows["trade_id"].append(f"{ticker}-{k}")
                 trade_rows["ticker"].append(ticker)
                 trade_rows["created_time"].append(when)
-                trade_rows["yes_price_e6"].append(int(cents[k]) * CENT_E6)
                 trade_rows["count_e2"].append(int(rng.integers(1, 21)) * 100)
-                trade_rows["taker_side"].append("yes" if rng.random() < 0.5 else "no")
+                side = "yes" if rng.random() < 0.5 else "no"
+                # a taker buying yes pays above the fair price, one buying no pays below it
+                price = int(cents[k]) + (spread_cents if side == "yes" else -spread_cents)
+                trade_rows["yes_price_e6"].append(min(99, max(1, price)) * CENT_E6)
+                trade_rows["taker_side"].append(side)
                 trade_rows["is_block_trade"].append(False)
 
     n_markets = len(market_rows["ticker"])
