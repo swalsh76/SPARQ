@@ -4,7 +4,7 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 
 ## S0. The fork (2026-10-25)
 
-### S0 The repository, the renamed packages and the founding documents (in progress)
+### S0 The repository, the renamed packages and the founding documents (done, merged 2026-10-25 as PR #1)
 
 **Why.** KAPS's K0.5 edge study closed with a NO-GO, and a project review the same day found the money on Kalshi going from takers to makers, with an exploratory lead for a maker that works at a seconds scale in second-tier markets (ASSESSMENT §7). The owner chose to pursue it as a new project: SPARQ, public under MIT, started fresh from KAPS's code without its git history, with KAPS frozen and its ingest kept running (PLAN Q1).
 
@@ -32,4 +32,4 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 
 - A re-run of CI on a docs-only commit failed in the database job's setup, twice: `pg_createcluster 18 main` found a cluster already present, because the PostgreSQL 18 package on the runner now creates its default cluster when it installs (the same workflow had passed 20 minutes earlier). The step now drops that cluster first, if there is one, and creates its own with data checksums. KAPS's CI has the same step and will need the same fix if KAPS's CI runs again.
 
-**Still to do in S0.** The owner's merge.
+**Done.** Merged by the owner on 2026-10-25 (PR #1).

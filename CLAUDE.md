@@ -11,13 +11,15 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ## Status
 
-**S0, the fork, is in progress** (owner approved 2026-10-25): the repository, the renamed packages (`sparq-core`, `sparq-server`, `sparq-analytics`) and these founding documents, on branch `s0/fork`. The first milestone (the pre-registered middle-tier test, the shadow quoter, the write path and risk layer on demo, a tiny live pilot) is proposed **after** S0 merges, for the owner's approval. **No real order is sent without the owner's go-ahead.**
+**S0, the fork, is done** (merged 2026-10-25, SPARQ PR #1). **S1, evidence for the quoter, is proposed** (PLAN.md §6.1: decisions D1 to D9, slices S1.1 to S1.4) on branch `s1/proposal` and waits for the owner's approval; no S1 code starts before it. **No real order is sent without the owner's go-ahead.**
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-25 (S0 in progress).*
+*Last updated 2026-10-25 (S0 done; S1 proposed).*
 
-- **S0 (branch `s0/fork`):** seeded from KAPS `main` at its merge of PR #42 (`6cd0083`); 202 text files renamed (928 occurrences of `kaps`), six folders moved, the web-design mock-ups and the K0.5 write-up left in KAPS (owner); the server package carried (owner); the lock re-resolved with no version change; locally ruff, mypy (165 files) and pytest (1,608 passed, 197 skipped) are green. The live check (`test_live_public`) passed and CI is green in the new repository (PR #1). Still to do: the owner's merge; then the S1 milestone proposal. The memory files with the real host names and the owner's preferences are copied to this project's memory folder.
+- **S1 proposal (branch `s1/proposal`):** awaiting the owner. Open points for the owner inside it: the S1.1 rule list (approved before the test part is read), a separate read-only key on the analytics node for S1.2, the trading key's custody (S1.3), and the pilot's caps (S1.4). KAPS's hourly download check was removed (KAPS frozen, download paused).
+
+- **S0 (done, PR #1):** seeded from KAPS `main` at its merge of PR #42 (`6cd0083`); 202 text files renamed (928 occurrences of `kaps`), six folders moved, the web-design mock-ups and the K0.5 write-up left in KAPS (owner); the server package carried (owner); the lock re-resolved with no version change; locally ruff, mypy (165 files) and pytest (1,608 passed, 197 skipped) are green. The live check (`test_live_public`) passed and CI is green in the new repository (PR #1). Merged by the owner; CI also needed a fix for the runner's new default cluster (BUILD-LOG S0). The memory files with the real host names and the owner's preferences are copied to this project's memory folder.
 - **Where the direction came from (KAPS, 2026-10-25):** K0.5's price-only edge study closed NO-GO; the project review and the exploratory middle-tier reading are summarised in ASSESSMENT.md §7 and LESSONS.md. The middle-tier numbers are **leads for a pre-registered test, not results**.
 - **Owner decisions so far:** the name SPARQ; public under MIT; a fresh start without history; KAPS frozen with its ingest kept running; the server package carried; the mock-ups left behind. **Not relied on:** Kalshi's Liquidity Incentive Program (limited in time; the owner set it aside).
 - **How the owner wants the work run:** announce each slice first; narrate each step in one line; plan before code; explain a question when asked, then record the answer; machine names by role in the repository (the real host names, share path and data paths are in the assistant's memory, never here).

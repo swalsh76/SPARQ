@@ -1,6 +1,6 @@
 # SPARQ plan
 
-**Status:** S0, the fork, is in progress (owner approved 2026-10-25). The first milestone is proposed after S0 merges (§6). This document is the source of truth for the direction, the architecture and the build order. [ASSESSMENT.md](ASSESSMENT.md) holds the reasoning and the sources; [LESSONS.md](LESSONS.md) holds what the predecessors measured. SPARQ carries much of KAPS's design by reference: where this plan says "KAPS PLAN §x", read [KAPS's plan](https://github.com/swalsh76/KAPS/blob/main/docs/PLAN.md) at that section.
+**Status:** S0, the fork, is done (merged 2026-10-25). S1, evidence for the quoter, is **proposed** (§6.1) and waits for the owner's approval. This document is the source of truth for the direction, the architecture and the build order. [ASSESSMENT.md](ASSESSMENT.md) holds the reasoning and the sources; [LESSONS.md](LESSONS.md) holds what the predecessors measured. SPARQ carries much of KAPS's design by reference: where this plan says "KAPS PLAN §x", read [KAPS's plan](https://github.com/swalsh76/KAPS/blob/main/docs/PLAN.md) at that section.
 
 ## 1. Goal
 
@@ -62,8 +62,33 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 
 | # | Milestone | Gate | Status |
 |---|---|---|---|
-| **S0** | **The fork:** the repository, the renamed packages, the founding documents, CI in the new repository, one live check | CI green on Ubuntu and macOS and the database job; `test_live_public` passes; the owner merges | in progress (BUILD-LOG S0) |
-| **S1** | **Evidence for the quoter** (to be proposed after S0, for approval). Candidate slices: S1.1 the pre-registered middle-tier test on KAPS's held-out trades; S1.2 the shadow quoter (live books, no orders); S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | The gates in Q3 | proposed after S0 |
+| **S0** | **The fork:** the repository, the renamed packages, the founding documents, CI in the new repository, one live check | CI green on Ubuntu and macOS and the database job; `test_live_public` passes; the owner merges | done (BUILD-LOG S0) |
+| **S1** | **Evidence for the quoter** (§6.1): S1.1 the pre-registered middle-tier test; S1.2 the shadow quoter; S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | Each slice's gate in §6.1; a slice starts only when the one before it passes | **proposed, awaiting approval** |
+
+### 6.1 S1 Evidence for the quoter: decisions and slices (proposed 2026-10-25)
+
+**Decisions (proposed).**
+
+| # | Decision |
+|---|---|
+| D1 | **The test data for S1.1** is KAPS's 77-day download with K0.5's window, split dates and stratified sample. K0.5's test part (events closing 10 to 19 October) was read only for price-band segments, so it is fair for these new rules; S1.1 keeps its own pre-registration ledger, separate from K0.5's. |
+| D2 | **S1.1's rules are fixed on the fit and validate parts only**, at most 12, each with its reason, and **the owner approves the list before the test part is read**. The candidates come from ASSESSMENT §7.4: the maker under strict fills in series of middle activity (median 10k to 100k contracts a market, measured on the fit part); the maker on human-paced trades (1 second to 1 hour after the previous trade); the same maker that never stands on a stale quote (it skips a market's first trade and trades after more than an hour of quiet); the taker that picks off a market's first trade; and per-category versions where the validate part has 300 events or more. |
+| D3 | **S1.1's gate is K0.5's:** GO if at least one rule has a lower bound above zero, after fees and under the strict fill rule, at a one-sided tail of 0.025 divided by the rules named, over at least 300 events. Otherwise NO-GO, which stops S1 for a rethink (no widening of the same rules). |
+| D4 | **The shadow quoter (S1.2) places no order.** It runs on the analytics node from a SPARQ clone, opens its own authenticated WebSocket for about 50 second-tier markets chosen by S1.1's winning rule, keeps their order books from the `orderbook_delta` channel, computes the quotes it would post (fair value v0: the book's size-weighted mid, with bracket consistency where it is simple), and counts its fills from the live trades by the strict rule, with markouts at 5 seconds, 1 minute and 10 minutes. It runs for 10 trading days. |
+| D5 | **S1.2's gate:** the simulated profit after fees is positive with a lower bound above zero over events, and the 1-minute markout of its fills is not worse than the half-spread it earns. Fixed in S1.2's plan before it runs. |
+| D6 | **The key for S1.2 and S1.3** is a separate Kalshi key on the analytics node: read-only for S1.2, the trading key from S1.3, stored where only the quoter's account can read it (the custody design is part of S1.3's plan). It never leaves the analytics node. |
+| D7 | **The write path (S1.3) is built and proven on demo only:** a fixed list of order routes (create, cancel, amend, batch, and reads of orders, fills and positions), post-only quotes, an expiry on every quote, look-up by `client_order_id` instead of a resend, limits per market, event, category and day enforced before an order leaves, and a kill switch that cancels everything. It first reads `/account/limits` and `/account/endpoint_costs` (GET only). |
+| D8 | **The pilot (S1.4) is tiny and bounded**, and needs the owner's go-ahead before it starts: at most 10 markets, a fixed small size, a total exposure cap and a daily loss stop (amounts set in S1.4's plan with the owner), for 10 trading days. Within those bounds the owner's go-ahead covers the pilot's quotes as a whole; anything outside them is refused by the risk layer. The pilot's gate: profit and markouts positive after fees, and the simulator's fills match the real ones closely enough to trust it. |
+| D9 | **Kalshi only in S1.** Polymarket US waits for a passed S1. |
+
+**Slices.**
+
+| Slice | What it builds | Gate | Status |
+|---|---|---|---|
+| S1.1 | The pre-registered middle-tier test: the rules from D2 coded on KAPS's study harness, the rule list for the owner's approval, the test part opened once, the write-up in `docs/research/` | D3 | proposed |
+| S1.2 | The shadow quoter: the order-book feed for chosen markets, fair value v0, simulated quotes and strict fills, markouts, a 10-day run | D5 | proposed |
+| S1.3 | The write path, risk layer and kill switch on demo, with the key custody design | Proven on demo: every route, every limit refusal, the kill switch, an unclear-order look-up | proposed |
+| S1.4 | The tiny live pilot | D8 | proposed |
 
 ## 7. Risks
 
