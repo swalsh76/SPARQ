@@ -1,6 +1,6 @@
 # SPARQ plan
 
-**Status:** S0, the fork, is done (merged 2026-10-25). S1, evidence for the quoter, is **proposed** (§6.1) and waits for the owner's approval. This document is the source of truth for the direction, the architecture and the build order. [ASSESSMENT.md](ASSESSMENT.md) holds the reasoning and the sources; [LESSONS.md](LESSONS.md) holds what the predecessors measured. SPARQ carries much of KAPS's design by reference: where this plan says "KAPS PLAN §x", read [KAPS's plan](https://github.com/swalsh76/KAPS/blob/main/docs/PLAN.md) at that section.
+**Status:** S0 is done. S1 was approved (2026-10-25); its first slice, **S1.1, returned a NO-GO** (`docs/research/middle-tier.md`), so under D3 S1 stops for a rethink, which waits for the owner. This document is the source of truth for the direction, the architecture and the build order. [ASSESSMENT.md](ASSESSMENT.md) holds the reasoning and the sources; [LESSONS.md](LESSONS.md) holds what the predecessors measured. SPARQ carries much of KAPS's design by reference: where this plan says "KAPS PLAN §x", read [KAPS's plan](https://github.com/swalsh76/KAPS/blob/main/docs/PLAN.md) at that section.
 
 ## 1. Goal
 
@@ -63,11 +63,11 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | # | Milestone | Gate | Status |
 |---|---|---|---|
 | **S0** | **The fork:** the repository, the renamed packages, the founding documents, CI in the new repository, one live check | CI green on Ubuntu and macOS and the database job; `test_live_public` passes; the owner merges | done (BUILD-LOG S0) |
-| **S1** | **Evidence for the quoter** (§6.1): S1.1 the pre-registered middle-tier test; S1.2 the shadow quoter; S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | Each slice's gate in §6.1; a slice starts only when the one before it passes | **proposed, awaiting approval** |
+| **S1** | **Evidence for the quoter** (§6.1): S1.1 the pre-registered middle-tier test; S1.2 the shadow quoter; S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | Each slice's gate in §6.1; a slice starts only when the one before it passes | approved 2026-10-25; **S1.1 NO-GO**, S1 stopped for a rethink |
 
-### 6.1 S1 Evidence for the quoter: decisions and slices (proposed 2026-10-25)
+### 6.1 S1 Evidence for the quoter: decisions and slices (approved 2026-10-25)
 
-**Decisions (proposed).**
+**Decisions (approved by the owner, 2026-10-25).**
 
 | # | Decision |
 |---|---|
@@ -85,10 +85,10 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 
 | Slice | What it builds | Gate | Status |
 |---|---|---|---|
-| S1.1 | The pre-registered middle-tier test: the rules from D2 coded on KAPS's study harness, the rule list for the owner's approval, the test part opened once, the write-up in `docs/research/` | D3 | proposed |
-| S1.2 | The shadow quoter: the order-book feed for chosen markets, fair value v0, simulated quotes and strict fills, markouts, a 10-day run | D5 | proposed |
-| S1.3 | The write path, risk layer and kill switch on demo, with the key custody design | Proven on demo: every route, every limit refusal, the kill switch, an unclear-order look-up | proposed |
-| S1.4 | The tiny live pilot | D8 | proposed |
+| S1.1 | The pre-registered middle-tier test: the rules from D2 coded on KAPS's study harness, the rule list for the owner's approval, the test part opened once, the write-up in `docs/research/` | D3 | **done: NO-GO** (BUILD-LOG S1.1, `docs/research/middle-tier.md`) |
+| S1.2 | The shadow quoter: the order-book feed for chosen markets, fair value v0, simulated quotes and strict fills, markouts, a 10-day run | D5 | not started (S1.1 did not pass) |
+| S1.3 | The write path, risk layer and kill switch on demo, with the key custody design | Proven on demo: every route, every limit refusal, the kill switch, an unclear-order look-up | not started |
+| S1.4 | The tiny live pilot | D8 | not started |
 
 ## 7. Risks
 

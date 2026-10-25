@@ -33,3 +33,21 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 - A re-run of CI on a docs-only commit failed in the database job's setup, twice: `pg_createcluster 18 main` found a cluster already present, because the PostgreSQL 18 package on the runner now creates its default cluster when it installs (the same workflow had passed 20 minutes earlier). The step now drops that cluster first, if there is one, and creates its own with data checksums. KAPS's CI has the same step and will need the same fix if KAPS's CI runs again.
 
 **Done.** Merged by the owner on 2026-10-25 (PR #1).
+
+## S1. Evidence for the quoter (approved 2026-10-25)
+
+### S1.1 The pre-registered middle-tier test (2026-10-25, done: NO-GO)
+
+**Built.** In `sparq_analytics.study`: `rules.py` (rule features with no look-ahead: a series' median contracts per market from the fit part only, seconds since the market's previous trade, first trade, New York hour; rules that filter on these and on the yes price, scored for the maker by K0.5's strict fill rule with the conservative fee or for the taker; a weighted evaluation; a rules pre-registration with its digest, the family tail over the deciding rules and exploratory rules); `stratified_bootstrap` (events resampled within their category, sharing one studentized core with the existing bootstrap); the ledger now takes any registration with a digest and a size; the session's `busy()`, `rules_on_validate` and `rules_verdict`; the commands `rules-explore`, `rules-register`, `rules-verdict` and `--study-dir`; a rules table in the report; the synthetic world can plant a spread in one busier series (`planted_series`, `spread`, `trades_by_series`).
+
+**What was kept, changed and why.** Kept: K0.5's fee and fill machinery, split, sampling and ledger, unchanged in what they compute. Changed: the bootstrap's core is shared (proved identical to KAPS's on six random cases, bit for bit); the ledger accepts the new registration through a small interface instead of a second ledger.
+
+**Verified (local).** 21 rules tests; the full suite 1,629 passed and 197 skipped; ruff and mypy clean; the new modules fully covered. Planted bugs: 18, of which 4 survived the first run (activity read from the scored part, weights dropped, makers scored by the optimistic fill, exploratory rules deciding); a test was added for each, and all 18 are now caught.
+
+**Verified (analytics node, real data).** SPARQ's clone `~/sparq/check` reading KAPS's download, writing only to the external drive's `sparq/study` folder. The validate reading of seven candidates, the owner's approval of four (R1, R2, R4, R5), `rules-register` (digest `95eec43a8d2d…`, tail 0.00625) and `rules-verdict --open-test` once. **NO-GO**: R1 -0.09 cents (lower -2.00), R2 +2.71 (-3.66), R4 +2.51 (-1.30), R5 -1.29 (-3.98), every rule over 300 events. Write-up: `docs/research/middle-tier.md`.
+
+**Problems and fixes.**
+- The first synthetic check planted a favourite-longshot bias, but the planted shift saturates at the probability floor and mid-priced markets add outcome noise without edge, so detection depended on the seed; a sharper longshot rule was dominated by rare large losses, which the skew-proof interval rightly refuses to call positive. The test world now plants the mechanism SPARQ relies on, a spread paid by takers, which every one of six seeds detects with a lower bound of +1.9 cents or more.
+- The test frame helper evaluated a constant rule as one value; a series missing from the fit part made a filter null rather than false. Fixed (the rule is null-safe).
+- On the analytics node the login shell is zsh, which does not split an unquoted variable into arguments, so the first run was refused at the argument check before anything was read; the run now goes through a bash script.
+

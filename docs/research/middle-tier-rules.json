@@ -1,0 +1,6 @@
+{"rules": [
+ {"name": "R1 middle, maker", "side": "maker", "busy_lo": 10000, "busy_hi": 100000, "reason": "takers lost 4.44 cents in middle-activity series (exploratory reading)"},
+ {"name": "R2 middle, human pace, maker", "side": "maker", "busy_lo": 10000, "busy_hi": 100000, "pace": "human", "reason": "human-paced takers lost 4 to 7 cents"},
+ {"name": "R4 100 to 100k, human pace, maker", "side": "maker", "busy_lo": 100, "busy_hi": 100000, "pace": "human", "reason": "the same below the busiest series"},
+ {"name": "R5 first trade, taker", "side": "taker", "pace": "first_trade", "reason": "takers won 4.66 cents on the first trade in a market"}
+]}
