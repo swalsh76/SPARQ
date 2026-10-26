@@ -287,3 +287,17 @@ def test_the_command_prints_the_result_and_exits_by_it(
     host.files.pop(TOPIC_FILE)
     assert main(["alert-test", "--answers", str(answers_file)], system=host) == 2
     assert "REFUSING" in capsys.readouterr().err
+
+
+def test_every_unit_runs_in_the_full_sandbox() -> None:
+    sandbox = (
+        "NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes",
+        "PrivateDevices=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "LockPersonality=yes",
+    )  # fmt: skip
+    units = [managed.render_ingest_unit(), *managed.watchdog_units().values()]
+    for unit in units:
+        if "[Service]" in unit:
+            lines = unit.splitlines()
+            missing = [setting for setting in sandbox if setting not in lines]
+            assert not missing, missing
