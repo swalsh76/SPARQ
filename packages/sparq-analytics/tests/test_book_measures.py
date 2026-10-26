@@ -91,6 +91,21 @@ def row_of(frame: pl.DataFrame, trade_id: str) -> dict[str, object]:
     return found.row(0, named=True)
 
 
+def test_of_two_frames_at_one_millisecond_the_book_is_the_one_received_last() -> None:
+    def frame(t: int, recv: int, ask_size: int) -> dict[str, object]:
+        return {"ts_ms": BASE + t, "recv_ms": BASE + recv, "ticker": "M1", "price_e6": None,
+                "yes_bid_e6": 400_000, "yes_ask_e6": 420_000, "yes_bid_size_e2": 1_000,
+                "yes_ask_size_e2": ask_size, "volume_e2": None}  # fmt: skip
+
+    trade = trades().filter(pl.col("trade_id") == "a1")  # yes at 42c, 120 s; joins at 121 s
+    # the later arrival is listed first, so only the arrival time can put it last
+    rows = [frame(0, 500, 500), frame(121_000, 121_200, 900), frame(121_000, 121_100, 300)]
+    book = book_frames(pl.DataFrame(rows, schema=frames().schema).lazy())
+    tagged = tag_trades(trade.lazy(), markets().lazy(), busy(), rule())
+    out = trade_measures(tagged, tagged, book, BookConfig(), FAR).collect()
+    assert out["q_ahead_e2"].to_list() == [900]
+
+
 def test_the_book_the_taker_met_is_the_last_frame_strictly_before() -> None:
     a1 = row(measured(), "M1", 120_000)
     assert (a1["bid_b"], a1["ask_b"], a1["spread_b"], a1["touched_b"]) == (
@@ -214,6 +229,7 @@ def test_a_side_without_size_is_empty() -> None:
     raw = pl.DataFrame(
         {
             "ts_ms": [1, 2],
+            "recv_ms": [500, 501],
             "ticker": ["X", "X"],
             "yes_bid_e6": [300_000, 0],
             "yes_ask_e6": [1_000_000, 500_000],

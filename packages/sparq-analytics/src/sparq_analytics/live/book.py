@@ -139,12 +139,16 @@ def near_gaps(gaps: pl.DataFrame, config: BookConfig, data_end_ms: int) -> pl.Ex
 
 
 def book_frames(frames: pl.LazyFrame) -> pl.LazyFrame:
-    """Frames as the best bid and ask with their sizes; a side showing no size is empty."""
+    """Frames as the best bid and ask with their sizes; a side showing no size is empty.
+
+    Frames of a market at the same millisecond (about one in a thousand) are ordered by when they
+    arrived, so the book at that moment is the last one received, the same on every run.
+    """
     bid = (pl.col("yes_bid_size_e2").fill_null(0) > 0) & (pl.col("yes_bid_e6").fill_null(0) > 0)
     ask = (pl.col("yes_ask_size_e2").fill_null(0) > 0) & (
         pl.col("yes_ask_e6").fill_null(ONE_E6) < ONE_E6
     )
-    book = frames.select(
+    book = frames.sort("ts_ms", "recv_ms", maintain_order=True).select(
         "ticker",
         "ts_ms",
         bid=pl.when(bid).then(pl.col("yes_bid_e6")),
@@ -152,7 +156,7 @@ def book_frames(frames: pl.LazyFrame) -> pl.LazyFrame:
         ask=pl.when(ask).then(pl.col("yes_ask_e6")),
         ask_size=pl.when(ask).then(pl.col("yes_ask_size_e2")),
     )
-    return book.with_columns(mid=_mid("bid", "ask")).sort("ts_ms")
+    return book.with_columns(mid=_mid("bid", "ask"))
 
 
 def _mid(bid: str, ask: str) -> pl.Expr:
