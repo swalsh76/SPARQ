@@ -55,6 +55,13 @@ MARKET_SQL = (
     "floor(extract(epoch FROM m.close_time) * 1000)::bigint AS close_ms "
     "FROM market m LEFT JOIN series s ON s.ticker = m.series_ticker"
 )
+# the outages in which ticker frames were lost (trades are backfilled, frames cannot be); an open
+# one has no end yet
+GAP_SQL = (
+    "SELECT kind, floor(extract(epoch FROM started_at) * 1000)::bigint AS start_ms, "
+    "floor(extract(epoch FROM ended_at) * 1000)::bigint AS end_ms "
+    "FROM gap_log WHERE kind IN ('ticker', 'all')"
+)
 
 TICKER_SCHEMA = {
     "ts_ms": pl.Int64,
@@ -84,6 +91,7 @@ MARKET_SCHEMA = {
     "open_ms": pl.Int64,
     "close_ms": pl.Int64,
 }
+GAP_SCHEMA = {"kind": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64}
 TABLES = (("ticker", TICKER_SQL, TICKER_SCHEMA), ("trade", TRADE_SQL, TRADE_SCHEMA))
 
 
@@ -172,6 +180,7 @@ class ExtractReport:
     hours_present: int
     rows: dict[str, int]
     markets: int
+    gaps: int
 
 
 async def extract(
@@ -183,7 +192,8 @@ async def extract(
     now: datetime,
     log: Callable[[str], None] = lambda _: None,
 ) -> ExtractReport:
-    """Copy each missing whole hour of ticker frames and trades, then the market list afresh."""
+    """Copy each missing whole hour of ticker frames and trades, then the market list and the
+    ticker gaps afresh."""
     copied = present = 0
     rows = {name: 0 for name, _, _ in TABLES}
     for hour in whole_hours(start, end, now):
@@ -199,7 +209,9 @@ async def extract(
             log(f"{name} {hour_name(hour)}: {count:,} rows")
     markets = await _copy(conn, MARKET_SQL, (), MARKET_SCHEMA, folder / "markets.parquet")
     log(f"markets: {markets:,} rows")
-    return ExtractReport(copied, present, rows, markets)
+    gaps = await _copy(conn, GAP_SQL, (), GAP_SCHEMA, folder / "gaps.parquet")
+    log(f"ticker gaps: {gaps:,}")
+    return ExtractReport(copied, present, rows, markets, gaps)
 
 
 def hour_files(folder: Path, name: str, start: datetime, end: datetime) -> list[Path]:

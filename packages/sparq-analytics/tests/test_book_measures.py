@@ -10,6 +10,7 @@ from sparq_analytics.live.book import (
     book_frames,
     burst_measures,
     check_rule,
+    near_gaps,
     tag_trades,
     trade_measures,
 )
@@ -152,6 +153,22 @@ def test_a_taker_order_of_several_trades_is_one_order() -> None:
 def test_an_order_near_the_end_of_the_data_is_not_complete() -> None:
     a1 = row(bursts(data_end=BASE + 300_000), "M1", 120_000)
     assert a1["cleared"] and not a1["complete"] and a1["refill_2000"] is None
+
+
+def test_trades_near_an_outage_of_the_feed() -> None:
+    config = BookConfig()
+    outage = pl.DataFrame(
+        {"kind": ["ticker"], "start_ms": [1_000_000], "end_ms": [1_005_000]},
+        schema={"kind": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64},
+    )
+    times = pl.DataFrame({"ts_ms": [399_999, 400_000, 1_002_000, 1_065_000, 1_065_001]})
+    near = times.select(near_gaps(outage, config, 10**9)).to_series().to_list()
+    # from ten minutes before it starts to a minute after it ends, both ends included
+    assert near == [False, True, True, True, False]
+    still_open = outage.with_columns(pl.lit(None, dtype=pl.Int64).alias("end_ms"))
+    later = pl.DataFrame({"ts_ms": [5_000_000]})
+    assert later.select(near_gaps(still_open, config, 5_000_000)).item()
+    assert not times.select(near_gaps(outage.clear(), config, 10**9)).to_series().any()
 
 
 def test_a_side_without_size_is_empty() -> None:

@@ -25,10 +25,13 @@ def test_measure_writes_the_results_and_the_summary(tmp_path: Path) -> None:
     write_hours(data)
     assert measure(data) == 0
     results = data / "results"
-    assert pl.read_parquet(results / "trades-2026-10-25.parquet").height == trades().height
+    kept = pl.read_parquet(results / "trades-2026-10-25.parquet")
+    # g4, ten minutes before the feed's outage, is left out; g5 after it is kept
+    assert kept.height == trades().height - 1
+    assert kept.filter(pl.col("ticker") == "M7").height == 5
     assert (results / "bursts-2026-10-25.parquet").exists()
     summary = json.loads((results / "book.json").read_text(encoding="utf-8"))
-    assert summary["days"] == ["2026-10-25"]
+    assert summary["days"] == ["2026-10-25"] and summary["near_gaps"] == 1
     assert summary["data_end"].startswith("2026-10-26 00:10")
     assert summary["busy_hash"] == busy_digest(tmp_path / "busy.json")
     assert summary["stop"]["outcome"] == "too few"
@@ -58,6 +61,16 @@ def test_measure_refuses_a_day_not_fully_copied(
     write_hours(data, hours=20)
     assert measure(data) == 1
     assert "not fully copied" in capsys.readouterr().err
+
+
+def test_measure_needs_the_list_of_outages(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data = tmp_path / "live"
+    write_hours(data)
+    (data / "gaps.parquet").unlink()
+    assert measure(data) == 1
+    assert "feed outages" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(

@@ -28,6 +28,7 @@ from sparq_analytics.live.book import (
     BookConfig,
     book_frames,
     burst_measures,
+    near_gaps,
     tag_trades,
     trade_measures,
 )
@@ -94,8 +95,9 @@ def _one_rule(path: Path | None) -> Rule:
 
 def measure_day(
     folder: Path, day: date, rule: Rule, busy: pl.DataFrame, config: BookConfig
-) -> tuple[pl.DataFrame, pl.DataFrame, datetime]:
-    """One UTC day's per-trade and per-order measures, and where its data ended."""
+) -> tuple[pl.DataFrame, pl.DataFrame, datetime, int]:
+    """One UTC day's per-trade and per-order measures, where its data ended, and how many of its
+    trades were left out for being near an outage of the ticker feed."""
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + DAY
     available = last_hour_end(folder)
@@ -110,15 +112,21 @@ def measure_day(
     trades = pl.scan_parquet(hour_files(folder, "trade", load_start, load_end))
     frames = pl.scan_parquet(hour_files(folder, "ticker", load_start, load_end))
     markets = pl.scan_parquet(folder / "markets.parquet")
+    gap_file = folder / "gaps.parquet"
+    if not gap_file.exists():
+        raise LiveSourceError(f"no list of feed outages at {gap_file}; run extract")
     tagged = tag_trades(trades, markets, busy, rule).collect()
     start_ms, end_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
     data_end_ms = int(data_end.timestamp() * 1000)
-    evaluated = tagged.lazy().filter((pl.col("ts_ms") >= start_ms) & (pl.col("ts_ms") < end_ms))
-    traded = evaluated.select("ticker").unique()
+    day_trades = tagged.filter((pl.col("ts_ms") >= start_ms) & (pl.col("ts_ms") < end_ms))
+    near = near_gaps(pl.read_parquet(gap_file), config, data_end_ms)
+    evaluated = day_trades.filter(~near)
+    dropped = day_trades.height - evaluated.height
+    traded = evaluated.lazy().select("ticker").unique()
     book = book_frames(frames.join(traded, on="ticker", how="semi")).collect().lazy()
-    measured = trade_measures(evaluated, tagged.lazy(), book, config, data_end_ms).collect()
+    measured = trade_measures(evaluated.lazy(), tagged.lazy(), book, config, data_end_ms).collect()
     bursts = burst_measures(measured.lazy(), book, config, data_end_ms).collect()
-    return measured, bursts, data_end
+    return measured, bursts, data_end, dropped
 
 
 def _extract(args: argparse.Namespace) -> int:
@@ -136,7 +144,7 @@ def _extract(args: argparse.Namespace) -> int:
     report = asyncio.run(run())
     print(
         f"copied {report.hours_copied} hour files, {report.hours_present} already there; "
-        f"rows {report.rows}; markets {report.markets:,}"
+        f"rows {report.rows}; markets {report.markets:,}; ticker gaps {report.gaps:,}"
     )
     return 0
 
@@ -151,16 +159,20 @@ def _measure(args: argparse.Namespace) -> int:
     config = BookConfig()
     results = args.data / "results"
     results.mkdir(parents=True, exist_ok=True)
-    all_trades, all_bursts, days, data_end = [], [], [], None
+    all_trades, all_bursts, days, data_end, dropped = [], [], [], None, 0
     day = first
     while day < last:
-        measured, bursts, data_end = measure_day(args.data, day, rule, busy, config)
+        measured, bursts, data_end, near = measure_day(args.data, day, rule, busy, config)
         measured.write_parquet(results / f"trades-{day}.parquet")
         bursts.write_parquet(results / f"bursts-{day}.parquet")
-        print(f"{day}: {measured.height:,} trades, {bursts.height:,} taker orders")
+        print(
+            f"{day}: {measured.height:,} trades, {bursts.height:,} taker orders; "
+            f"{near:,} trades left out near feed outages"
+        )
         all_trades.append(measured)
         all_bursts.append(bursts)
         days.append(str(day))
+        dropped += near
         day += timedelta(days=1)
     summary = summarize(
         pl.concat(all_trades), pl.concat(all_bursts), rule, config, resamples=args.resamples
@@ -168,6 +180,7 @@ def _measure(args: argparse.Namespace) -> int:
     summary |= {
         "days": days,
         "data_end": str(data_end),
+        "near_gaps": dropped,
         "busy_hash": busy_digest(args.busy),
         "rule_file": str(args.rule),
     }

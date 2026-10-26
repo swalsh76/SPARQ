@@ -92,8 +92,9 @@ def test_extract_copies_each_hour_once_and_resumes(tmp_path: Path) -> None:
     report = asyncio.run(extract(conn, tmp_path, T0, end, now=now, log=lines.append))
     assert report.hours_copied == 4 and report.hours_present == 0
     assert report.rows == {"ticker": frames().height, "trade": trades().height}
-    assert report.markets == markets().height
-    copied = pl.read_parquet(tmp_path / "trade" / "2026-10-25T00.parquet")
+    assert report.markets == markets().height and report.gaps == 1
+    assert pl.read_parquet(tmp_path / "gaps.parquet").row(0)[0] == "ticker"
+    copied = pl.read_parquet(sorted((tmp_path / "trade").glob("*.parquet")))
     assert copied.schema["is_block_trade"] == pl.Boolean
     assert copied.sort("ticker", "ts_ms").equals(trades().sort("ticker", "ts_ms"))
     assert not list(tmp_path.rglob("*.part"))  # no staging file is left behind

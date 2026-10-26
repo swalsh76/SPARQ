@@ -166,7 +166,8 @@ def render(summary: dict[str, Any]) -> str:
     names = list(groups)
     lines = [
         f"Rule: {summary['rule']}. Days: {', '.join(summary.get('days', []))}; data to "
-        f"{summary.get('data_end', 'n/a')}.",
+        f"{summary.get('data_end', 'n/a')}; {summary.get('near_gaps', 0):,} trades near feed "
+        "outages left out.",
         "",
         f"**Stop rule: {stop['outcome']}** ({_pct(stop['share'])} of {stop['orders']:,} cleared "
         f"levels over {stop['events']:,} events refilled within {_seconds(stop['within_ms'])}; "

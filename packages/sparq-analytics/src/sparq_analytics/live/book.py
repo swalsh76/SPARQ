@@ -19,6 +19,8 @@ Four measures, per trade or per taker order:
 * **Refills:** after a taker order clears the level it hit (it traded beyond it, or took at least
   the size shown there), how soon a frame shows that side at the same price or better again.
 
+Trades near an outage of the ticker feed are left out and counted (``near_gaps``).
+
 Nothing here looks more than ten minutes past a trade and nothing reads a settlement result: until
 S1.1b's verdict D11 allows book measures and markouts of ten minutes or less only.
 """
@@ -30,6 +32,7 @@ import polars as pl
 from sparq_analytics.study.rules import Rule
 
 GUARD_MS = 600_000  # D11: ten minutes
+BOOK_SETTLE_MS = 60_000  # after an outage, a minute for every market's book to be shown again
 ONE_E6 = 1_000_000
 NO_ASK = 2 * ONE_E6  # an empty ask, above every price
 NO_BID = -1  # an empty bid, below every price
@@ -121,6 +124,19 @@ def tag_trades(
         )
         .with_columns(in_rule=rule.expr())
     )
+
+
+def near_gaps(gaps: pl.DataFrame, config: BookConfig, data_end_ms: int) -> pl.Expr:
+    """True for a trade whose windows reach into an outage of the ticker feed, or that comes in
+    the minute after one (its book would be stale). Trades are backfilled after an outage but
+    frames are lost, so such a trade would read a book that is not there: a refill would be
+    missed, which leans the stop rule toward going on. An outage with no end yet runs to the end
+    of the data."""
+    near = pl.lit(False)
+    for start, end in gaps.select("start_ms", "end_ms").iter_rows():
+        last = data_end_ms if end is None else end
+        near |= pl.col("ts_ms").is_between(start - config.lookahead_ms, last + BOOK_SETTLE_MS)
+    return near
 
 
 def book_frames(frames: pl.LazyFrame) -> pl.LazyFrame:

@@ -18,6 +18,8 @@ contract, prices millionths of a dollar.
   the book the taker met, and not a refill. Half a contract trades at 90c before a joined order
   could be placed (it joins 1 s later behind 3), and 2.8 more after: the queue is not passed.
 * ``M8``: a series exactly at the rule's upper activity bound, which is the busy tier.
+* A 5 s outage of the ticker feed one hour in (``gaps``): the M7 trade 10 minutes before it is
+  left out by the command line, the one 6.5 minutes after it is kept.
 """
 
 import json
@@ -26,7 +28,14 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from sparq_analytics.live.source import HOUR, MARKET_SCHEMA, TICKER_SCHEMA, TRADE_SCHEMA, hour_name
+from sparq_analytics.live.source import (
+    GAP_SCHEMA,
+    HOUR,
+    MARKET_SCHEMA,
+    TICKER_SCHEMA,
+    TRADE_SCHEMA,
+    hour_name,
+)
 from sparq_analytics.study.rules import Rule, rules_from_json
 
 BASE_TIME = datetime(2026, 10, 25, tzinfo=UTC)
@@ -137,6 +146,8 @@ def trades() -> pl.DataFrame:
         _trade(100_000, "M7", "g1", 900_000, 100, "yes"),
         _trade(100_500, "M7", "g2", 900_000, 50, "yes"),
         _trade(200_000, "M7", "g3", 900_000, 280, "yes"),
+        _trade(3_000_000, "M7", "g4", 900_000, 100, "yes"),
+        _trade(4_000_000, "M7", "g5", 900_000, 100, "yes"),
         _trade(0, "M8", "h0", 310_000, 100, "yes"),
     ]
     return pl.DataFrame(rows, schema=TRADE_SCHEMA).with_columns(
@@ -163,6 +174,13 @@ def markets() -> pl.DataFrame:
     )
 
 
+def gaps() -> pl.DataFrame:
+    return pl.DataFrame(
+        [{"kind": "ticker", "start_ms": BASE + 3_600_000, "end_ms": BASE + 3_605_000}],
+        schema=GAP_SCHEMA,
+    )
+
+
 def write_hours(folder: Path, hours: int = 25) -> None:
     """The scenario as hour files from ``BASE`` (``hours`` of them; empty where nothing happened),
     with the market list."""
@@ -175,6 +193,7 @@ def write_hours(folder: Path, hours: int = 25) -> None:
             path.parent.mkdir(parents=True, exist_ok=True)
             data.filter((pl.col("ts_ms") >= lo) & (pl.col("ts_ms") < hi)).write_parquet(path)
     markets().write_parquet(folder / "markets.parquet")
+    gaps().write_parquet(folder / "gaps.parquet")
 
 
 class FakeCopier:
@@ -196,6 +215,8 @@ class FakeCopier:
             data = self._between(trades(), args).with_columns(
                 pl.col("is_block_trade").cast(pl.Int8)
             )
+        elif "FROM gap_log" in query:
+            data = gaps()
         else:
             data = markets()
         data.write_csv(output)
