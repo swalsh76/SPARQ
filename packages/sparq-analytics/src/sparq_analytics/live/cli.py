@@ -113,7 +113,7 @@ def measure_day(
     busy: pl.DataFrame,
     config: BookConfig,
     *,
-    groups: int = 4,
+    groups: int = 16,  # 2026-10-25: 16 groups peak at 14.5 GB against 23 GB for one
 ) -> tuple[pl.DataFrame, pl.DataFrame, datetime, int]:
     """One UTC day's per-trade and per-order measures, where its data ended, and how many of its
     trades were left out for being near an outage of the ticker feed.
