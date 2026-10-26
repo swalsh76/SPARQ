@@ -93,11 +93,34 @@ def _one_rule(path: Path | None) -> Rule:
     return rules[0]
 
 
+def market_groups(trades: pl.DataFrame, groups: int) -> list[list[str]]:
+    """The traded markets in ``groups`` runs of about equal trade counts (at least one group)."""
+    counts = trades.group_by("ticker").len().sort("ticker")
+    if counts.is_empty():
+        return [[]]
+    total = int(counts["len"].sum())
+    numbered = counts.with_columns(group=(pl.col("len").cum_sum() - 1) * groups // total)
+    return [
+        numbered.filter(pl.col("group") == g)["ticker"].to_list()
+        for g in numbered["group"].unique().sort()
+    ]
+
+
 def measure_day(
-    folder: Path, day: date, rule: Rule, busy: pl.DataFrame, config: BookConfig
+    folder: Path,
+    day: date,
+    rule: Rule,
+    busy: pl.DataFrame,
+    config: BookConfig,
+    *,
+    groups: int = 4,
 ) -> tuple[pl.DataFrame, pl.DataFrame, datetime, int]:
     """One UTC day's per-trade and per-order measures, where its data ended, and how many of its
-    trades were left out for being near an outage of the ticker feed."""
+    trades were left out for being near an outage of the ticker feed.
+
+    Every measure looks at one market at a time, so the day is measured in ``groups`` groups of
+    markets, one after another, to keep the book and the windows of only one group in memory; the
+    results are the same for any number of groups."""
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + DAY
     available = last_hour_end(folder)
@@ -122,10 +145,18 @@ def measure_day(
     near = near_gaps(pl.read_parquet(gap_file), config, data_end_ms)
     evaluated = day_trades.filter(~near)
     dropped = day_trades.height - evaluated.height
-    traded = evaluated.lazy().select("ticker").unique()
-    book = book_frames(frames.join(traded, on="ticker", how="semi")).collect().lazy()
-    measured = trade_measures(evaluated.lazy(), tagged.lazy(), book, config, data_end_ms).collect()
-    bursts = burst_measures(measured.lazy(), book, config, data_end_ms).collect()
+    measured_parts, burst_parts = [], []
+    for markets_in_group in market_groups(evaluated, groups):
+        mine = pl.col("ticker").is_in(markets_in_group)
+        book = book_frames(frames.filter(mine)).collect().lazy()
+        measured = trade_measures(
+            evaluated.filter(mine).lazy(), tagged.filter(mine).lazy(), book, config, data_end_ms
+        ).collect()
+        burst_parts.append(burst_measures(measured.lazy(), book, config, data_end_ms).collect())
+        measured_parts.append(measured)
+        del book
+    measured = pl.concat(measured_parts).sort("ticker", "ts_ms", maintain_order=True)
+    bursts = pl.concat(burst_parts).sort("ticker", "ts_ms", "taker_yes")
     return measured, bursts, data_end, dropped
 
 

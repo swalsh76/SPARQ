@@ -176,7 +176,14 @@ def markets() -> pl.DataFrame:
 
 def gaps() -> pl.DataFrame:
     return pl.DataFrame(
-        [{"kind": "ticker", "start_ms": BASE + 3_600_000, "end_ms": BASE + 3_605_000}],
+        [
+            {
+                "kind": "ticker",
+                "start_ms": BASE + 3_600_000,
+                "end_ms": BASE + 3_605_000,
+                "reason": "connection_lost",
+            }
+        ],
         schema=GAP_SCHEMA,
     )
 

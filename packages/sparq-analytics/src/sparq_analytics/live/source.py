@@ -59,7 +59,7 @@ MARKET_SQL = (
 # one has no end yet
 GAP_SQL = (
     "SELECT kind, floor(extract(epoch FROM started_at) * 1000)::bigint AS start_ms, "
-    "floor(extract(epoch FROM ended_at) * 1000)::bigint AS end_ms "
+    "floor(extract(epoch FROM ended_at) * 1000)::bigint AS end_ms, reason "
     "FROM gap_log WHERE kind IN ('ticker', 'all')"
 )
 
@@ -91,7 +91,7 @@ MARKET_SCHEMA = {
     "open_ms": pl.Int64,
     "close_ms": pl.Int64,
 }
-GAP_SCHEMA = {"kind": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64}
+GAP_SCHEMA = {"kind": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64, "reason": pl.String}
 TABLES = (("ticker", TICKER_SQL, TICKER_SCHEMA), ("trade", TRADE_SQL, TRADE_SCHEMA))
 
 

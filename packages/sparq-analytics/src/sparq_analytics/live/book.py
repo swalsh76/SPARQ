@@ -37,6 +37,7 @@ ONE_E6 = 1_000_000
 NO_ASK = 2 * ONE_E6  # an empty ask, above every price
 NO_BID = -1  # an empty bid, below every price
 SIDES = ("bid", "bid_size", "ask", "ask_size")
+TICKER_LOST = "could not resubscribe to ticker"  # the ingest's reason for such an ``all`` gap
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,16 +126,37 @@ def tag_trades(
     )
 
 
+def ticker_outages(gaps: pl.DataFrame, data_end_ms: int) -> list[tuple[int, int]]:
+    """The windows in which ticker frames were lost, from the ingest's gap log.
+
+    Every ``ticker`` gap is one. An ``all`` gap is one only when the ticker channel is the one
+    that could not be resubscribed (its reason names the channel; losing another channel leaves
+    the book whole). The ingest never closes such a gap, so it is taken to end when a reconnect or
+    a restart subscribed again, which the next ``ticker`` gap marks, or else at the end of the
+    data. A ``ticker`` gap still open runs to the end of the data too.
+    """
+    rows = gaps.sort("start_ms").iter_rows(named=True)
+    starts = sorted(gaps.filter(pl.col("kind") == "ticker")["start_ms"].to_list())
+    windows = []
+    for gap in rows:
+        start, end = gap["start_ms"], gap["end_ms"]
+        if gap["kind"] == "all":
+            if gap["reason"] != TICKER_LOST:
+                continue
+            if end is None:
+                end = next((s for s in starts if s > start), None)
+        windows.append((start, data_end_ms if end is None else end))
+    return windows
+
+
 def near_gaps(gaps: pl.DataFrame, config: BookConfig, data_end_ms: int) -> pl.Expr:
     """True for a trade whose windows reach into an outage of the ticker feed, or that comes in
     the minute after one (its book would be stale). Trades are backfilled after an outage but
     frames are lost, so such a trade would read a book that is not there: a refill would be
-    missed, which leans the stop rule toward going on. An outage with no end yet runs to the end
-    of the data."""
+    missed, which leans the stop rule toward going on."""
     near = pl.lit(False)
-    for start, end in gaps.select("start_ms", "end_ms").iter_rows():
-        last = data_end_ms if end is None else end
-        near |= pl.col("ts_ms").is_between(start - config.lookahead_ms, last + BOOK_SETTLE_MS)
+    for start, end in ticker_outages(gaps, data_end_ms):
+        near |= pl.col("ts_ms").is_between(start - config.lookahead_ms, end + BOOK_SETTLE_MS)
     return near
 
 

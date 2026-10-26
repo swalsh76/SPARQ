@@ -20,6 +20,32 @@ def measure(data: Path, *extra: str) -> int:
                  "--resamples", "100", *extra])  # fmt: skip
 
 
+def test_a_day_measured_in_groups_of_markets_is_the_same_as_in_one(tmp_path: Path) -> None:
+    from datetime import date
+
+    from sparq_analytics.live.book import BookConfig
+    from sparq_analytics.study.forward import read_busy
+    from sparq_analytics.study.rules import rules_from_json
+
+    data = tmp_path / "live"
+    write_hours(data)
+    rule_file, busy_file = write_inputs(tmp_path)
+    rule = rules_from_json(json.loads(rule_file.read_text(encoding="utf-8")))[0]
+    busy = read_busy(busy_file)
+
+    def run(groups: int) -> tuple[pl.DataFrame, pl.DataFrame]:
+        out = cli.measure_day(data, date(2026, 10, 25), rule, busy, BookConfig(), groups=groups)
+        return out[0], out[1]
+
+    whole_trades, whole_orders = run(1)
+    assert len(cli.market_groups(whole_trades, 3)) == 3
+    for groups in (2, 3, 50):
+        trades_, orders = run(groups)
+        assert trades_.sort(trades_.columns).equals(whole_trades.sort(whole_trades.columns))
+        assert orders.equals(whole_orders)
+    assert cli.market_groups(whole_trades.clear(), 4) == [[]]
+
+
 def test_measure_writes_the_results_and_the_summary(tmp_path: Path) -> None:
     data = tmp_path / "live"
     write_hours(data)

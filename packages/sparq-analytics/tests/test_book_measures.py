@@ -13,8 +13,10 @@ from sparq_analytics.live.book import (
     check_rule,
     near_gaps,
     tag_trades,
+    ticker_outages,
     trade_measures,
 )
+from sparq_analytics.live.source import GAP_SCHEMA
 from sparq_analytics.study.rules import add_rule_features
 
 FAR = BASE + 10 * 86_400_000  # a data end far beyond every window
@@ -212,8 +214,8 @@ def test_an_order_near_the_end_of_the_data_is_not_complete() -> None:
 def test_trades_near_an_outage_of_the_feed() -> None:
     config = BookConfig()
     outage = pl.DataFrame(
-        {"kind": ["ticker"], "start_ms": [1_000_000], "end_ms": [1_005_000]},
-        schema={"kind": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64},
+        {"kind": ["ticker"], "start_ms": [1_000_000], "end_ms": [1_005_000], "reason": ["x"]},
+        schema=GAP_SCHEMA,
     )
     times = pl.DataFrame({"ts_ms": [399_999, 400_000, 1_002_000, 1_065_000, 1_065_001]})
     near = times.select(near_gaps(outage, config, 10**9)).to_series().to_list()
@@ -223,6 +225,22 @@ def test_trades_near_an_outage_of_the_feed() -> None:
     later = pl.DataFrame({"ts_ms": [5_000_000]})
     assert later.select(near_gaps(still_open, config, 5_000_000)).item()
     assert not times.select(near_gaps(outage.clear(), config, 10**9)).to_series().any()
+
+
+def test_a_failed_resubscribe_counts_only_for_the_ticker_channel_until_the_next_reconnect() -> None:
+    def gap(kind: str, start: int, end: int | None, reason: str) -> dict[str, object]:
+        return {"kind": kind, "start_ms": start, "end_ms": end, "reason": reason}
+
+    lost = gap("all", 1_000, None, "could not resubscribe to ticker")
+    other = gap("all", 2_000, None, "could not resubscribe to trade")
+    reconnect = gap("ticker", 50_000, 51_000, "connection_lost")
+    gaps = pl.DataFrame([other, reconnect, lost], schema=GAP_SCHEMA)
+    # the ticker channel's loss ends when the reconnect subscribes again; the trade channel's
+    # loss leaves the book whole
+    assert ticker_outages(gaps, 10**9) == [(1_000, 50_000), (50_000, 51_000)]
+    # with no reconnect after it, it runs to the end of the data
+    alone = pl.DataFrame([lost, other], schema=GAP_SCHEMA)
+    assert ticker_outages(alone, 99_000) == [(1_000, 99_000)]
 
 
 def test_a_side_without_size_is_empty() -> None:
