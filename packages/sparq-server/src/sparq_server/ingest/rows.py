@@ -18,6 +18,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
+from sparq_core.fixedpoint import E6
+from sparq_core.markets import is_combo
 from sparq_core.ws import Data
 from sparq_core.ws_models import (
     COMBO_LIFECYCLE,
@@ -30,8 +32,6 @@ from sparq_core.ws_models import (
     TradeMsg,
 )
 
-E6 = 1_000_000
-COMBO_PREFIX = "KXMVE"
 SOURCE_STREAM = "stream"
 PLAUSIBLE_MS = 3_600_000  # an exchange time further than an hour from our clock is not believed
 
@@ -224,7 +224,7 @@ def convert(data: Data) -> Converted:
     if frame.error is not None:
         return Converted(Reject(frame.type, frame.error, frame.raw))
     payload = frame.payload
-    if isinstance(payload, TickerMsg | TradeMsg) and payload.market_ticker.startswith(COMBO_PREFIX):
+    if isinstance(payload, TickerMsg | TradeMsg) and is_combo(payload.market_ticker):
         return Converted(Skip("combo market"))
     result: Row | Reject | Skip
     doubtful = False
@@ -233,7 +233,7 @@ def convert(data: Data) -> Converted:
     elif isinstance(payload, TradeMsg):
         result, doubtful = trade_row(payload, data.received_ns)
     elif isinstance(payload, MarketLifecycleMsg):
-        if frame.type == COMBO_LIFECYCLE or (payload.market_ticker or "").startswith(COMBO_PREFIX):
+        if frame.type == COMBO_LIFECYCLE or is_combo(payload.market_ticker or ""):
             return Converted(Skip("combo market"))
         result = lifecycle_row(payload, frame.sending_ts_ms, data.received_ns)
     else:

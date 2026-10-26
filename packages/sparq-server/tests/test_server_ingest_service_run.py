@@ -16,9 +16,6 @@ from sparq_server.admin import managed
 from sparq_server.db.migrate import HEAD
 from sparq_server.ingest import state
 from sparq_server.ingest.service import (
-    EXIT_DISK_FULL,
-    EXIT_REFUSED,
-    STOPPED_REASON,
     DiskFull,
     ServiceConfig,
     ServiceError,
@@ -28,6 +25,8 @@ from sparq_server.ingest.service import (
     run_service,
     supervise,
 )
+from sparq_server.ingest.state import STOPPED_REASON
+from sparq_server.names import EXIT_DISK_FULL, EXIT_REFUSED
 from sqlalchemy.engine import make_url
 
 pytestmark = pytest.mark.db

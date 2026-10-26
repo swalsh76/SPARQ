@@ -5,16 +5,19 @@ contracts in hundredths); times are UTC microsecond timestamps. A trade's no-pri
 stored, because yes plus no is always one dollar (the model checks it).
 """
 
-import json
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
 import pyarrow as pa
+from sparq_core.markets import (
+    MARKET_COLUMNS,
+    MARKET_INTS,
+    MARKET_TEXT,
+    MARKET_TIMES,
+    market_values,
+)
 from sparq_core.models import Candlestick, Market, Series, SeriesFeeChange, Trade
-
-COMBO_PREFIX = "KXMVE"  # combo (multivariate) markets: skipped everywhere (CLAUDE.md)
-SETTLED_STATUSES = frozenset({"finalized", "settled", "determined"})
 
 TIMESTAMP = pa.timestamp("us", tz="UTC")
 
@@ -30,26 +33,11 @@ TRADES_SCHEMA = pa.schema(
     ]
 )
 
-_MARKET_TEXT = (
-    "ticker", "event_ticker", "series_ticker", "source", "label", "status", "result", "market_type",
-    "title", "yes_sub_title", "no_sub_title", "rules_primary", "rules_secondary",
-    "early_close_condition", "strike_type", "floor_strike", "cap_strike", "price_level_structure",
-)  # fmt: skip
-_MARKET_TIME = (
-    "created_time", "open_time", "close_time", "expected_expiration_time", "expiration_time",
-    "latest_expiration_time", "occurrence_datetime", "settlement_ts", "updated_time",
-)  # fmt: skip
-_MARKET_INT = (
-    "settlement_value_e6", "last_price_e6", "previous_price_e6", "yes_bid_e6", "yes_ask_e6",
-    "no_bid_e6", "no_ask_e6", "yes_bid_size_e2", "yes_ask_size_e2", "volume_e2", "volume_24h_e2",
-    "open_interest_e2", "notional_value_e6",
-)  # fmt: skip
-
 MARKETS_SCHEMA = pa.schema(
-    [(name, pa.string()) for name in _MARKET_TEXT]
+    [(name, pa.string()) for name in MARKET_TEXT]
     + [("exchange_index", pa.int32()), ("can_close_early", pa.bool_())]
-    + [(name, TIMESTAMP) for name in _MARKET_TIME]
-    + [(name, pa.int64()) for name in _MARKET_INT]
+    + [(name, TIMESTAMP) for name in MARKET_TIMES]
+    + [(name, pa.int64()) for name in MARKET_INTS]
     + [("raw_json", pa.string())]
 )
 
@@ -103,29 +91,6 @@ CANDLES_SCHEMA = pa.schema(
 )
 
 
-def is_combo(ticker: str) -> bool:
-    return ticker.startswith(COMBO_PREFIX)
-
-
-def series_ticker_of(event_ticker: str | None) -> str | None:
-    """A market's series is the first part of its event ticker (checked live in K0.5.3b)."""
-    return event_ticker.split("-")[0] if event_ticker else None
-
-
-def label_of(market: Market) -> str:
-    """The outcome label the study uses (KAPS decision 23).
-
-    ``yes`` and ``no`` are the usable binary outcomes. ``scalar`` markets settle at a fraction
-    of a dollar (the settlement value) and are kept apart. ``other_settled`` is anything with a
-    settled status but no result, which the study leaves out until a study says otherwise.
-    """
-    if market.result in ("yes", "no", "scalar"):
-        return market.result
-    if market.status in SETTLED_STATUSES:
-        return "other_settled"
-    return "unsettled"
-
-
 def trades_table(trades: Sequence[Trade]) -> pa.Table:
     return pa.table(
         {
@@ -145,20 +110,10 @@ def markets_table(
     markets: Sequence[Market], raw: Sequence[dict[str, Any]], source: str
 ) -> pa.Table:
     """Markets with their label, derived series ticker and the original JSON of each row."""
-    columns: dict[str, list[Any]] = {field.name: [] for field in MARKETS_SCHEMA}
-    for market, original in zip(markets, raw, strict=True):
-        for name in MARKETS_SCHEMA.names:
-            if name == "series_ticker":
-                value = series_ticker_of(market.event_ticker)
-            elif name == "source":
-                value = source
-            elif name == "label":
-                value = label_of(market)
-            elif name == "raw_json":
-                value = json.dumps(original, separators=(",", ":"))
-            else:
-                value = getattr(market, name)
-            columns[name].append(value)
+    rows = [market_values(m, original, source) for m, original in zip(markets, raw, strict=True)]
+    columns: dict[str, list[Any]] = {
+        name: [row[i] for row in rows] for i, name in enumerate(MARKET_COLUMNS)
+    }
     return pa.table(columns, schema=MARKETS_SCHEMA)
 
 

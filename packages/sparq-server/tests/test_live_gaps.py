@@ -30,10 +30,10 @@ import httpx
 import pytest
 from dbhelpers import dsn
 from sparq_core.auth import AuthError, DataSigner
-from sparq_core.config import Environment, KalshiConfig
+from sparq_core.config import WS_URLS, Environment, KalshiConfig
 from sparq_core.endpoints import MarketData
 from sparq_core.rest import KalshiPublicClient
-from sparq_core.ws import DEFAULT_WS_URL, FeedConfig, KalshiFeed
+from sparq_core.ws import FeedConfig, KalshiFeed
 from sparq_server.ingest.backfill import Backfiller
 from sparq_server.ingest.discovery import Discovery, DiscoveryConfig
 from sparq_server.ingest.exchange import ExchangePoller
@@ -107,7 +107,10 @@ async def test_a_dropped_link_is_repaired_and_the_stored_trades_match_rest(migra
         data = MarketData(client)
         # a slow reconnect (5 to 10 s) so that the stream really misses trades
         feed = KalshiFeed(
-            signer, FeedConfig(url=DEFAULT_WS_URL, reconnect_base=10.0, reconnect_max=10.0)
+            signer,
+            FeedConfig(
+                url=WS_URLS[Environment.PRODUCTION], reconnect_base=10.0, reconnect_max=10.0
+            ),
         )
         async with IngestWriter(connector(migrated), WriterConfig()) as writer:
             backfiller = Backfiller(data, writer, connector(migrated))

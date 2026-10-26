@@ -91,6 +91,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | S1.3 | The write path, risk layer and kill switch on demo, with the key custody design | Proven on demo: every route, every limit refusal, the kill switch, an unclear-order look-up | not started |
 | S1.1b | R4 refined on the fit and validate parts (D10), the chosen rule pre-registered, the forward days downloaded after the window closes, the forward test opened once, the write-up | D10 | **registered 2026-10-25** (digest `0af9ea44be7f...`, `docs/research/forward-test.md`); the verdict after the window closes on 2026-11-23 |
 | S1.4 | The tiny live pilot | D8 | not started |
+| S1.2p | Shared definitions (owner approved 2026-10-26, from a code review; items 1 and 5 of the review went into S1.2a): the stored market in `sparq_core.markets` (combo prefix, labels, columns, the row builder) for the downloader, the ingest and the schema; the WebSocket address per environment in `config.py`, demo by default, the ingest asking for production; `sparq_server.names` for the names install, the ingest and the watchdog share, with the state keys and gap kinds imported, not spelled out | Behaviour unchanged: format, lint, types, tests and coverage; planted bugs caught | **done** (BUILD-LOG S1.2p) |
 
 ## 7. Risks
 

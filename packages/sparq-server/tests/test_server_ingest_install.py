@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from fakehost import FakeHost
+from sparq_server import names
 from sparq_server.admin import managed
 from sparq_server.admin.answers import Answers, AnswersError, parse_answers
 from sparq_server.admin.cli import main
@@ -26,7 +27,7 @@ allowed_clients = ["192.0.2.20"]
 checkout = "/home/agent/sparq"
 uv = "/home/agent/.local/bin/uv"
 """
-UNIT = f"{managed.SYSTEMD_DIRECTORY}/{managed.INGEST_UNIT}"
+UNIT = f"{managed.SYSTEMD_DIRECTORY}/{names.INGEST_UNIT}"
 
 
 def answers(extra: str = "") -> Answers:
@@ -34,7 +35,7 @@ def answers(extra: str = "") -> Answers:
 
 
 def add_key(host: FakeHost) -> None:
-    for name in managed.INGEST_CREDENTIALS:
+    for name in names.INGEST_CREDENTIALS:
         host.files[managed.credential_file(name)] = "encrypted"
 
 
@@ -93,12 +94,12 @@ def test_install_creates_the_role_builds_the_program_and_writes_the_unit() -> No
     assert outcomes["tpm support"].changed and "libtss2-rc0t64" in host.installed
     cluster = host.clusters["main"]
     assert managed.INGEST_ROLE in cluster.roles and cluster.grants
-    assert host.files[managed.INGEST_CONFIG] == managed.render_ingest_config(
+    assert host.files[names.INGEST_CONFIG] == managed.render_ingest_config(
         config.installable_host()
     )
     assert host.files[UNIT] == managed.render_ingest_unit()
     assert host.files[managed.APP_COMMIT_FILE] == "a" * 40 + "\n"
-    assert managed.INGEST_UNIT in host.enabled
+    assert names.INGEST_UNIT in host.enabled
     assert host.modes[managed.CREDENTIALS_DIRECTORY] == 0o700
 
 
@@ -106,7 +107,7 @@ def test_without_the_key_the_service_is_enabled_and_left_stopped_with_the_reason
     host, config = FakeHost(), answers()
     outcomes = {o.step: o for o in run_install(host, config)}
     assert "not started" in outcomes["ingest service"].detail
-    assert managed.INGEST_UNIT not in host.active
+    assert names.INGEST_UNIT not in host.active
 
 
 def test_with_the_key_the_service_is_started() -> None:
@@ -114,7 +115,7 @@ def test_with_the_key_the_service_is_started() -> None:
     add_key(host)
     outcomes = {o.step: o for o in run_install(host, config)}
     assert outcomes["ingest service"].detail == "started"
-    assert managed.INGEST_UNIT in host.active
+    assert names.INGEST_UNIT in host.active
 
 
 def test_a_second_run_changes_nothing_and_runs_no_changing_command() -> None:
@@ -150,20 +151,20 @@ def test_a_new_commit_rebuilds_the_program_and_restarts_the_service() -> None:
         outcomes["ingest program"].detail
     )
     assert outcomes["ingest service"].detail.startswith("restarted")
-    assert f"systemctl restart {managed.INGEST_UNIT}" in host.log
+    assert f"systemctl restart {names.INGEST_UNIT}" in host.log
     assert host.files[managed.APP_COMMIT_FILE] == "b" * 40 + "\n"
 
 
 def test_a_hand_edited_settings_file_is_put_back_and_the_service_restarted() -> None:
     host, config = installed(key=True)
-    host.files[managed.INGEST_CONFIG] = "disk_stop_percent = 99\n"
+    host.files[names.INGEST_CONFIG] = "disk_stop_percent = 99\n"
     host.log.clear()
     outcomes = {o.step: o for o in run_install(host, config)}
     assert outcomes["ingest service"].changed
-    assert host.files[managed.INGEST_CONFIG] == managed.render_ingest_config(
+    assert host.files[names.INGEST_CONFIG] == managed.render_ingest_config(
         config.installable_host()
     )
-    assert f"systemctl restart {managed.INGEST_UNIT}" in host.log
+    assert f"systemctl restart {names.INGEST_UNIT}" in host.log
 
 
 def test_a_changed_unit_reloads_systemd_before_the_restart() -> None:
@@ -172,7 +173,7 @@ def test_a_changed_unit_reloads_systemd_before_the_restart() -> None:
     host.log.clear()
     run_install(host, config)
     reload_at = host.log.index("systemctl daemon-reload")
-    assert reload_at < host.log.index(f"systemctl restart {managed.INGEST_UNIT}")
+    assert reload_at < host.log.index(f"systemctl restart {names.INGEST_UNIT}")
 
 
 def test_a_stopped_service_whose_key_is_stored_is_started_again() -> None:
@@ -201,7 +202,7 @@ def test_with_the_ingest_off_no_ingest_step_runs() -> None:
     host = FakeHost()
     run_install(host, parse_answers(BASE.split("[database_host.ingest]")[0]))
     assert managed.INGEST_ROLE not in host.clusters["main"].roles
-    assert managed.INGEST_CONFIG not in host.files
+    assert names.INGEST_CONFIG not in host.files
 
 
 # --- the files install renders --------------------------------------------------------------------
@@ -210,7 +211,7 @@ def test_with_the_ingest_off_no_ingest_step_runs() -> None:
 def test_the_unit_runs_as_the_service_account_and_sees_the_key_only_as_a_credential() -> None:
     unit = managed.render_ingest_unit()
     assert "User=sparq" in unit and "Restart=always" in unit
-    for name in managed.INGEST_CREDENTIALS:
+    for name in names.INGEST_CREDENTIALS:
         assert f"LoadCredentialEncrypted={name}:/etc/sparq/credentials/{name}.cred" in unit
     assert "Environment=" not in unit and "KALSHI" not in unit
     for hardening in ("NoNewPrivileges=yes", "ProtectSystem=strict", "PrivateTmp=yes"):
@@ -219,7 +220,7 @@ def test_the_unit_runs_as_the_service_account_and_sees_the_key_only_as_a_credent
 
 def test_the_unit_does_not_restart_a_service_that_stopped_on_purpose() -> None:
     unit = managed.render_ingest_unit()
-    assert f"RestartPreventExitStatus={managed.EXIT_DISK_FULL} {managed.EXIT_REFUSED}" in unit
+    assert f"RestartPreventExitStatus={names.EXIT_DISK_FULL} {names.EXIT_REFUSED}" in unit
     assert "StartLimitIntervalSec=0" in unit  # a flapping database must not lock it out for good
 
 
@@ -270,7 +271,7 @@ def test_a_stored_key_with_the_service_down_is_a_failure() -> None:
 
 @pytest.mark.parametrize(
     ("path", "name"),
-    [(managed.INGEST_CONFIG, "ingest settings"), (UNIT, "ingest unit")],
+    [(names.INGEST_CONFIG, "ingest settings"), (UNIT, "ingest unit")],
 )
 def test_a_hand_edited_file_is_a_failure(path: str, name: str) -> None:
     host, config = installed(key=True)
@@ -286,7 +287,7 @@ def test_a_program_that_was_never_built_is_a_failure() -> None:
 
 def test_a_unit_that_is_not_enabled_is_a_failure() -> None:
     host, config = installed(key=True)
-    host.enabled.discard(managed.INGEST_UNIT)
+    host.enabled.discard(names.INGEST_UNIT)
     assert verified(host, config)["ingest enabled"].status == "fail"
 
 

@@ -31,6 +31,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from sparq_core.config import Environment, KalshiConfig
 from sparq_core.endpoints import MarketData, TypedPage
+from sparq_core.markets import is_combo
 from sparq_core.models import Market, Trade
 from sparq_core.rest import KalshiAPIError, KalshiPublicClient
 
@@ -39,7 +40,6 @@ from sparq_analytics.history.rates import RateController
 from sparq_analytics.history.schemas import (
     TRADES_SCHEMA,
     fee_changes_table,
-    is_combo,
     markets_table,
     series_table,
     trades_table,

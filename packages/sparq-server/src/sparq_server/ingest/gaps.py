@@ -11,6 +11,13 @@ from datetime import datetime
 
 import asyncpg
 
+# kinds: what was missed
+TICKER = "ticker"
+TRADES = "trades"
+LIFECYCLE = "lifecycle"
+ALL = "all"  # every channel (a subscription could not be restored)
+
+# statuses: what became of it
 OPEN = "open"
 BACKFILLING = "backfilling"
 DONE = "done"

@@ -10,8 +10,8 @@ from typing import Any
 import httpx
 import pytest
 from sparq_server import watchdog
+from sparq_server.names import EXIT_REFUSED
 from sparq_server.watchdog import (
-    EXIT_REFUSED,
     Message,
     Notifier,
     Observation,

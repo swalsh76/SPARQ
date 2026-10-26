@@ -5,6 +5,7 @@ database itself need root and are reported as skipped otherwise, never silently 
 differs from what ``install`` renders is a failure: someone edited a managed file by hand.
 """
 
+from sparq_server import names
 from sparq_server.admin import managed
 from sparq_server.admin.answers import DatabaseHost
 from sparq_server.admin.install import (
@@ -211,10 +212,10 @@ def _ingest(host: Host, config: DatabaseHost) -> list[Check]:
 
     A missing key is a warning, because an install cannot supply it; a key that is stored while
     the service is not running is a failure."""
-    unit = f"{managed.SYSTEMD_DIRECTORY}/{managed.INGEST_UNIT}"
+    unit = f"{managed.SYSTEMD_DIRECTORY}/{names.INGEST_UNIT}"
     checks = [
         _managed_file(
-            host, "ingest settings", managed.INGEST_CONFIG, managed.render_ingest_config(config)
+            host, "ingest settings", names.INGEST_CONFIG, managed.render_ingest_config(config)
         ),
         _managed_file(host, "ingest unit", unit, managed.render_ingest_unit()),
     ]
@@ -235,14 +236,14 @@ def _ingest(host: Host, config: DatabaseHost) -> list[Check]:
         if built
         else Check("ingest program", "fail", f"not built ({managed.APP_COMMIT_FILE} is missing)")
     )
-    enabled = host.run(["systemctl", "is-enabled", managed.INGEST_UNIT])[0] == 0
+    enabled = host.run(["systemctl", "is-enabled", names.INGEST_UNIT])[0] == 0
     checks.append(
         Check("ingest enabled", "ok", "starts at boot")
         if enabled
-        else Check("ingest enabled", "fail", f"{managed.INGEST_UNIT} is not enabled")
+        else Check("ingest enabled", "fail", f"{names.INGEST_UNIT} is not enabled")
     )
-    stored = all(host.exists(managed.credential_file(n)) for n in managed.INGEST_CREDENTIALS)
-    running = host.run(["systemctl", "is-active", "--quiet", managed.INGEST_UNIT])[0] == 0
+    stored = all(host.exists(managed.credential_file(n)) for n in names.INGEST_CREDENTIALS)
+    running = host.run(["systemctl", "is-active", "--quiet", names.INGEST_UNIT])[0] == 0
     if not stored:
         checks.append(
             Check("ingest data key", "warn", f"not stored yet in {managed.CREDENTIALS_DIRECTORY}")
@@ -273,12 +274,12 @@ def _alerts(host: Host, config: DatabaseHost) -> list[Check]:
     """The watchdog: its files, its topic, its timer, and how its last run ended."""
     checks = [
         _managed_file(
-            host, "alert settings", managed.ALERTS_CONFIG, managed.render_alerts_config(config)
+            host, "alert settings", names.ALERTS_CONFIG, managed.render_alerts_config(config)
         )
     ]
     for path, text in managed.watchdog_units().items():
         checks.append(_managed_file(host, f"alert unit {path.rsplit('/', 1)[-1]}", path, text))
-    stored = host.exists(managed.credential_file(managed.ALERT_CREDENTIAL))
+    stored = host.exists(managed.credential_file(names.ALERT_CREDENTIAL))
     if not stored:
         checks.append(
             Check("alert topic", "warn", f"not stored yet in {managed.CREDENTIALS_DIRECTORY}")

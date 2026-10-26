@@ -39,13 +39,13 @@ import asyncpg
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from sparq_server.ingest import gaps
+from sparq_server.ingest.state import HEARTBEAT, STOPPED_REASON
+from sparq_server.names import ALERT_CREDENTIAL, ALERTS_CONFIG, EXIT_REFUSED, INGEST_UNIT
+
 log = logging.getLogger(__name__)
 
-CONFIG_PATH = "/etc/sparq/alerts.toml"
-TOPIC_CREDENTIAL = "ntfy-topic"
-SERVICE = "sparq-ingest.service"
 STATE_NAME = "state.json"
-EXIT_REFUSED = 78  # a prerequisite is missing; the unit does not retry within the minute
 SEND_TIMEOUT = 15.0
 PROBE_TIMEOUT = 10.0
 
@@ -67,6 +67,7 @@ class WatchdogConfig(BaseModel):
     data_directory: str = Field(pattern=r"^/[^\s]*$")
     silence_seconds: int = Field(default=600, ge=60, le=86_400)
     disk_warn_percent: int = Field(default=80, ge=50, le=99)
+    disk_stop_percent: int = Field(default=90, ge=50, le=99)  # the ingest's own stop level
     reminder_hours: int = Field(default=6, ge=1, le=168)
     confirm_checks: int = Field(default=2, ge=1, le=10)
     stuck_gap_minutes: int = Field(default=60, ge=5, le=1440)
@@ -78,7 +79,7 @@ def parse_config(text: str) -> WatchdogConfig:
     try:
         return WatchdogConfig.model_validate(tomllib.loads(text))
     except (tomllib.TOMLDecodeError, ValidationError) as error:
-        raise WatchdogError(f"{CONFIG_PATH} is not valid: {error}") from error
+        raise WatchdogError(f"{ALERTS_CONFIG} is not valid: {error}") from error
 
 
 # --- what is seen -----------------------------------------------------------------------------
@@ -131,7 +132,9 @@ def evaluate(obs: Observation, config: WatchdogConfig, restart_history: list[int
     if obs.disk_percent is not None and obs.disk_percent >= config.disk_warn_percent:
         problems.append(
             Problem(
-                "disk", f"the data drive is {obs.disk_percent:.0f}% full (the ingest stops at 90%)"
+                "disk",
+                f"the data drive is {obs.disk_percent:.0f}% full "
+                f"(the ingest stops at {config.disk_stop_percent}%)",
             )
         )
     if not obs.db_ok:
@@ -309,7 +312,7 @@ async def observe(
     usage: Callable[[str], Any] = shutil.disk_usage,
 ) -> Observation:
     shown = _properties(
-        await run(["systemctl", "show", SERVICE, "-p", "ActiveState", "-p", "NRestarts"])
+        await run(["systemctl", "show", INGEST_UNIT, "-p", "ActiveState", "-p", "NRestarts"])
     )
     state_text = shown.get("ActiveState", "unknown")
     restarts = int(shown["NRestarts"]) if shown.get("NRestarts", "").isdigit() else None
@@ -327,18 +330,23 @@ async def observe(
         try:
             beat = await conn.fetchval(
                 "SELECT extract(epoch FROM now()) - value::numeric / 1000 "
-                "FROM ingest_state WHERE key = 'feed.heartbeat_ms'"
+                "FROM ingest_state WHERE key = $1",
+                HEARTBEAT,
             )
             age = None if beat is None else float(beat)
             reason = await conn.fetchval(
-                "SELECT value FROM ingest_state WHERE key = 'service.stopped_reason'"
+                "SELECT value FROM ingest_state WHERE key = $1", STOPPED_REASON
             )
             failed, stuck = await conn.fetchrow(
-                "SELECT count(*) FILTER (WHERE kind = 'trades' AND status = 'failed' "
+                "SELECT count(*) FILTER (WHERE kind = $2 AND status = $3 "
                 "AND started_at > now() - interval '6 hours'), "
-                "count(*) FILTER (WHERE status IN ('open', 'backfilling') AND kind <> 'lifecycle' "
+                "count(*) FILTER (WHERE status = ANY($4::text[]) AND kind <> $5 "
                 "AND started_at < now() - $1 * interval '1 minute') FROM gap_log",
                 config.stuck_gap_minutes,
+                gaps.TRADES,
+                gaps.FAILED,
+                list(gaps.UNFINISHED),
+                gaps.LIFECYCLE,
             )
         finally:
             await conn.close()
@@ -399,14 +407,16 @@ def main(argv: list[str] | None = None) -> int:
     test = "--test" in args
     paths = [a for a in args if not a.startswith("--")]
     try:
-        config = parse_config(Path(paths[0] if paths else CONFIG_PATH).read_text(encoding="utf-8"))
+        config = parse_config(
+            Path(paths[0] if paths else ALERTS_CONFIG).read_text(encoding="utf-8")
+        )
         credentials, state_dir = (
             os.environ.get("CREDENTIALS_DIRECTORY"),
             os.environ.get("STATE_DIRECTORY"),
         )
         if not credentials or not state_dir:
             raise WatchdogError("run the watchdog from its systemd unit")
-        topic = (Path(credentials) / TOPIC_CREDENTIAL).read_text(encoding="utf-8").strip()
+        topic = (Path(credentials) / ALERT_CREDENTIAL).read_text(encoding="utf-8").strip()
         if not topic:
             raise WatchdogError("the alert topic credential is empty")
     except (OSError, WatchdogError) as error:

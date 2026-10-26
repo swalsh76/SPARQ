@@ -23,6 +23,12 @@ REST_URLS: dict[Environment, str] = {
     Environment.DEMO: "https://external-api.demo.kalshi.co/trade-api/v2",
     Environment.PRODUCTION: "https://external-api.kalshi.com/trade-api/v2",
 }
+# the demo address is from Kalshi's demo-environment page (checked 2026-10-26); production was
+# used live from K1a.5
+WS_URLS: dict[Environment, str] = {
+    Environment.DEMO: "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2",
+    Environment.PRODUCTION: "wss://external-api-ws.kalshi.com/trade-api/ws/v2",
+}
 
 # Measured live (BUILD-LOG K0.5.3c and K0.5.4): the historical trades endpoint held 10 requests a
 # second for a full minute, but the live trades endpoint and both markets listings answered 429
@@ -69,6 +75,10 @@ class KalshiConfig:
     @property
     def rest_url(self) -> str:
         return REST_URLS[self.environment]
+
+    @property
+    def ws_url(self) -> str:
+        return WS_URLS[self.environment]
 
     @property
     def is_production(self) -> bool:

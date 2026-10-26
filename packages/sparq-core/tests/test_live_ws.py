@@ -25,8 +25,8 @@ from typing import Any
 import httpx
 import pytest
 from sparq_core.auth import AuthError, DataSigner
-from sparq_core.config import REST_URLS, Environment
-from sparq_core.ws import DEFAULT_WS_URL, Data, FeedConfig, KalshiFeed, Reconnected, SequenceGap
+from sparq_core.config import REST_URLS, WS_URLS, Environment
+from sparq_core.ws import Data, FeedConfig, KalshiFeed, Reconnected, SequenceGap
 
 pytestmark = pytest.mark.integration
 
@@ -80,7 +80,7 @@ async def test_real_frames_parse_and_sequences_behave(signer: DataSigner) -> Non
     delays: list[float] = []
     gaps = 0
     errors: list[str] = []
-    async with KalshiFeed(signer, FeedConfig(url=DEFAULT_WS_URL)) as feed:
+    async with KalshiFeed(signer, FeedConfig(url=WS_URLS[Environment.PRODUCTION])) as feed:
         await feed.subscribe("ticker", tickers)
         await feed.subscribe("trade", tickers)
         await feed.subscribe("market_lifecycle_v2")
@@ -132,7 +132,7 @@ async def test_real_frames_parse_and_sequences_behave(signer: DataSigner) -> Non
 
 async def test_a_dropped_link_is_restored_by_the_feed(signer: DataSigner) -> None:
     tickers = busiest_markets(3)
-    config = FeedConfig(url=DEFAULT_WS_URL, reconnect_base=0.5)
+    config = FeedConfig(url=WS_URLS[Environment.PRODUCTION], reconnect_base=0.5)
     async with KalshiFeed(signer, config) as feed:
         await feed.subscribe("ticker", tickers)
         life_sid = await feed.subscribe("market_lifecycle_v2")
@@ -168,7 +168,7 @@ async def test_a_dropped_link_is_restored_by_the_feed(signer: DataSigner) -> Non
 async def test_adding_and_removing_markets_does_not_look_like_a_gap(signer: DataSigner) -> None:
     """Whether a command's reply uses up a number of the subscription's seq, on a busy channel."""
     first, second = busiest_markets(4)[:2], busiest_markets(4)[2:]
-    async with KalshiFeed(signer, FeedConfig(url=DEFAULT_WS_URL)) as feed:
+    async with KalshiFeed(signer, FeedConfig(url=WS_URLS[Environment.PRODUCTION])) as feed:
         sid = await feed.subscribe("trade", first)
         events = feed.events()
         gaps: list[SequenceGap] = []

@@ -6,29 +6,36 @@ state only. Each line is a ``Check``, so the report reads like ``verify`` and th
 whether anything needs attention.
 """
 
+from sparq_server import names
 from sparq_server.admin import managed
 from sparq_server.admin.answers import DatabaseHost
 from sparq_server.admin.install import psql
 from sparq_server.admin.preflight import Check, Status
 from sparq_server.admin.system import CommandFailed, Host
+from sparq_server.ingest import gaps, state
 
 HEARTBEAT_WARN_SECONDS = 30  # the feed delivers many frames a second; silence this long is odd
 HEARTBEAT_FAIL_SECONDS = 180
 
 
 def _service(host: Host) -> Check:
-    code, _ = host.run(["systemctl", "is-active", "--quiet", managed.INGEST_UNIT])
+    code, _ = host.run(["systemctl", "is-active", "--quiet", names.INGEST_UNIT])
     if code == 0:
         _, since = host.run(
-            ["systemctl", "show", managed.INGEST_UNIT, "--property=ActiveEnterTimestamp", "--value"]
+            ["systemctl", "show", names.INGEST_UNIT, "--property=ActiveEnterTimestamp", "--value"]
         )
         return Check("service", "ok", f"running since {since.strip() or 'unknown'}")
-    return Check("service", "fail", f"{managed.INGEST_UNIT} is not running")
+    return Check("service", "fail", f"{names.INGEST_UNIT} is not running")
 
 
 def _rows(host: Host, port: int, sql: str) -> list[list[str]]:
     out = psql(host, port, managed.DATABASE, sql).strip()
     return [line.split("|") for line in out.splitlines() if line]
+
+
+def _listed(values: tuple[str, ...]) -> str:
+    """Fixed names as an SQL list: ('a', 'b')."""
+    return "(" + ", ".join(f"'{v}'" for v in values) + ")"
 
 
 def _megabytes(value: int) -> str:
@@ -44,8 +51,8 @@ def database_checks(host: Host, config: DatabaseHost) -> list[Check]:
         return rows[0] if rows else []
 
     beat = first(
-        "SELECT (extract(epoch FROM now()) * 1000 - value::numeric) / 1000 "
-        "FROM ingest_state WHERE key = 'feed.heartbeat_ms'"
+        "SELECT (extract(epoch FROM now()) * 1000 - value::numeric) / 1000 "  # noqa: S608 (fixed names)
+        f"FROM ingest_state WHERE key = '{state.HEARTBEAT}'"
     )
     if not beat:
         checks.append(Check("last frame", "warn", "no frame has ever been recorded"))
@@ -78,9 +85,8 @@ def database_checks(host: Host, config: DatabaseHost) -> list[Check]:
         "SELECT kind, status, count(*) FROM gap_log "
         "WHERE started_at > now() - interval '24 hours' GROUP BY 1, 2 ORDER BY 1, 2",
     )
-    unfinished = int(
-        first("SELECT count(*) FROM gap_log WHERE status IN ('open', 'backfilling')")[0]
-    )
+    unfinished_sql = f"SELECT count(*) FROM gap_log WHERE status IN {_listed(gaps.UNFINISHED)}"  # noqa: S608 (fixed names)
+    unfinished = int(first(unfinished_sql)[0])
     summary = ", ".join(f"{k} {s} {n}" for k, s, n in gap_rows) or "none"
     checks.append(
         Check(
@@ -100,19 +106,19 @@ def database_checks(host: Host, config: DatabaseHost) -> list[Check]:
         ratio = f", compressed chunks {int(before) / int(after):.1f}x smaller" if int(after) else ""
         checks.append(Check(f"{table} size", "ok", f"{_megabytes(int(size))}{ratio}"))
 
-    state = dict(
+    stored = dict(
         _rows(
             host,
             port,
-            "SELECT key, value FROM ingest_state "
-            "WHERE key IN ('service.stopped_reason', 'discovery.last_full')",
+            "SELECT key, value FROM ingest_state "  # noqa: S608 (fixed names)
+            f"WHERE key IN {_listed((state.STOPPED_REASON, state.LAST_FULL))}",
         )
     )
-    reason = state.get("service.stopped_reason", "never started")
+    reason = stored.get(state.STOPPED_REASON, "never started")
     checks.append(
         Check("last stop", "fail" if reason.startswith(("disk full", "failed")) else "ok", reason)
     )
-    full = state.get("discovery.last_full")
+    full = stored.get(state.LAST_FULL)
     checks.append(
         Check("last full discovery", "ok", f"epoch {full}")
         if full

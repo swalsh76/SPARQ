@@ -9,6 +9,14 @@ from ipaddress import IPv4Address, IPv6Address
 
 from sparq_server.admin.answers import DatabaseHost
 from sparq_server.admin.versions import POSTGRES_MAJOR
+from sparq_server.names import (
+    ALERT_CREDENTIAL,
+    ALERTS_CONFIG,
+    EXIT_DISK_FULL,
+    EXIT_REFUSED,
+    INGEST_CONFIG,
+    INGEST_CREDENTIALS,
+)
 
 HEADER = "# Managed by sparq-admin. Do not edit: the next install overwrites this file.\n"
 SERVICE_USER = "sparq"
@@ -286,15 +294,10 @@ def timer_names(config: DatabaseHost) -> list[str]:
 
 # --- the ingest service ---------------------------------------------------------------------------
 
-INGEST_UNIT = "sparq-ingest.service"
-INGEST_CONFIG = "/etc/sparq/ingest.toml"
 CREDENTIALS_DIRECTORY = "/etc/sparq/credentials"
 APP_DIRECTORY = "/opt/sparq/app"
 PYTHON_DIRECTORY = "/opt/sparq/python"  # the interpreter uv installs, readable by the service
 APP_COMMIT_FILE = f"{APP_DIRECTORY}/COMMIT"
-INGEST_CREDENTIALS = ("kalshi-key-id", "kalshi-private-key")  # the names the service reads
-EXIT_DISK_FULL = 75  # service.EXIT_DISK_FULL; the unit must not restart on it
-EXIT_REFUSED = 78  # service.EXIT_REFUSED
 
 
 def credential_file(name: str) -> str:
@@ -359,8 +362,6 @@ def render_ingest_grants_check(role: str, database: str, owner: str) -> str:
 WATCHDOG_SERVICE = "sparq-watchdog.service"
 WATCHDOG_TIMER = "sparq-watchdog.timer"
 ALERT_TEST_SERVICE = "sparq-alert-test.service"
-ALERTS_CONFIG = "/etc/sparq/alerts.toml"
-ALERT_CREDENTIAL = "ntfy-topic"
 
 
 def render_alerts_config(config: DatabaseHost) -> str:
@@ -375,6 +376,7 @@ def render_alerts_config(config: DatabaseHost) -> str:
         + f'data_directory = "{DATA_ROOT}"\n'
         + f"silence_seconds = {config.alerts.silence_seconds}\n"
         + f"disk_warn_percent = {config.alerts.disk_warn_percent}\n"
+        + f"disk_stop_percent = {config.ingest.disk_stop_percent}\n"
     )
 
 
