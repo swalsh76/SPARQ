@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sparq_core.config import WS_URLS, Environment
 from sparq_server.ingest import service
 from sparq_server.ingest.service import (
     EXIT_REFUSED,
@@ -16,6 +17,7 @@ from sparq_server.ingest.service import (
     ServiceError,
     disk_guard,
     load_signer,
+    make_feed,
     parse_config,
     run_service,
     used_percent,
@@ -93,6 +95,12 @@ def test_the_key_is_loaded_from_the_credentials_directory(tmp_path: Path) -> Non
     signer = load_signer(tmp_path)
     headers = signer.headers("GET", "/trade-api/ws/v2")
     assert headers["KALSHI-ACCESS-KEY"] == "00000000-key-id"
+
+
+def test_the_service_records_the_production_feed(tmp_path: Path) -> None:
+    write_key(tmp_path)
+    feed = make_feed(parse_config(GOOD), load_signer(tmp_path))
+    assert feed._config.url == WS_URLS[Environment.PRODUCTION]
 
 
 def test_with_no_credentials_directory_the_service_will_not_start() -> None:

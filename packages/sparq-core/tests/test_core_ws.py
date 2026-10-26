@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import random
 from collections.abc import AsyncIterator
 from typing import Any
@@ -17,6 +18,7 @@ from fakewsserver import (
     trade,
 )
 from sparq_core.auth import HEADER_KEY, HEADER_SIGNATURE, HEADER_TIMESTAMP, DataSigner
+from sparq_core.config import WS_URLS, Environment
 from sparq_core.ws import (
     Data,
     FeedConfig,
@@ -546,6 +548,17 @@ def test_the_configuration_is_checked() -> None:
     for bad in bad_settings:
         with pytest.raises(ValueError):
             FeedConfig(**bad)
+
+
+def test_the_feed_is_on_demo_unless_production_is_asked_for(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert FeedConfig().url == WS_URLS[Environment.DEMO]
+    with caplog.at_level(logging.WARNING, logger="sparq_core"):
+        KalshiFeed(signer())
+        assert "PRODUCTION" not in caplog.text
+        KalshiFeed(signer(), FeedConfig(url=WS_URLS[Environment.PRODUCTION]))
+        assert "PRODUCTION" in caplog.text
 
 
 async def test_a_command_in_flight_when_the_link_drops_fails_at_once() -> None:

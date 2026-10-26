@@ -22,7 +22,8 @@ import asyncpg
 import pytest
 from dbhelpers import dsn
 from sparq_core.auth import AuthError, DataSigner
-from sparq_core.ws import DEFAULT_WS_URL, Data, FeedConfig, KalshiFeed, Reconnected, SequenceGap
+from sparq_core.config import WS_URLS, Environment
+from sparq_core.ws import Data, FeedConfig, KalshiFeed, Reconnected, SequenceGap
 from sparq_server.ingest.writer import IngestWriter, WriterConfig
 
 pytestmark = [pytest.mark.integration, pytest.mark.db]
@@ -64,7 +65,7 @@ async def test_every_market_through_the_feed_and_the_writer_into_the_database(
     frames = 0
     started = time.monotonic()
     async with (
-        KalshiFeed(signer, FeedConfig(url=DEFAULT_WS_URL)) as feed,
+        KalshiFeed(signer, FeedConfig(url=WS_URLS[Environment.PRODUCTION])) as feed,
         IngestWriter(connect, WriterConfig()) as writer,
     ):
         await feed.subscribe("ticker")

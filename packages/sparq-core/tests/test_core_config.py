@@ -16,6 +16,15 @@ def test_production_is_an_explicit_choice() -> None:
     assert "demo" not in config.rest_url
 
 
+def test_each_environment_has_its_websocket_address_beside_its_rest_one() -> None:
+    demo, production = KalshiConfig(), KalshiConfig(environment=Environment.PRODUCTION)
+    assert demo.ws_url == "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2"
+    assert production.ws_url == "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
+    for config in (demo, production):  # the WebSocket host is the REST host with "-ws"
+        rest_host = config.rest_url.split("/")[2]
+        assert config.ws_url.split("/")[2] == rest_host.replace("external-api", "external-api-ws")
+
+
 def test_the_defaults_are_the_conservative_ones() -> None:
     config = KalshiConfig()
     assert config.rate_limit_per_second == 10.0

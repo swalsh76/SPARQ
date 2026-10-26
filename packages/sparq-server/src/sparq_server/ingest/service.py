@@ -184,6 +184,12 @@ async def record_stop(connect: Connect, reason: str) -> None:
             await conn.close()
 
 
+def make_feed(config: ServiceConfig, signer: DataSigner) -> KalshiFeed:
+    """The feed for the configured environment (always production: see ``ServiceConfig``)."""
+    url = KalshiConfig(environment=Environment(config.environment)).ws_url
+    return KalshiFeed(signer, FeedConfig(url=url))
+
+
 async def run_service(
     config: ServiceConfig,
     signer: DataSigner,
@@ -209,9 +215,9 @@ async def run_service(
             ) from None
     await check_schema(connect)
     await record_stop(connect, "running")
+    environment = Environment(config.environment)
     async with contextlib.AsyncExitStack() as stack:
         if market_data is None:
-            environment = Environment(config.environment)
             clients = []
             for rate in (config.backfill_rate_per_second, config.discovery_rate_per_second):
                 settings = KalshiConfig(
@@ -220,7 +226,7 @@ async def run_service(
                 clients.append(await stack.enter_async_context(KalshiPublicClient(settings)))
             market_data = (MarketData(clients[0]), MarketData(clients[1]))
         backfill_data, other_data = market_data
-        feed = feed or KalshiFeed(signer, FeedConfig())
+        feed = feed or make_feed(config, signer)
         writer = await stack.enter_async_context(IngestWriter(connect, writer_config))
         backfiller = Backfiller(backfill_data, writer, connect)
         discovery = DiscoveryRunner(Discovery(other_data, connect))
