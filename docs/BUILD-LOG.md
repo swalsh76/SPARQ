@@ -63,3 +63,20 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 
 **Still to do in S1.1b.** After the window closes on 2026-11-23 and its markets settle (allow a few days): re-run KAPS's downloader for the forward days (trades, then markets; owner approved, D10), then `s11b_run.sh verdict` once, and the write-up.
 
+
+### S1.2p Shared definitions (2026-10-26, done)
+
+The owner asked for a review of the codebase on 2026-10-26 and approved fixing its first five items before S1.2a's reading. Items 1 and 5 touch S1.2a's code and went into that slice (BUILD-LOG S1.2a). Items 2 to 4 are this slice, on branch `s1/2p-shared-defs` from `main`; the owner allowed it to start before PR #5 merged. Nothing changes on any machine: SPARQ's server code is not deployed, and KAPS's ingest is frozen and untouched.
+
+**Built.**
+- *The stored market in one place (item 2).* `sparq_core.markets` holds the combo prefix, the settled statuses, the labels, the market columns in their order and `market_values`, the row builder. The downloader's Parquet schema and `markets_table`, the ingest's discovery and backfill, the event rows and `db/schema.py` (columns and the label check) all use it. Before, the helpers were written twice (`history/schemas.py`, `ingest/records.py`), the combo prefix three times and the column lists three times, held equal only by a test.
+- *The WebSocket address (item 3).* `config.py` has `WS_URLS` beside `REST_URLS` and `KalshiConfig.ws_url`; the demo address is from Kalshi's demo-environment page, checked 2026-10-26. `FeedConfig` defaults to demo, as the REST client does, and a feed on production logs a warning. The ingest builds its feed through `make_feed` for its configured environment, which is production. Before, `ws.py` hard-coded production's address outside the configuration.
+- *Names that several programs share (item 4).* `sparq_server.names` holds the unit, settings and credential names and the exit codes that `install` writes and the ingest, the watchdog, `verify` and `ingest-status` read. `ingest.state` gains `STOPPED_REASON`, and `ingest.gaps` gains the gap kinds. The watchdog passes the state keys and gap kinds as query parameters, and `ingest-status` writes them in from the constants. The watchdog's disk message names the ingest's own stop level, which `alerts.toml` now carries (`disk_stop_percent`), instead of a fixed 90%. The unused `LAST_SERIES` key is gone.
+
+**Kept, changed and why.** The migrations stay frozen copies: a migration records what was run. The `gap_log` status check in `db/schema.py` keeps its text, because the database layer should not import the ingest's module. The SQL `ingest-status` runs is unchanged text, so its tests match it as before.
+
+**Verified (local).** New tests: the market row builder (columns, derived values); the Parquet file and the table have the shared columns in order; the label check keeps the migration's text; each environment's WebSocket address; the feed defaults to demo and warns on production; the ingest's feed is production; the unit does not restart on the codes the service stops with; the watchdog reads the ingest's stop level from the rendered settings. The full suite: 1,649 passed, 197 skipped (the database tests run in CI). Ruff and mypy are clean, and the 95% gate on the money code passes. Planted bugs: 12. Eleven were caught locally. The twelfth (a trades gap opened as a ticker gap) is caught only by the pump's database tests, which assert the gap kinds and run in CI's database job.
+
+**Problems and fixes.**
+- Tests that imported a moved name from its old module failed mypy's explicit re-export rule; they now import it from where it lives.
+- Two edit scripts written through a shell heredoc lost a backslash escape, so their patterns did not match. They stopped on their checks, and the edits were made with the editor instead.
