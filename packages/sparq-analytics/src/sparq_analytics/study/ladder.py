@@ -13,10 +13,10 @@ edge per contract (millionths of a dollar) with the conservative maker fee. The 
 from dataclasses import dataclass
 
 import polars as pl
+from sparq_core.fixedpoint import E6
 
 from sparq_analytics.study.calibration import weight
 
-E6 = 1_000_000
 _EPSILON = 1e-6  # probabilities are kept this far from 0 and 1 so the log loss is finite
 
 

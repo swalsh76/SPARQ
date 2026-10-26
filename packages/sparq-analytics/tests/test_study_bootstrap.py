@@ -121,3 +121,14 @@ def test_the_interval_brackets_the_point_estimate() -> None:
     rng = np.random.default_rng(15)
     estimate = run(rng.normal(2, 6, 120).tolist(), [1.0] * 120)
     assert estimate.lower_e6 < estimate.point_e6 < estimate.upper_e6
+
+
+def test_the_polars_standard_error_is_the_bootstraps() -> None:
+    import polars as pl
+
+    rng = np.random.default_rng(5)
+    num, den = rng.normal(0.0, 3.0, 200), rng.uniform(1.0, 9.0, 200)
+    ratio, se = bootstrap.ratio_and_se(num, den)
+    point, error = bootstrap.ratio_and_se_exprs(pl.col("n"), pl.col("d"))
+    row = pl.DataFrame({"n": num, "d": den}).select(point.alias("r"), error.alias("s")).row(0)
+    assert row == pytest.approx((ratio, se), rel=1e-12)

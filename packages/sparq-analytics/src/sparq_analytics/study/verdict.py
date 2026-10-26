@@ -7,11 +7,12 @@ under the optimistic fill rule is not a GO and makes the verdict inconclusive, a
 with too few events. NO-GO is every segment having enough events and none having a positive bound.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import polars as pl
 
-from sparq_analytics.study.bootstrap import EMPTY, Estimate, cluster_bootstrap
+from sparq_analytics.study.bootstrap import Estimate, cluster_bootstrap
 from sparq_analytics.study.edge import MEASURES
 from sparq_analytics.study.segments import Prereg, Segment
 
@@ -38,6 +39,18 @@ class Verdict:
     outcome: str
     tail: float
     segments: tuple[SegmentResult, ...]
+
+
+def outcome(results: Iterable[tuple[bool, bool]]) -> str:
+    """The verdict over deciding results, each given as (goes, unsure): GO if any goes, else
+    INCONCLUSIVE if any is unsure (too few events, or an edge only an optimistic rule shows),
+    else NO-GO. The segments here and S1.1's rules both decide by it."""
+    results = list(results)
+    if any(goes for goes, _ in results):
+        return GO
+    if any(unsure for _, unsure in results):
+        return INCONCLUSIVE
+    return NO_GO
 
 
 def _positive(estimate: Estimate, minimum: int) -> bool:
@@ -75,7 +88,7 @@ def evaluate_segment(test: pl.LazyFrame, segment: Segment, prereg: Prereg) -> Se
         segment=segment,
         trades=int(per_event["_trades"].sum()) if per_event.height else 0,
         events=per_event.height,
-        estimates=estimates or {"taker": EMPTY},
+        estimates=estimates,
         taker_go=taker_go,
         maker_go=maker_go,
         optimistic_only=optimistic and not maker_go,
@@ -86,12 +99,11 @@ def evaluate_segment(test: pl.LazyFrame, segment: Segment, prereg: Prereg) -> Se
 
 def decide(results: tuple[SegmentResult, ...]) -> str:
     """The outcome over the deciding segments; exploratory ones are reported but never counted."""
-    results = tuple(r for r in results if not r.exploratory)
-    if any(r.taker_go or r.maker_go for r in results):
-        return GO
-    if any(r.optimistic_only or r.short_of_events for r in results):
-        return INCONCLUSIVE
-    return NO_GO
+    return outcome(
+        (r.taker_go or r.maker_go, r.optimistic_only or r.short_of_events)
+        for r in results
+        if not r.exploratory
+    )
 
 
 def evaluate(test: pl.LazyFrame, prereg: Prereg) -> Verdict:

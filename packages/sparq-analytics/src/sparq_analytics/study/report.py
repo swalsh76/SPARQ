@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-E6_PER_CENT = 10_000
+from sparq_analytics.study.config import CENT_E6
 
 
 def table(headers: list[str], rows: list[list[Any]]) -> str:
@@ -20,7 +20,7 @@ def table(headers: list[str], rows: list[list[Any]]) -> str:
 def cents(value_e6: float | None) -> str:
     if value_e6 is None or value_e6 != value_e6:
         return "n/a"
-    return f"{value_e6 / E6_PER_CENT:+.2f}"
+    return f"{value_e6 / CENT_E6:+.2f}"
 
 
 def with_bound(estimate: dict[str, Any]) -> str:
