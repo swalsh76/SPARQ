@@ -6,7 +6,6 @@ written to a ledger file the first time the test period is opened, and a differe
 later opening is refused. So the segments cannot be changed after the test has been looked at.
 """
 
-import hashlib
 import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -15,7 +14,7 @@ from typing import Protocol
 
 import polars as pl
 
-from sparq_analytics.study.config import StudyConfig
+from sparq_analytics.study.config import StudyConfig, sha256_of
 
 
 class PreregistrationError(Exception):
@@ -103,7 +102,7 @@ class Prereg:
             "segments": [asdict(s) for s in self.segments],
             "config": self.config.digest(),
         }
-        return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        return sha256_of(body)
 
     def alpha(self) -> float:
         """The one-sided tail each segment is tested at (D11, Bonferroni over the deciding ones).

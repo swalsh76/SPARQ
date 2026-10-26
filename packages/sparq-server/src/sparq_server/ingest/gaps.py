@@ -84,6 +84,17 @@ async def finish(
     )  # fmt: skip
 
 
+async def close_open(conn: asyncpg.Connection, kind: str, ended_at: datetime) -> int:
+    """Give every gap of ``kind`` that has no end the end ``ended_at``; returns how many.
+
+    A subscription Kalshi would not restore stays lost until the next link subscribes again, so
+    its ``all`` gap ends when a reconnect or a restart opens a new window."""
+    status = await conn.execute(
+        "UPDATE gap_log SET ended_at = $2 WHERE kind = $1 AND ended_at IS NULL", kind, ended_at
+    )
+    return int(status.rsplit(" ", 1)[1])
+
+
 async def mark(conn: asyncpg.Connection, gap_id: int, status: str) -> None:
     await conn.execute("UPDATE gap_log SET status = $2 WHERE id = $1", gap_id, status)
 

@@ -65,12 +65,11 @@ def _preflight(answers: Answers | None, system: System) -> int:
 
 
 def _install(answers: Answers, dry_run: bool, host: Host) -> int:
-    steps = plan_install(answers)  # raises RoleUnavailable for a role that cannot be installed
-    if dry_run:
-        print(render_plan(steps))
-        print("Dry run: nothing was changed.")
-        return 0
     try:
+        if dry_run:  # the plan refuses what the install would, and RoleUnavailable passes up
+            print(render_plan(plan_install(answers)))
+            print("Dry run: nothing was changed.")
+            return 0
         print(render_outcomes(run_install(host, answers)))
     except InstallRefused as error:
         print(f"REFUSING: {error}", file=sys.stderr)

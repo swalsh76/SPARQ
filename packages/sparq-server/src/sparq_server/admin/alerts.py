@@ -29,6 +29,7 @@ def run_alert_test(host: Host, config: DatabaseHost) -> str:
         host.run_checked(["systemctl", "start", managed.ALERT_TEST_SERVICE], timeout=90.0)
     except CommandFailed:
         raise AlertTestRefused(
-            "the test message was not delivered; see: journalctl -u sparq-alert-test -n 20"
+            "the test message was not delivered; see: "
+            f"journalctl -u {managed.ALERT_TEST_SERVICE.removesuffix('.service')} -n 20"
         ) from None
     return f"test message sent through {config.alerts.server}: check your phone"

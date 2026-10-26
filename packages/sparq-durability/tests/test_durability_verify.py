@@ -4,7 +4,7 @@ from typing import Any
 
 import asyncpg
 import pytest
-from sparq_server.durability.verify import _integrity
+from sparq_durability.verify import _integrity
 
 
 class Scripted:

@@ -25,6 +25,15 @@ def test_each_environment_has_its_websocket_address_beside_its_rest_one() -> Non
         assert config.ws_url.split("/")[2] == rest_host.replace("external-api", "external-api-ws")
 
 
+@pytest.mark.parametrize(("rate", "burst"), [(2.0, 2.0), (1.5, 1.5), (0.5, 1.0)])
+def test_a_client_at_a_rate_has_a_seconds_burst_of_at_least_one_request(
+    rate: float, burst: float
+) -> None:
+    config = KalshiConfig.at_rate(rate, Environment.PRODUCTION)
+    assert (config.rate_limit_per_second, config.burst_requests) == (rate, burst)
+    assert config.is_production and not KalshiConfig.at_rate(rate).is_production
+
+
 def test_the_defaults_are_the_conservative_ones() -> None:
     config = KalshiConfig()
     assert config.rate_limit_per_second == 10.0

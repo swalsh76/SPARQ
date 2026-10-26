@@ -296,3 +296,23 @@ def test_no_trade_in_the_files_is_lost_with_fee_changes_and_unknown_markets(tmp_
     assert tagged.collect().height == in_files
     assert sum(exclusion_counts(tagged).values()) == in_files
     assert exclusion_counts(tagged)["market_missing"] == 2
+
+
+def test_a_market_in_both_stores_is_read_once_with_its_historical_row(tmp_path: Path) -> None:
+    from sparq_analytics.study.dataset import scan_markets
+
+    early, late = dt.datetime(2026, 9, 1, tzinfo=dt.UTC), dt.datetime(2026, 9, 2, tzinfo=dt.UTC)
+    historical = tmp_path / "markets" / "historical"
+    live = tmp_path / "markets" / "live" / "date=2026-09-02"
+    historical.mkdir(parents=True)
+    live.mkdir(parents=True)
+    pl.DataFrame({"ticker": ["A"], "close_time": [early]}).write_parquet(
+        historical / "part-0.parquet"
+    )
+    pl.DataFrame({"ticker": ["B", "A"], "close_time": [late, late]}).write_parquet(
+        live / "markets.parquet"
+    )
+    found = dict(scan_markets(tmp_path, ["ticker", "close_time"]).collect().iter_rows())
+    assert found == {"A": early, "B": late}
+    traded = pl.LazyFrame({"ticker": ["B"]})
+    assert scan_markets(tmp_path, ["ticker"], traded).collect()["ticker"].to_list() == ["B"]

@@ -35,6 +35,7 @@ class ExchangePoller:
         schedule_every: float = 3600.0,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._data = data
         self._connect = connect
@@ -42,6 +43,7 @@ class ExchangePoller:
         self._schedule_every = schedule_every
         self._clock = clock
         self._monotonic = monotonic
+        self._sleep = sleep
         self.polls = 0
         self.failures = 0
         self.changes = 0
@@ -121,7 +123,7 @@ class ExchangePoller:
                 self.failures += 1
                 self.last_error = f"{type(exc).__name__}: {exc}"[:300]
                 log.warning("exchange poll failed: %s", self.last_error)
-            await asyncio.sleep(self._status_every)
+            await self._sleep(self._status_every)
 
     def stats(self) -> dict[str, Any]:
         return {

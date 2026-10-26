@@ -9,6 +9,7 @@ has no known fee and is excluded as ``fee_unknown``. A series with no recorded c
 current fee, on the assumption (checked in K0.5.6) that the change history is complete.
 """
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import polars as pl
@@ -41,17 +42,12 @@ class StudyDataError(Exception):
     """The data folder lacks something the study needs."""
 
 
-def _markets(root: Path, traded: pl.LazyFrame) -> pl.LazyFrame:
-    """Every downloaded market that has a trade, once each (the historical row wins)."""
-    columns = (
-        "ticker",
-        "event_ticker",
-        "series_ticker",
-        "label",
-        "open_time",
-        "created_time",
-        *MARKET_TIME_FIELDS,
-    )
+def scan_markets(
+    root: Path, columns: Sequence[str], traded: pl.LazyFrame | None = None
+) -> pl.LazyFrame:
+    """Every downloaded market, once each (the historical row wins), with ``columns`` (which must
+    include ``ticker``); with ``traded``, only the markets in it, kept before the de-duplication
+    because that is far cheaper (a day touches about 20 thousand of 18 million markets)."""
     parts = []
     historical = root / "markets" / "historical"
     if historical.exists() and any(historical.glob("part-*.parquet")):
@@ -69,10 +65,11 @@ def _markets(root: Path, traded: pl.LazyFrame) -> pl.LazyFrame:
         )
     if not parts:
         raise StudyDataError(f"no markets found under {root / 'markets'}")
+    markets = pl.concat(parts)
+    if traded is not None:
+        markets = markets.join(traded, on="ticker", how="semi")
     return (
-        pl.concat(parts)
-        .join(traded, on="ticker", how="semi")  # a day touches about 20 thousand of 18 million
-        .sort("rank", maintain_order=True)  # a join does not keep order, so rank says who wins
+        markets.sort("rank", maintain_order=True)  # a join does not keep order: rank says who wins
         .unique(subset="ticker", keep="first", maintain_order=True)
         .drop("rank")
     )
@@ -187,7 +184,11 @@ def tag_trades(root: Path, config: StudyConfig, *, drop_unsampled: bool = False)
     # collected now, not left lazy: a scan that fed both this list and the main join below made the
     # engine buffer (spill) the whole scan, over 100 GB, while the list was still being built
     traded = trades.select("ticker").unique().collect().lazy()
-    markets = _markets(root, traded)
+    columns = (
+        "ticker", "event_ticker", "series_ticker", "label", "open_time", "created_time",
+        *MARKET_TIME_FIELDS,
+    )  # fmt: skip
+    markets = scan_markets(root, columns, traded)
     categories = (
         pl.scan_parquet(root / "series.parquet")
         .select(pl.col("ticker").alias("series_ticker"), pl.col("category"))

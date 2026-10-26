@@ -11,7 +11,7 @@ from pathlib import Path
 import polars as pl
 
 from sparq_analytics.study.config import StudyConfig
-from sparq_analytics.study.dataset import tag_trades
+from sparq_analytics.study.dataset import scan_markets, tag_trades
 
 FIELDS = ("close_time", "expected_expiration_time")
 
@@ -21,15 +21,7 @@ def measure_reference(root: Path) -> pl.DataFrame:
     last_trade = tagged.group_by("ticker").agg(
         pl.col("category").first(), pl.col("t").max().alias("last_trade")
     )
-    columns = ["ticker", *FIELDS]
-    parts = []
-    historical = root / "markets" / "historical"
-    if any(historical.glob("part-*.parquet")):
-        parts.append(pl.scan_parquet(historical / "part-*.parquet").select(columns))
-    live = root / "markets" / "live"
-    if any(live.glob("date=*/markets.parquet")):
-        parts.append(pl.scan_parquet(live / "date=*" / "markets.parquet").select(columns))
-    markets = pl.concat(parts).unique(subset="ticker")
+    markets = scan_markets(root, ["ticker", *FIELDS])
     bounds = tagged.select(pl.col("t").min().alias("first"), pl.col("t").max().alias("last"))
     gaps = (
         last_trade.join(markets, on="ticker")

@@ -16,6 +16,12 @@ DEFAULT_TLEFT_EDGES_S = (0, 600, 3_600, 21_600, 86_400, 259_200, 604_800, 2_592_
 DEFAULT_REFERENCE = ("close_time", "expected_expiration_time")
 
 
+def sha256_of(body: object) -> str:
+    """The SHA-256 of ``body`` as JSON with sorted keys: the digest every lock in the study uses
+    (the settings, the segments, the rules, the forward test and the frozen activity file)."""
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class StudyConfig:
     """Price bands (yes price, millionths of a dollar, upper edge exclusive), time-to-expiry bands
@@ -111,4 +117,4 @@ class StudyConfig:
 
     def digest(self) -> str:
         """A stable hash of every setting (the verdict-relevant ones), for the pre-registration."""
-        return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
+        return sha256_of(asdict(self))

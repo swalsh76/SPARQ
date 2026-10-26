@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from sparq_server.durability.cli import build_parser, main
+from sparq_durability.cli import build_parser, main
 
 PRODUCTION = "postgresql+asyncpg://sparq_owner@db.example/sparq?port=5432"
 

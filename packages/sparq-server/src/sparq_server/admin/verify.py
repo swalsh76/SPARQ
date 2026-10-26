@@ -8,15 +8,10 @@ differs from what ``install`` renders is a failure: someone edited a managed fil
 from sparq_server import names
 from sparq_server.admin import managed
 from sparq_server.admin.answers import DatabaseHost
-from sparq_server.admin.install import (
-    as_postgres,
-    clusters,
-    ingest_grants_missing,
-    psql,
-    stanza_info,
-)
+from sparq_server.admin.install import ingest_grants_missing
+from sparq_server.admin.pg import as_postgres, clusters, psql, stanza_info
 from sparq_server.admin.preflight import Check, Status, check_listeners, tpm_state
-from sparq_server.admin.system import CommandFailed, Host, System
+from sparq_server.admin.system import CommandFailed, Host, System, installed_version
 from sparq_server.admin.versions import PINS, POSTGRES_MAJOR
 
 CERT_WARNING_SECONDS = 30 * 24 * 3600  # an alert goes out 30 days before the certificate expires
@@ -37,8 +32,7 @@ def _packages(system: System) -> list[Check]:
     held = held_text.split() if code == 0 else []
     checks = []
     for package, pin in PINS.items():
-        code, version = system.run(["dpkg-query", "-W", "-f=${Version}", package])
-        installed = version.strip() if code == 0 else ""
+        installed = installed_version(system, package) or ""
         if not installed:
             checks.append(Check(package, "fail", f"not installed (wanted {pin}*)"))
         elif not installed.startswith(pin):

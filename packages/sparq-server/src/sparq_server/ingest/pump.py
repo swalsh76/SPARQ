@@ -30,7 +30,8 @@ from sparq_core.ws_models import MARKET_LIFECYCLE, TRADE
 from sparq_server.ingest import gaps, state
 from sparq_server.ingest.backfill import Backfiller
 from sparq_server.ingest.discovery import DiscoveryRunner
-from sparq_server.ingest.writer import RETRYABLE, IngestWriter
+from sparq_server.ingest.retry import retrying
+from sparq_server.ingest.writer import IngestWriter
 
 log = logging.getLogger("sparq_server")
 T = TypeVar("T")
@@ -164,6 +165,9 @@ class EventPump:
     async def _open_gaps(
         self, start: datetime, end: datetime, reason: str, generation: int | None
     ) -> None:
+        # a new window subscribes everything again: a subscription that could not be restored
+        # earlier was lost until this window began
+        await self._db(lambda c: gaps.close_open(c, gaps.ALL, start))
         await self._open_trades_gap(start, end, reason, generation)
         await self._db(
             lambda c: gaps.open_gap(
@@ -230,21 +234,26 @@ class EventPump:
         A connection runs one operation at a time, and the main loop and the recovery tasks both
         use this one, so calls are serialised.
         """
+
+        async def once() -> T:
+            if self._conn is None or self._conn.is_closed():
+                self._conn = await self._connect()
+            return await work(self._conn)
+
+        async def reset() -> None:
+            if self._conn is not None:
+                with contextlib.suppress(Exception):
+                    await self._conn.close(timeout=2)
+                self._conn = None
+
         async with self._db_lock:
-            while True:
-                try:
-                    if self._conn is None or self._conn.is_closed():
-                        self._conn = await self._connect()
-                    return await work(self._conn)
-                except RETRYABLE as exc:
-                    log.warning(
-                        "the pump's database call failed (%s); retrying", type(exc).__name__
-                    )
-                    if self._conn is not None:
-                        with contextlib.suppress(Exception):
-                            await self._conn.close(timeout=2)
-                        self._conn = None
-                    await self._sleep(self._retry_every)
+            return await retrying(
+                once,
+                reset=reset,
+                delay=lambda _: self._retry_every,
+                sleep=self._sleep,
+                what="the pump's database call",
+            )
 
     def stats(self) -> dict[str, Any]:
         return {

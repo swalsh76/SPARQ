@@ -14,7 +14,12 @@ from typing import Any, cast
 import polars as pl
 
 from sparq_analytics.study.config import StudyConfig
-from sparq_analytics.study.dataset import exclusion_counts, tag_trades, used
+from sparq_analytics.study.dataset import (
+    StudyDataError,
+    scan_markets,
+    tag_trades,
+    used,
+)
 from sparq_analytics.study.sample import DEFAULT_CEILING, CategoryStat, plan_shares
 
 EDGE_MARGIN = (
@@ -25,18 +30,31 @@ MIN_DAYS = 4  # fewer days than this cannot tell a baseline from an edge
 MAX_BASELINE = 0.05  # a higher usual share means missing market files, not open markets
 
 
-def days_table(root: Path) -> pl.DataFrame:
-    """Per day of trades: trades, trades with no market record, and that share."""
-    tagged = tag_trades(root, StudyConfig())
+def day_exclusions(root: Path) -> pl.DataFrame:
+    """Trades per day and exclusion reason (``used`` for the kept ones), in one pass."""
     return (
-        tagged.group_by(pl.col("t").dt.date().alias("day"))
+        tag_trades(root, StudyConfig())
+        .group_by(pl.col("t").dt.date().alias("day"), pl.col("exclusion").fill_null("used"))
+        .agg(pl.len().alias("trades"))
+        .collect()
+    )
+
+
+def days_table(root: Path, counts: pl.DataFrame | None = None) -> pl.DataFrame:
+    """Per day of trades: trades, trades with no market record, and that share."""
+    counts = day_exclusions(root) if counts is None else counts
+    return (
+        counts.group_by("day")
         .agg(
-            pl.len().alias("trades"),
-            (pl.col("exclusion") == "market_missing").sum().alias("market_missing"),
+            pl.col("trades").sum().cast(pl.UInt32).alias("trades"),
+            pl.col("trades")
+            .filter(pl.col("exclusion") == "market_missing")
+            .sum()
+            .cast(pl.UInt32)
+            .alias("market_missing"),
         )
         .with_columns((pl.col("market_missing") / pl.col("trades")).alias("missing_share"))
         .sort("day")
-        .collect()
     )
 
 
@@ -83,22 +101,16 @@ def propose_split(
     quantiles, by event count, of the settled events that traded and lie inside the window, rounded
     down to a UTC date. None when the events are too few to give two distinct dates.
     """
-    columns = ["event_ticker", "label", "volume_e2", "open_time", "created_time"]
+    columns = ["ticker", "event_ticker", "label", "volume_e2", "open_time", "created_time"]
     columns += ["close_time", "expected_expiration_time"]
-    parts = []
-    historical = root / "markets" / "historical"
-    if any(historical.glob("part-*.parquet")):
-        parts.append(pl.scan_parquet(historical / "part-*.parquet").select(columns))
-    live = root / "markets" / "live"
-    if any(live.glob("date=*/markets.parquet")):
-        parts.append(pl.scan_parquet(live / "date=*" / "markets.parquet").select(columns))
-    if not parts:
+    try:
+        markets = scan_markets(root, columns)
+    except StudyDataError:
         return None
     start = dt.datetime.fromisoformat(window_start).replace(tzinfo=dt.UTC)
     end = dt.datetime.fromisoformat(window_end).replace(tzinfo=dt.UTC)
     closes = (
-        pl.concat(parts)
-        .filter(pl.col("label").is_in(["yes", "no"]) & (pl.col("volume_e2") > 0))
+        markets.filter(pl.col("label").is_in(["yes", "no"]) & (pl.col("volume_e2") > 0))
         .group_by("event_ticker")
         .agg(
             pl.coalesce("open_time", "created_time").min().alias("ev_open"),
@@ -143,7 +155,8 @@ def build_snapshot(
     window_end: str | None = None,
 ) -> dict[str, Any]:
     """The manifest; a window given by the caller is used as it stands, else the one proposed."""
-    days = days_table(root)
+    counts = day_exclusions(root)
+    days = days_table(root, counts)
     suggestion: dict[str, Any] = {"window_start": None, "window_end": None}
     window = (window_start, window_end) if window_start and window_end else window_for(days)
     baseline = baseline_share(days)
@@ -175,6 +188,9 @@ def build_snapshot(
         "root_name": root.name,
         "polars_version": pl.__version__,
         "trade_days": days.to_dicts(),
-        "exclusions": exclusion_counts(tag_trades(root, StudyConfig())),
+        "exclusions": {
+            str(reason): int(n)
+            for reason, n in counts.group_by("exclusion").agg(pl.col("trades").sum()).iter_rows()
+        },
         "suggested": suggestion,
     }

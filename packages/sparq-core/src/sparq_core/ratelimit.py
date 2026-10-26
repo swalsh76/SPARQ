@@ -14,6 +14,12 @@ from dataclasses import dataclass
 _EPSILON = 1e-9  # float slack: a computed sleep can leave the bucket ~1e-15 short
 
 
+def backoff(step: int, base: float, cap: float) -> float:
+    """The capped exponential wait before retry ``step`` (0 first): ``base``, then doubling, at most
+    ``cap``. Every retry loop in SPARQ waits this way; each adds its own jitter if it wants any."""
+    return min(cap, base * 2.0**step)
+
+
 @dataclass(slots=True)
 class BucketStats:
     """What the bucket has done, for the downloader's progress and the rate-limit measurement."""

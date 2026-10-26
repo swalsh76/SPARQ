@@ -15,9 +15,6 @@ from sparq_analytics.study.cli import main
 from sparq_analytics.study.config import StudyConfig
 from sparq_analytics.study.dataset import tag_trades
 from sparq_analytics.study.rules import (
-    GO,
-    INCONCLUSIVE,
-    NO_GO,
     Rule,
     RulePrereg,
     add_rule_features,
@@ -27,6 +24,7 @@ from sparq_analytics.study.rules import (
 from sparq_analytics.study.segments import PreregistrationError
 from sparq_analytics.study.session import Study
 from sparq_analytics.study.synthetic import World, write_world
+from sparq_analytics.study.verdict import GO, INCONCLUSIVE, NO_GO
 
 T0 = dt.datetime(2026, 1, 5, 15, 0, tzinfo=dt.UTC)  # 10:00 in New York
 

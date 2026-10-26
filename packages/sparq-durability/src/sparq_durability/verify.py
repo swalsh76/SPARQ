@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Any
 
 import asyncpg
-
 from sparq_server.admin.preflight import Check
 from sparq_server.db.guard import check_test_database
-from sparq_server.durability.connection import connect
-from sparq_server.durability.ledger import LedgerError, Span, first_id, merge, read_ledgers
+
+from sparq_durability.connection import connect
+from sparq_durability.ledger import LedgerError, Span, first_id, merge, read_ledgers
 
 _COUNT = (
     "SELECT count(*) FILTER (WHERE digest = sha256(convert_to(id::text, 'UTF8'))) AS good, "
