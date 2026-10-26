@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import asyncpg
+from sparq_core.ratelimit import backoff
 from sparq_core.ws import Data
 
 from sparq_server.ingest.retry import retrying
@@ -257,7 +258,7 @@ class IngestWriter:
             await self._drop_connection()
 
         def delay(attempt: int) -> float:
-            return min(self._config.retry_max, self._config.retry_base * 2.0 ** (attempt - 1))
+            return backoff(attempt - 1, self._config.retry_base, self._config.retry_max)
 
         return await retrying(work, reset=reset, delay=delay, sleep=self._sleep, what=what)
 

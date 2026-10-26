@@ -6,10 +6,12 @@ markets would take days, so this runs on a sample or a series prefix chosen by t
 """
 
 import random
+from pathlib import Path
 from typing import Any
 
+import polars as pl
 import pyarrow as pa
-import pyarrow.parquet as pq
+from sparq_core.markets import series_ticker_of
 from sparq_core.models import Candlestick
 
 from sparq_analytics.history.datadir import write_table_atomic
@@ -23,21 +25,24 @@ MARKETS_PER_FILE = 200
 
 
 def choose_markets(
-    directory_root: Any, *, series_prefix: str | None, sample: int | None
+    data_root: Path, *, series_prefix: str | None, sample: int | None
 ) -> list[dict[str, Any]]:
     """Yes/no markets with an open and a settlement time, optionally of one series, sampled."""
-    root = directory_root / "markets"
-    rows: list[dict[str, Any]] = []
-    for path in sorted(root.rglob("*.parquet")) if root.exists() else []:
-        table = pq.read_table(
-            path, columns=["ticker", "series_ticker", "label", "open_time", "settlement_ts"]
+    root = data_root / "markets"
+    files = sorted(root.rglob("*.parquet")) if root.exists() else []
+    if not files:
+        return []
+    columns = ["ticker", "series_ticker", "label", "open_time", "settlement_ts"]
+    markets = pl.concat([pl.read_parquet(path, columns=columns) for path in files]).filter(
+        pl.col("label").is_in(["yes", "no"])
+        & pl.col("open_time").is_not_null()
+        & pl.col("settlement_ts").is_not_null()
+    )
+    if series_prefix is not None:
+        markets = markets.filter(
+            pl.col("series_ticker").fill_null("").str.starts_with(series_prefix)
         )
-        for row in table.to_pylist():
-            usable = row["label"] in ("yes", "no") and row["open_time"] and row["settlement_ts"]
-            wanted = series_prefix is None or (row["series_ticker"] or "").startswith(series_prefix)
-            if usable and wanted:
-                rows.append(row)
-    rows.sort(key=lambda r: r["ticker"])
+    rows = markets.sort("ticker", maintain_order=True).to_dicts()  # stable, as the sample needs
     if sample is not None and sample < len(rows):
         rows = random.Random(SAMPLE_SEED).sample(rows, sample)  # noqa: S311 - a reproducible sample
     return rows
@@ -101,7 +106,7 @@ async def download_candles(
                     ticker, start_ts=start, end_ts=end, period_interval=PERIOD_MINUTES
                 )
             else:
-                series = market["series_ticker"] or ticker.split("-")[0]
+                series = market["series_ticker"] or series_ticker_of(ticker) or ticker
                 candles += await downloader.live_data.candlesticks(
                     series, ticker, start_ts=start, end_ts=end, period_interval=PERIOD_MINUTES
                 )

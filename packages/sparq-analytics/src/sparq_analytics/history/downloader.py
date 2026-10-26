@@ -97,6 +97,24 @@ def day_segments(day: date, cutoff: int) -> list[Segment]:
     return [Segment(HISTORICAL, start, cutoff), Segment(LIVE, cutoff, end)]
 
 
+def duplicate_ids(table: pa.Table) -> int:
+    """How many of a day's trades repeat a trade id (0 for a sound day)."""
+    if not table.num_rows:
+        return 0
+    return int(table.num_rows - pc.count_distinct(table["trade_id"]).as_py())
+
+
+def outside_day(table: pa.Table, day: date) -> tuple[int, int] | None:
+    """The whole seconds of a day's first and last trade when either lies outside the UTC day, or
+    None when they all lie inside it."""
+    if not table.num_rows:
+        return None
+    low = pc.min(table["created_time"]).value // 1_000_000  # whole seconds since 1970
+    high = pc.max(table["created_time"]).value // 1_000_000
+    start = day_start(day)
+    return (low, high) if low < start or high >= start + DAY else None
+
+
 def newest_complete_day(now: float, margin: int) -> date:
     """The latest UTC day that ended at least ``margin`` seconds before ``now``."""
     return datetime.fromtimestamp(now - margin, UTC).date() - timedelta(days=1)
@@ -447,13 +465,12 @@ class Downloader:
         table = pa.concat_tables(tables) if tables else TRADES_SCHEMA.empty_table()
         rows = table.num_rows
         if rows:
-            distinct = pc.count_distinct(table["trade_id"]).as_py()
-            if distinct != rows:
-                raise DuplicateTradesError(f"{key}: {rows - distinct} duplicate trade ids")
-            low = pc.min(table["created_time"]).value // 1_000_000  # whole seconds since 1970
-            high = pc.max(table["created_time"]).value // 1_000_000
-            start, end = day_start(day), day_start(day) + DAY
-            if low < start or high >= end:
+            extra = duplicate_ids(table)
+            if extra:
+                raise DuplicateTradesError(f"{key}: {extra} duplicate trade ids")
+            outside = outside_day(table, day)
+            if outside is not None:
+                low, high = outside
                 raise OutsideWindowError(f"{key}: trades from {low} to {high} fall outside the day")
             table = table.sort_by(
                 [("ticker", "ascending"), ("created_time", "ascending"), ("trade_id", "ascending")]
