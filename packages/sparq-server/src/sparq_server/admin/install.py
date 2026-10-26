@@ -13,6 +13,7 @@ import secrets
 from dataclasses import dataclass
 from typing import Any, cast
 
+from sparq_server import names
 from sparq_server.admin import managed
 from sparq_server.admin.answers import Answers, DatabaseHost, Ingest
 from sparq_server.admin.preflight import refused, run_preflight, tpm_state
@@ -82,7 +83,7 @@ def plan_install(answers: Answers) -> list[Step]:
                 "ingest",
                 f"build the program from {host.ingest.checkout} into {managed.APP_DIRECTORY}",
             ),
-            Step("ingest", f"write {managed.INGEST_CONFIG} and the unit {managed.INGEST_UNIT}"),
+            Step("ingest", f"write {names.INGEST_CONFIG} and the unit {names.INGEST_UNIT}"),
             Step(
                 "ingest",
                 "start the service once its data key is stored "
@@ -501,29 +502,29 @@ def step_ingest_service(host: Host, config: DatabaseHost, *, rebuilt: bool) -> O
         host.make_dir(managed.CREDENTIALS_DIRECTORY, 0o700, "root", "root")
         changed = True
     changed |= write_if_different(
-        host, managed.INGEST_CONFIG, managed.render_ingest_config(config), 0o644, "root", "root"
+        host, names.INGEST_CONFIG, managed.render_ingest_config(config), 0o644, "root", "root"
     )
-    unit = f"{managed.SYSTEMD_DIRECTORY}/{managed.INGEST_UNIT}"
+    unit = f"{managed.SYSTEMD_DIRECTORY}/{names.INGEST_UNIT}"
     unit_changed = write_if_different(
         host, unit, managed.render_ingest_unit(), 0o644, "root", "root"
     )
     if unit_changed:
         host.run_checked(["systemctl", "daemon-reload"])
-    if host.run(["systemctl", "is-enabled", managed.INGEST_UNIT])[0] != 0:
-        host.run_checked(["systemctl", "enable", managed.INGEST_UNIT])
+    if host.run(["systemctl", "is-enabled", names.INGEST_UNIT])[0] != 0:
+        host.run_checked(["systemctl", "enable", names.INGEST_UNIT])
         changed = True
     changed |= unit_changed
-    ready = all(host.exists(managed.credential_file(n)) for n in managed.INGEST_CREDENTIALS)
-    active = host.run(["systemctl", "is-active", "--quiet", managed.INGEST_UNIT])[0] == 0
+    ready = all(host.exists(managed.credential_file(n)) for n in names.INGEST_CREDENTIALS)
+    active = host.run(["systemctl", "is-active", "--quiet", names.INGEST_UNIT])[0] == 0
     if not ready:
         return Outcome(
             "ingest service", changed, "enabled, not started: the data key is not stored yet"
         )
     if not active:
-        host.run_checked(["systemctl", "start", managed.INGEST_UNIT])
+        host.run_checked(["systemctl", "start", names.INGEST_UNIT])
         return Outcome("ingest service", True, "started")
     if changed or rebuilt:
-        host.run_checked(["systemctl", "restart", managed.INGEST_UNIT])
+        host.run_checked(["systemctl", "restart", names.INGEST_UNIT])
         return Outcome("ingest service", True, "restarted with the new program or settings")
     return Outcome("ingest service", False, "running")
 
@@ -534,14 +535,14 @@ def step_watchdog(host: Host, config: DatabaseHost) -> Outcome:
     The timer is not enabled before the topic exists, because every run would fail; the outcome
     says so, and an unattended install never waits for the owner."""
     changed = write_if_different(
-        host, managed.ALERTS_CONFIG, managed.render_alerts_config(config), 0o644, "root", "root"
+        host, names.ALERTS_CONFIG, managed.render_alerts_config(config), 0o644, "root", "root"
     )
     unit_changed = False
     for path, text in managed.watchdog_units().items():
         unit_changed |= write_if_different(host, path, text, 0o644, "root", "root")
     if unit_changed:
         host.run_checked(["systemctl", "daemon-reload"])
-    ready = host.exists(managed.credential_file(managed.ALERT_CREDENTIAL))
+    ready = host.exists(managed.credential_file(names.ALERT_CREDENTIAL))
     if not ready:
         return Outcome(
             "watchdog",

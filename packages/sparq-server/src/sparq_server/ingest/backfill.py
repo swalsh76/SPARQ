@@ -92,7 +92,7 @@ class Backfiller:
         """Run again every trades gap left open or half done; returns how many."""
         conn = await self._connect()
         try:
-            pending = [g for g in await gaps.unfinished(conn) if g.kind == "trades"]
+            pending = [g for g in await gaps.unfinished(conn) if g.kind == gaps.TRADES]
         finally:
             await conn.close()
         for gap in pending:
@@ -124,7 +124,7 @@ class Backfiller:
         conn = await self._connect()
         try:
             gap = await gaps.get(conn, gap_id)
-            if gap is None or gap.kind != "trades":
+            if gap is None or gap.kind != gaps.TRADES:
                 return
             await gaps.mark(conn, gap_id, gaps.BACKFILLING)
             start = gap.started_at - self._config.margin

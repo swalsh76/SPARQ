@@ -5,7 +5,7 @@ import asyncpg
 HEARTBEAT = "feed.heartbeat_ms"  # the time of the last frame the feed delivered, in epoch ms
 UPDATED_SINCE = "discovery.updated_since"  # epoch seconds: ask for markets updated after this
 LAST_FULL = "discovery.last_full"  # epoch seconds of the last full discovery cycle
-LAST_SERIES = "discovery.last_series"  # epoch seconds of the last series and fee-change refresh
+STOPPED_REASON = "service.stopped_reason"  # why the last run ended (or "running"), as text
 
 
 async def get(conn: asyncpg.Connection, key: str) -> str | None:

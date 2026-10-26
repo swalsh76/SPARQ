@@ -34,6 +34,7 @@ from sparq_core.config import Environment, KalshiConfig
 from sparq_core.endpoints import MarketData
 from sparq_core.rest import KalshiPublicClient
 from sparq_core.ws import FeedConfig, KalshiFeed
+from sparq_core.ws_models import MARKET_LIFECYCLE, TICKER, TRADE
 
 from sparq_server.db.migrate import HEAD
 from sparq_server.ingest import state
@@ -42,20 +43,17 @@ from sparq_server.ingest.discovery import Discovery, DiscoveryRunner
 from sparq_server.ingest.exchange import ExchangePoller
 from sparq_server.ingest.pump import EventPump
 from sparq_server.ingest.writer import IngestWriter, WriterConfig
+from sparq_server.names import (
+    EXIT_DISK_FULL,
+    EXIT_REFUSED,
+    INGEST_CONFIG,
+    KEY_CREDENTIAL,
+    KEY_ID_CREDENTIAL,
+)
 
 log = logging.getLogger(__name__)
 
-CONFIG_PATH = "/etc/sparq/ingest.toml"
-KEY_ID_CREDENTIAL = "kalshi-key-id"
-KEY_CREDENTIAL = "kalshi-private-key"
-STOPPED_REASON = "service.stopped_reason"  # why the last run ended, for ingest-status
-EXIT_DISK_FULL = 75  # EX_TEMPFAIL: the unit lists it in RestartPreventExitStatus
-EXIT_REFUSED = 78  # EX_CONFIG: a prerequisite is wrong; restarting would not help
-CHANNELS = (
-    "ticker",
-    "trade",
-    "market_lifecycle_v2",
-)  # every non-combo market, no order-book deltas
+CHANNELS = (TICKER, TRADE, MARKET_LIFECYCLE)  # every non-combo market, no order-book deltas
 
 
 class ServiceError(Exception):
@@ -87,7 +85,7 @@ def parse_config(text: str) -> ServiceConfig:
     try:
         return ServiceConfig.model_validate(tomllib.loads(text))
     except (tomllib.TOMLDecodeError, ValidationError) as error:
-        raise ServiceError(f"{CONFIG_PATH} is not valid: {error}") from error
+        raise ServiceError(f"{INGEST_CONFIG} is not valid: {error}") from error
 
 
 def load_signer(credentials: Path | None) -> DataSigner:
@@ -179,7 +177,7 @@ async def record_stop(connect: Connect, reason: str) -> None:
     with contextlib.suppress(Exception):  # the reason is a courtesy; never mask the real exit
         conn = await connect()
         try:
-            await state.put(conn, STOPPED_REASON, reason[:300])
+            await state.put(conn, state.STOPPED_REASON, reason[:300])
         finally:
             await conn.close()
 
@@ -292,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     )  # journald adds the time
     for noisy in ("httpx", "httpcore"):  # a line per request: hundreds a cycle, none of it news
         logging.getLogger(noisy).setLevel(logging.WARNING)
-    config_path = Path((argv or [CONFIG_PATH])[0])
+    config_path = Path((argv or [INGEST_CONFIG])[0])
     try:
         config = parse_config(config_path.read_text(encoding="utf-8"))
         credentials = os.environ.get("CREDENTIALS_DIRECTORY")
