@@ -63,3 +63,50 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 
 **Still to do in S1.1b.** After the window closes on 2026-11-23 and its markets settle (allow a few days): re-run KAPS's downloader for the forward days (trades, then markets; owner approved, D10), then `s11b_run.sh verdict` once, and the write-up.
 
+### S1.2a What the live book shows (2026-10-25 to 2026-10-27, in progress; the reading is on 2026-10-25 and 2026-10-26)
+
+**Decisions (owner).** D11, live-data work in parallel with the forward test, with a guard: no edge to settlement on forward-test events before S1.1b's verdict, and windows of ten minutes at most. **The stop rule**, fixed before any reading: among the forward rule's own trades, if more than 50% of the levels takers cleared are refilled at the same price or better within 1 s, S1.2 is not started; fewer than 300 cleared levels is "too few". It is read once, on the UTC days 2026-10-25 and 2026-10-26. Trades near a feed outage are left out (decided before any reading). The storage budget was raised from 500 to 700 GB. S1.2's plan (D12) was approved for the case "go on".
+
+**Access.** The production database (the owner's choice over a nightly export) already accepted the analytics node over TLS with `scram-sha-256` for any role. The owner created a read-only role on the server host: forced read-only transactions, at most 2 connections, a 15-minute statement timeout, `SELECT` on the tables and on those made later. It can write 0 of 19 tables (public and TimescaleDB's internal schema) and has no special attribute. The password is in the agent account's `~/.pgpass` on the analytics node; the server's certificate is pinned there, and its name matches, so the client checks the server fully. The role is outside `kaps-admin install`'s management.
+
+**Built.** `sparq_analytics.live`:
+- `source.py`: the connection settings file (no password allowed), the TLS connection, and `extract`. It copies whole UTC hours of the ticker frames and trades, once each and at least 10 minutes old, with times as whole milliseconds and through `COPY` to CSV and then Parquet, under temporary names. It copies the market list (without results) and the ticker gaps afresh each run, and refuses a gap in the hours it is asked to read.
+- `book.py`, the measures, with every window capped at ten minutes in the settings:
+  - the book the taker met: the last frame strictly before the trade;
+  - markouts against the later mid;
+  - S1.1's strict fill rule against a queue rule, for an order joining 1 s after the trade behind the size shown at its price, with no credit for cancellations ahead;
+  - refills after a taker order clears a level;
+  - trades near a feed outage left out.
+
+  The forward windows are computed on reversed time per market with probe rows, so they are exact.
+- `summary.py`: four populations (the forward rule's own trades, and the middle, busy and thin tiers in the rule's price band), contract-weighted means with K0.5's clustered bootstrap, the stop rule, and the markdown.
+- `cli.py`: `extract`, `measure` (one UTC day at a time, from an hour before) and `report`.
+
+The registered forward rule and its frozen activity file are reused as they stand.
+
+**What was kept, changed and why.** Kept: the study's `Rule` and its filter, the frozen activity file and its hash, and the bootstrap, so that the population measured is exactly the forward test's kind. New: nothing in KalshiTerm2 or KAPS measured the book, so there was nothing to port. Questioned and corrected: KalTerm3's figure of 25,000 ticker rows and 4,000 trades a minute (LESSONS). It came from its first minutes on 18 October, scaled to a day, and caught about half of that hour's trades, which history shows at 478,007 for 04:00 to 05:00 UTC on 19 October.
+
+**Measured (the ingest's first day, before any reading).**
+- **Volume.**
+  - About 89 M ticker rows and 14 M non-combo trades a day; the last 24 hours to 23:03 UTC on 25 October held 14,117,468 trades.
+  - Kalshi's history shows growth from about 7.8 M trades a day in mid-August to 12.95 M in the week to 18 October. Weekends run about 10 to 15% above weekdays.
+- **Compression** (24 October's 2.8 hours, compressed by hand by the owner): ticker 10.5 times (2,962 MB to 282 MB, about 24 bytes a row) and trades 6.6 times (625 MB to 95 MB, about 45 bytes a row). Both are floors, since each market had about 133 rows to compress together. Uncompressed, a day takes about 23.5 GB; compressed, about 2.8 GB. The drive has 847 GB free. The budget is enforced nowhere yet: the limits that act are the watchdog's alert at 80% of the drive and the ingest's stop at 90%.
+- **The feed**, in middle-tier markets, 18:00 to 19:00 UTC on 25 October:
+  - **timing:** a ticker frame follows 99.95% of trades within 1 s (median 156 ms), and 94.6% of frames change the book;
+  - **spacing:** frames are spaced at a median of 2.0 s with a broad peak near 1 s and no hard floor (some markets look batched on half a second);
+  - **lag:** the feed reaches the server about 0.55 s after Kalshi's timestamp (95th percentile 1.07 s).
+
+  So the book resolves to about a second.
+- **Copying:** an hour takes about 9 s and 82 MB, so a day takes about 3.5 minutes and 2 GB. The copied trade counts equal the database's.
+
+**Verified (local).** 40 tests on hand-built books with answers worked out by hand. They pass on Windows and on the analytics node. Planted bugs: 22. Of the first 18, 6 survived the first run, because the scenarios had no frame at a trade's own millisecond, no later trade exactly at a joined order's price, no trade between a trade and the join, no series on the tier boundary, and no priced ask with zero size; a pattern was also ambiguous. The scenarios were extended, and all 22 are caught, including 4 for the outage rule. The full suite: 1,680 passed and 197 skipped. Ruff and mypy are clean. CI is green on draft PR #5 (Ubuntu, macOS and the database job).
+
+**Problems and fixes.**
+- Two of the first connection checks failed with "relation `_hyper_…` does not exist". One used `approximate_row_count`, and the other looked tables up by unqualified name across TimescaleDB's chunks. Plain time-bounded queries work, and every query in `extract` is bounded by time, which also keeps its load small.
+- The first grant script put `\password` in the middle of a pasted block, so the lines after it were taken as password input and the grants did not run. The owner re-ran them as one command.
+- `~/.pgpass` was first written in the owner's account, not the agent account the copies run as; the owner wrote it there instead, readable by that account only.
+- SPARQ's CLAUDE.md carried the analytics node's real data path (from S1.1b); it was replaced by neutral wording, and the path is in the assistant's memory.
+- The planted-bug script rewrote files with Windows line endings; they were converted back to LF before the commit.
+
+**Still to do in S1.2a.** After 2026-10-27 01:10 UTC: `extract`, `measure --start 2026-10-25 --end 2026-10-27` with `docs/research/forward-rule.json` and the frozen activity file, check the activity hash, `report`, add the reading here, and close the slice (the PLAN row, the merge of PR #5).
+
