@@ -118,9 +118,9 @@ def measure_day(
     """One UTC day's per-trade and per-order measures, where its data ended, and how many of its
     trades were left out for being near an outage of the ticker feed.
 
-    Every measure looks at one market at a time, so the day is measured in ``groups`` groups of
-    markets, one after another, to keep the book and the windows of only one group in memory; the
-    results are the same for any number of groups."""
+    Every step looks at one market at a time (its previous trade, its book, its windows), so the
+    day is measured in ``groups`` groups of markets, one after another, with only one group's
+    trades and book in memory; the results are the same for any number of groups."""
     start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     end = start + DAY
     available = last_hour_end(folder)
@@ -138,23 +138,25 @@ def measure_day(
     gap_file = folder / "gaps.parquet"
     if not gap_file.exists():
         raise LiveSourceError(f"no list of feed outages at {gap_file}; run extract")
-    tagged = tag_trades(trades, markets, busy, rule).collect()
     start_ms, end_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
     data_end_ms = int(data_end.timestamp() * 1000)
-    day_trades = tagged.filter((pl.col("ts_ms") >= start_ms) & (pl.col("ts_ms") < end_ms))
+    in_day = (pl.col("ts_ms") >= start_ms) & (pl.col("ts_ms") < end_ms)
     near = near_gaps(pl.read_parquet(gap_file), config, data_end_ms)
-    evaluated = day_trades.filter(~near)
-    dropped = day_trades.height - evaluated.height
-    measured_parts, burst_parts = [], []
-    for markets_in_group in market_groups(evaluated, groups):
+    traded = trades.filter(in_day).select("ticker").collect()
+    measured_parts, burst_parts, dropped = [], [], 0
+    for markets_in_group in market_groups(traded, groups):
         mine = pl.col("ticker").is_in(markets_in_group)
+        tagged = tag_trades(trades.filter(mine), markets, busy, rule).collect()
+        day_trades = tagged.filter(in_day)
+        evaluated = day_trades.filter(~near)
+        dropped += day_trades.height - evaluated.height
         book = book_frames(frames.filter(mine)).collect().lazy()
         measured = trade_measures(
-            evaluated.filter(mine).lazy(), tagged.filter(mine).lazy(), book, config, data_end_ms
+            evaluated.lazy(), tagged.lazy(), book, config, data_end_ms
         ).collect()
         burst_parts.append(burst_measures(measured.lazy(), book, config, data_end_ms).collect())
         measured_parts.append(measured)
-        del book
+        del tagged, day_trades, evaluated, book
     measured = pl.concat(measured_parts).sort("ticker", "ts_ms", maintain_order=True)
     bursts = pl.concat(burst_parts).sort("ticker", "ts_ms", "taker_yes")
     return measured, bursts, data_end, dropped
