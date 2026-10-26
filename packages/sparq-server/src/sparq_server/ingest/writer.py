@@ -23,7 +23,7 @@ import contextlib
 import json
 import logging
 import time
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +31,7 @@ from typing import Any
 import asyncpg
 from sparq_core.ws import Data
 
+from sparq_server.ingest.retry import retrying
 from sparq_server.ingest.rows import (
     LIFECYCLE_COLUMNS,
     TICKER_COLUMNS,
@@ -42,22 +43,10 @@ from sparq_server.ingest.rows import (
     TradeRow,
     convert,
 )
+from sparq_server.stats import percentile
 
 log = logging.getLogger("sparq_server")
 
-# a problem with the link or the server's state: wait and try again on a fresh connection
-RETRYABLE = (
-    OSError,
-    TimeoutError,
-    asyncpg.PostgresConnectionError,
-    asyncpg.InterfaceError,
-    asyncpg.TooManyConnectionsError,
-    asyncpg.CannotConnectNowError,
-    asyncpg.AdminShutdownError,
-    asyncpg.CrashShutdownError,
-    asyncpg.DeadlockDetectedError,
-    asyncpg.SerializationError,
-)
 # a problem with the row: no retry will help, so isolate it
 ROW_ERRORS = (
     asyncpg.DataError,
@@ -67,6 +56,7 @@ ROW_ERRORS = (
     OverflowError,
 )
 KIND_TABLES = {"ticker": "ticker", "lifecycle": "market_lifecycle"}
+KIND_OF = {TickerRow: "ticker", TradeRow: "trade", LifecycleRow: "lifecycle"}
 REJECT_COLUMNS = ("kind", "reason", "payload")
 STAGE = (
     "CREATE TEMP TABLE IF NOT EXISTS trade_stage (LIKE trade INCLUDING DEFAULTS) "
@@ -142,9 +132,9 @@ class IngestWriter:
         self._counts: Counter[str] = Counter()
         self._skipped: Counter[str] = Counter()
         self._rejected: Counter[str] = Counter()
-        self._flush_ms: list[float] = []
-        self._batch_sizes: list[int] = []
-        self._lag_ms: list[float] = []
+        self._flush_ms: deque[float] = deque(maxlen=SAMPLES)
+        self._batch_sizes: deque[int] = deque(maxlen=SAMPLES)
+        self._lag_ms: deque[float] = deque(maxlen=SAMPLES)
         self._high_water = 0
 
     # --- using the writer ------------------------------------------------------------------
@@ -175,10 +165,7 @@ class IngestWriter:
         if isinstance(outcome, Reject):
             self._items.append(("reject", outcome))
         else:
-            kind = {TickerRow: "ticker", TradeRow: "trade", LifecycleRow: "lifecycle"}[
-                type(outcome)
-            ]
-            self._items.append((kind, outcome))
+            self._items.append((KIND_OF[type(outcome)], outcome))
         self._pending += 1
         self._high_water = max(self._high_water, self._pending)
         if len(self._items) >= self._config.batch_rows:
@@ -208,12 +195,6 @@ class IngestWriter:
                 self._conn = None
 
     def stats(self) -> dict[str, Any]:
-        def percentile(values: list[float] | list[int], fraction: float) -> float:
-            if not values:
-                return 0.0
-            ordered = sorted(values)
-            return float(ordered[min(len(ordered) - 1, int(fraction * len(ordered)))])
-
         return {
             "pending": self._pending,
             "pending_high_water": self._high_water,
@@ -265,39 +246,36 @@ class IngestWriter:
             self._counts["flushes"] += 1
             self._flush_ms.append((self._monotonic() - started) * 1000)
             self._batch_sizes.append(len(batch))
-            for samples in (self._flush_ms, self._batch_sizes):
-                del samples[:-SAMPLES]
 
     # --- writing ---------------------------------------------------------------------------
 
+    async def _retrying[T](self, work: Callable[[], Awaitable[T]], what: str) -> T:
+        """``work`` on the writer's connection, repeated on a fresh one after a capped backoff."""
+
+        async def reset() -> None:
+            self._counts["retries"] += 1
+            await self._drop_connection()
+
+        def delay(attempt: int) -> float:
+            return min(self._config.retry_max, self._config.retry_base * 2.0 ** (attempt - 1))
+
+        return await retrying(work, reset=reset, delay=delay, sleep=self._sleep, what=what)
+
     async def _write_batch(self, batch: list[Item]) -> None:
         """Write the batch whole, retrying a lost connection; halve it to find a refused row."""
-        attempt = 0
-        while True:
-            try:
-                await self._attempt(batch)
-                return
-            except RETRYABLE as exc:
-                attempt += 1
-                self._counts["retries"] += 1
-                await self._drop_connection()
-                delay = min(self._config.retry_max, self._config.retry_base * 2.0 ** (attempt - 1))
-                log.warning(
-                    "ingest write failed (%s); retrying in %.1f s", type(exc).__name__, delay
-                )
-                await self._sleep(delay)
-            except ROW_ERRORS as exc:
-                if len(batch) == 1:
-                    if batch[0][0] == "reject":  # a reject that cannot be stored: do not recurse
-                        self._counts["rejects_lost"] += 1
-                        log.error("a rejected row could not itself be stored: %s", exc)
-                        return
-                    await self._reject_alone(batch[0], exc)
+        try:
+            await self._retrying(lambda: self._attempt(batch), "ingest write")
+        except ROW_ERRORS as exc:
+            if len(batch) == 1:
+                if batch[0][0] == "reject":  # a reject that cannot be stored: do not recurse
+                    self._counts["rejects_lost"] += 1
+                    log.error("a rejected row could not itself be stored: %s", exc)
                     return
-                middle = len(batch) // 2
-                await self._write_batch(batch[:middle])
-                await self._write_batch(batch[middle:])
+                await self._reject_alone(batch[0], exc)
                 return
+            middle = len(batch) // 2
+            await self._write_batch(batch[:middle])
+            await self._write_batch(batch[middle:])
 
     async def _connection(self) -> asyncpg.Connection:
         if self._conn is None or self._conn.is_closed():
@@ -343,11 +321,9 @@ class IngestWriter:
                 self._counts["trade_duplicates"] += len(rows) - added
             else:
                 self._counts[f"written_{kind}"] += len(rows)
-        for kind, rows in by_kind.items():
-            if kind in ("ticker", "trade"):
-                moments = [(r.received_at - r.ts) if kind == "ticker" else None for r in rows]
-                self._lag_ms.extend(m.total_seconds() * 1000 for m in moments if m is not None)
-        del self._lag_ms[:-SAMPLES]
+        # how far behind the exchange's time a ticker frame arrived
+        for row in by_kind.get("ticker", ()):
+            self._lag_ms.append((row.received_at - row.ts).total_seconds() * 1000)
 
     @staticmethod
     async def _stage_trades(conn: asyncpg.Connection, trades: list[Any]) -> int:
@@ -367,25 +343,15 @@ class IngestWriter:
         """
         if not trades:
             return 0, 0
-        attempt = 0
+
+        async def insert() -> int:
+            conn = await self._connection()
+            async with conn.transaction():
+                return await self._stage_trades(conn, trades)
+
         async with self._flush_lock:
-            while True:
-                try:
-                    conn = await self._connection()
-                    async with conn.transaction():
-                        added = await self._stage_trades(conn, trades)
-                    return added, len(trades) - added
-                except RETRYABLE as exc:
-                    attempt += 1
-                    self._counts["retries"] += 1
-                    await self._drop_connection()
-                    delay = min(
-                        self._config.retry_max, self._config.retry_base * 2.0 ** (attempt - 1)
-                    )
-                    log.warning(
-                        "trade insert failed (%s); retrying in %.1f s", type(exc).__name__, delay
-                    )
-                    await self._sleep(delay)
+            added = await self._retrying(insert, "trade insert")
+        return added, len(trades) - added
 
     async def _reject_alone(self, item: Item, error: Exception) -> None:
         """A single row the database refuses: keep it, with the reason, in ``ingest_reject``."""
