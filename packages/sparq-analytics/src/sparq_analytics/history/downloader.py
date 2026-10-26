@@ -146,11 +146,7 @@ class Downloader:
         """Build the two clients (production, public data) at the configured rates."""
 
         def client(rate: float) -> KalshiPublicClient:
-            kalshi = KalshiConfig(
-                environment=Environment.PRODUCTION,
-                rate_limit_per_second=rate,
-                burst_requests=max(rate, 1.0),
-            )
+            kalshi = KalshiConfig.at_rate(rate, Environment.PRODUCTION)
             return KalshiPublicClient(kalshi, transport=transport)
 
         return cls(

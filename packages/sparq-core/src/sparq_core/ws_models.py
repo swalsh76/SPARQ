@@ -20,16 +20,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, model_validator
 
-from sparq_core.fixedpoint import E6
 from sparq_core.models import (
+    Model,
     Moment,
     OptCountE2,
     OptDollarsE6,
     RequiredCountE2,
     RequiredDollarsE6,
     Text,
+    check_prices_add_to_a_dollar,
 )
 
 TICKER = "ticker"
@@ -40,8 +41,7 @@ COMBO_LIFECYCLE = "multivariate_market_lifecycle"
 RESPONSE_TYPES = frozenset({"subscribed", "ok", "unsubscribed", "error"})
 
 
-class WsModel(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
+WsModel = Model  # the WebSocket messages share the REST models' base
 
 
 class TickerMsg(WsModel):
@@ -83,8 +83,7 @@ class TradeMsg(WsModel):
 
     @model_validator(mode="after")
     def _prices_add_to_a_dollar(self) -> "TradeMsg":
-        if self.yes_price_e6 + self.no_price_e6 != E6:
-            raise ValueError("yes and no prices do not add to $1")
+        check_prices_add_to_a_dollar(self.yes_price_e6, self.no_price_e6)
         return self
 
 

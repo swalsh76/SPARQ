@@ -218,9 +218,7 @@ async def run_service(
         if market_data is None:
             clients = []
             for rate in (config.backfill_rate_per_second, config.discovery_rate_per_second):
-                settings = KalshiConfig(
-                    environment=environment, rate_limit_per_second=rate, burst_requests=rate
-                )
+                settings = KalshiConfig.at_rate(rate, environment)
                 clients.append(await stack.enter_async_context(KalshiPublicClient(settings)))
             market_data = (MarketData(clients[0]), MarketData(clients[1]))
         backfill_data, other_data = market_data

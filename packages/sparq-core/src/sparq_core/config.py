@@ -85,6 +85,14 @@ class KalshiConfig:
         return self.environment is Environment.PRODUCTION
 
     @classmethod
+    def at_rate(cls, rate: float, environment: Environment = Environment.DEMO) -> "KalshiConfig":
+        """A client paced at ``rate`` requests a second, with a second's worth of burst (at least
+        one request, so a rate below one a second is valid too)."""
+        return cls(
+            environment=environment, rate_limit_per_second=rate, burst_requests=max(rate, 1.0)
+        )
+
+    @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "KalshiConfig":
         """Settings from ``KALSHI_ENV`` (demo or production) and ``SPARQ_RATE_LIMIT_PER_SECOND``."""
         env = os.environ if environ is None else environ
@@ -104,6 +112,4 @@ class KalshiConfig:
             raise ConfigError(
                 f"SPARQ_RATE_LIMIT_PER_SECOND must be a number, got {raw_rate!r}"
             ) from None
-        return cls(
-            environment=environment, rate_limit_per_second=rate, burst_requests=max(rate, 1.0)
-        )
+        return cls.at_rate(rate, environment)

@@ -98,13 +98,21 @@ def _parse[M: Model](model: type[M], raw: Mapping[str, Any], where: str) -> M:
         ) from None
 
 
+def _rows[M: Model](model: type[M], payload: Mapping[str, Any], key: str, where: str) -> list[M]:
+    """The list of objects under ``key``, each read into ``model``."""
+    rows = payload.get(key)
+    if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+        raise KalshiResponseError(f"{where}: {key!r} is not a list of objects")
+    return [_parse(model, row, where) for row in rows]
+
+
 class MarketData:
     def __init__(self, client: KalshiPublicClient) -> None:
         self._client = client
 
     # --- single reads -----------------------------------------------------------------------
 
-    async def _object(self, path: str, key: str | None, model: type[Any]) -> Any:
+    async def _object[M: Model](self, path: str, key: str | None, model: type[M]) -> M:
         payload = await self._client.get_json(path)
         body = payload if key is None else payload.get(key)
         if not isinstance(body, dict):
@@ -114,42 +122,30 @@ class MarketData:
         return _parse(model, body, f"GET {path}")
 
     async def exchange_status(self) -> ExchangeStatus:
-        result: ExchangeStatus = await self._object("/exchange/status", None, ExchangeStatus)
-        return result
+        return await self._object("/exchange/status", None, ExchangeStatus)
 
     async def exchange_schedule(self) -> ExchangeSchedule:
-        result: ExchangeSchedule = await self._object(
-            "/exchange/schedule", "schedule", ExchangeSchedule
-        )
-        return result
+        return await self._object("/exchange/schedule", "schedule", ExchangeSchedule)
 
     async def historical_cutoff(self) -> HistoricalCutoff:
-        result: HistoricalCutoff = await self._object("/historical/cutoff", None, HistoricalCutoff)
-        return result
+        return await self._object("/historical/cutoff", None, HistoricalCutoff)
 
     async def market(self, ticker: str) -> Market:
-        result: Market = await self._object(f"/markets/{ticker}", "market", Market)
-        return result
+        return await self._object(f"/markets/{ticker}", "market", Market)
 
     async def historical_market(self, ticker: str) -> Market:
-        result: Market = await self._object(f"/historical/markets/{ticker}", "market", Market)
-        return result
+        return await self._object(f"/historical/markets/{ticker}", "market", Market)
 
     async def event(self, event_ticker: str) -> Event:
-        result: Event = await self._object(f"/events/{event_ticker}", "event", Event)
-        return result
+        return await self._object(f"/events/{event_ticker}", "event", Event)
 
     async def series(self, series_ticker: str) -> Series:
-        result: Series = await self._object(f"/series/{series_ticker}", "series", Series)
-        return result
+        return await self._object(f"/series/{series_ticker}", "series", Series)
 
     async def series_list(self) -> list[Series]:
         """Every series in one response (about 15,000 series, 20 MB; the endpoint does not page)."""
         payload = await self._client.get_json("/series")
-        rows = payload.get("series")
-        if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
-            raise KalshiResponseError("GET /series: 'series' is not a list of objects")
-        return [_parse(Series, row, "GET /series") for row in rows]
+        return _rows(Series, payload, "series", "GET /series")
 
     async def series_fee_changes(
         self, series_ticker: str | None = None, *, show_historical: bool = True
@@ -162,10 +158,7 @@ class MarketData:
                 "show_historical": "true" if show_historical else "false",
             },
         )
-        rows = payload.get("series_fee_change_arr")
-        if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
-            raise KalshiResponseError("GET /series/fee_changes: no list of fee changes")
-        return [_parse(SeriesFeeChange, row, "GET /series/fee_changes") for row in rows]
+        return _rows(SeriesFeeChange, payload, "series_fee_change_arr", "GET /series/fee_changes")
 
     # --- listings that page -----------------------------------------------------------------
 
@@ -328,10 +321,7 @@ class MarketData:
         payload = await self._client.get_json(
             path, {"start_ts": start_ts, "end_ts": end_ts, "period_interval": period_interval}
         )
-        rows = payload.get("candlesticks")
-        if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
-            raise KalshiResponseError(f"GET {path}: 'candlesticks' is not a list of objects")
-        return [_parse(Candlestick, row, f"GET {path}") for row in rows]
+        return _rows(Candlestick, payload, "candlesticks", f"GET {path}")
 
     async def historical_candlesticks(
         self, ticker: str, *, start_ts: int, end_ts: int, period_interval: int
