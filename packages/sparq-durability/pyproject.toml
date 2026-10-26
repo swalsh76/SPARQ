@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sparq-durability"
+version = "0.0.0"
+description = "The power-cut test of the database host (a tool, never installed by sparq-admin)"
+license = "MIT"
+license-files = ["../../LICENSE"]
+requires-python = ">=3.12"
+dependencies = ["sparq-server", "asyncpg>=0.30"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sparq_durability"]
+
+[tool.uv.sources]
+sparq-server = { workspace = true }

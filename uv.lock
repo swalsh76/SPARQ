@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "sparq-analytics",
     "sparq-core",
+    "sparq-durability",
     "sparq-server",
     "sparq-workspace",
 ]
@@ -637,100 +638,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/e1/2069291243c926a2ff1cd706c7f3eeb9b62144bf60f77c9fb9ff2fb26bd3/iniconfig-2.3.1.tar.gz", hash = "sha256:67f4b9c50da0dedf52af349e7749a80a9057a5031199791b906c3bb3ae878960", size = 21209, upload-time = "2026-10-06T22:48:38.076Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/43/4ca9e49d27a1fcf6bece6f6aec0ea46bb9112489b93d4b688fb415457bdb/iniconfig-2.3.1-py3-none-any.whl", hash = "sha256:9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7", size = 7552, upload-time = "2026-10-06T22:48:36.959Z" },
-]
-
-[[package]]
-name = "sparq-analytics"
-version = "0.0.0"
-source = { editable = "packages/sparq-analytics" }
-dependencies = [
-    { name = "sparq-core" },
-    { name = "numpy" },
-    { name = "polars" },
-    { name = "pyarrow" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "sparq-core", editable = "packages/sparq-core" },
-    { name = "numpy", specifier = ">=2.1" },
-    { name = "polars", specifier = ">=1.30" },
-    { name = "pyarrow", specifier = ">=21" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
-]
-
-[[package]]
-name = "sparq-core"
-version = "0.0.0"
-source = { editable = "packages/sparq-core" }
-dependencies = [
-    { name = "cryptography" },
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "websockets" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "cryptography", specifier = ">=44" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "websockets", specifier = ">=15" },
-]
-
-[[package]]
-name = "sparq-server"
-version = "0.0.0"
-source = { editable = "packages/sparq-server" }
-dependencies = [
-    { name = "alembic" },
-    { name = "asyncpg" },
-    { name = "sparq-core" },
-    { name = "pydantic" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.15" },
-    { name = "asyncpg", specifier = ">=0.30" },
-    { name = "sparq-core", editable = "packages/sparq-core" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.40" },
-]
-
-[[package]]
-name = "sparq-workspace"
-version = "0.0.0"
-source = { virtual = "." }
-
-[package.dev-dependencies]
-dev = [
-    { name = "hypothesis" },
-    { name = "sparq-analytics" },
-    { name = "sparq-core" },
-    { name = "sparq-server" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "hypothesis", specifier = ">=6.140" },
-    { name = "sparq-analytics", editable = "packages/sparq-analytics" },
-    { name = "sparq-core", editable = "packages/sparq-core" },
-    { name = "sparq-server", editable = "packages/sparq-server" },
-    { name = "mypy", specifier = ">=1.18" },
-    { name = "pytest", specifier = ">=8.4" },
-    { name = "pytest-asyncio", specifier = ">=1.2" },
-    { name = "pytest-cov", specifier = ">=7.0" },
-    { name = "ruff", specifier = ">=0.14" },
 ]
 
 [[package]]
@@ -1414,6 +1321,117 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f23394729afe52f3bf7adec04bf9ed2c820b39e19299111/sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88", size = 30594, upload-time = "2021-05-16T22:03:42.897Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575, upload-time = "2021-05-16T22:03:41.177Z" },
+]
+
+[[package]]
+name = "sparq-analytics"
+version = "0.0.0"
+source = { editable = "packages/sparq-analytics" }
+dependencies = [
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "pyarrow" },
+    { name = "sparq-core" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "numpy", specifier = ">=2.1" },
+    { name = "polars", specifier = ">=1.30" },
+    { name = "pyarrow", specifier = ">=21" },
+    { name = "sparq-core", editable = "packages/sparq-core" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+
+[[package]]
+name = "sparq-core"
+version = "0.0.0"
+source = { editable = "packages/sparq-core" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=44" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "websockets", specifier = ">=15" },
+]
+
+[[package]]
+name = "sparq-durability"
+version = "0.0.0"
+source = { editable = "packages/sparq-durability" }
+dependencies = [
+    { name = "asyncpg" },
+    { name = "sparq-server" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncpg", specifier = ">=0.30" },
+    { name = "sparq-server", editable = "packages/sparq-server" },
+]
+
+[[package]]
+name = "sparq-server"
+version = "0.0.0"
+source = { editable = "packages/sparq-server" }
+dependencies = [
+    { name = "alembic" },
+    { name = "asyncpg" },
+    { name = "pydantic" },
+    { name = "sparq-core" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.15" },
+    { name = "asyncpg", specifier = ">=0.30" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "sparq-core", editable = "packages/sparq-core" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.40" },
+]
+
+[[package]]
+name = "sparq-workspace"
+version = "0.0.0"
+source = { virtual = "." }
+
+[package.dev-dependencies]
+dev = [
+    { name = "hypothesis" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "sparq-analytics" },
+    { name = "sparq-core" },
+    { name = "sparq-durability" },
+    { name = "sparq-server" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "hypothesis", specifier = ">=6.140" },
+    { name = "mypy", specifier = ">=1.18" },
+    { name = "pytest", specifier = ">=8.4" },
+    { name = "pytest-asyncio", specifier = ">=1.2" },
+    { name = "pytest-cov", specifier = ">=7.0" },
+    { name = "ruff", specifier = ">=0.14" },
+    { name = "sparq-analytics", editable = "packages/sparq-analytics" },
+    { name = "sparq-core", editable = "packages/sparq-core" },
+    { name = "sparq-durability", editable = "packages/sparq-durability" },
+    { name = "sparq-server", editable = "packages/sparq-server" },
 ]
 
 [[package]]

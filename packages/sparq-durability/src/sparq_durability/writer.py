@@ -13,9 +13,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import asyncpg
+from sparq_server.stats import percentile
 
-from sparq_server.durability.connection import connect
-from sparq_server.durability.ledger import ID_SPACE, first_id
+from sparq_durability.connection import connect
+from sparq_durability.ledger import ID_SPACE, first_id
 
 BATCH = 100
 REPORT_SECONDS = 5.0
@@ -40,10 +41,7 @@ class Stats:
     latencies_ms: list[float] = field(default_factory=list)
 
     def percentile(self, fraction: float) -> float:
-        if not self.latencies_ms:
-            return 0.0
-        ordered = sorted(self.latencies_ms)
-        return ordered[min(len(ordered) - 1, int(fraction * len(ordered)))]
+        return percentile(self.latencies_ms, fraction)
 
     def summary(self) -> str:
         return (

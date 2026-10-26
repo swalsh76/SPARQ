@@ -11,7 +11,7 @@ It writes only to the **test cluster** (`sparq_test`, port 5433). That cluster h
 - The server host, with you at it (to pull the cord) and a second terminal on it (SSH from the workstation is fine).
 - The analytics node, running the ledger. It stays up while the server host loses power.
 - Firmware **AC power recovery = power on** (SERVER.md step 1), or you press the power button after each cut.
-- The repository checked out on the server host at the branch or release being tested, with `uv sync --package sparq-server` run once.
+- The repository checked out on the server host at the branch or release being tested, with `uv sync --package sparq-durability` run once (the test is a package of its own, `sparq-durability`, which `install` never puts on the server).
 
 Words in angle brackets are values to replace. The writer and the verifier connect over the local socket as `root`, which the test cluster's user map turns into its superuser; so the commands below are run with `sudo`.
 
@@ -26,14 +26,14 @@ cat /sys/block/nvme0n1/queue/write_cache             # what the kernel believes 
 
 Read it this way. A drive that acknowledges writes without storing them shows synchronous writes far faster than flash can commit (the workstation's drive: 20 µs against about 200 µs). A drive that honours its flushes shows `open_datasync` near flash speed (about 0.2 to 0.3 ms) and `fdatasync`/`fsync` slower still (about 1 ms). This is evidence, not proof; the cuts are the proof.
 
-**Run the self-tests** on a machine with a scratch PostgreSQL (CI does this on every change; they are the `db` tests whose names begin `test_server_durability`). They show that the verifier catches a deleted row, a corrupted payload, a fallen row count, a zeroed page, a flipped byte in a page, and a forged ledger.
+**Run the self-tests** on a machine with a scratch PostgreSQL (CI does this on every change; they are the `db` tests whose names begin `test_durability`). They show that the verifier catches a deleted row, a corrupted payload, a fallen row count, a zeroed page, a flipped byte in a page, and a forged ledger.
 
 ## 1. Start the ledger (on the analytics node)
 
 The ledger needs only Python 3.12 or later and the standard library. It listens on one address, writes one file per run into its data directory, and notes in the file when a connection goes quiet.
 
 ```sh
-PYTHONPATH=<path-to>/src python -m sparq_server.durability ledger --directory <ledger-data> --host <analytics-node-address> --port <port>
+PYTHONPATH=<checkout>/packages/sparq-durability/src python -m sparq_durability ledger --directory <ledger-data> --host <analytics-node-address> --port <port>
 ```
 
 Leave it running for the whole test. Keep the data directory: it is the evidence.
@@ -43,7 +43,7 @@ Leave it running for the whole test. Keep the data directory: it is the evidence
 On the server host, in the repository. Use a **new run number each time** (the writer refuses one it has seen):
 
 ```sh
-sudo env "PATH=$PATH" uv run --package sparq-server python -m sparq_server.durability writer \
+sudo env "PATH=$PATH" uv run --package sparq-durability python -m sparq_durability writer \
   --url 'postgresql+asyncpg://postgres@/sparq_test?host=/var/run/postgresql&port=5433' \
   --run <N> --ledger-host <analytics-node-address> --ledger-port <port>
 ```
@@ -57,7 +57,7 @@ When it is back (the guide's `verify` and `sparq-admin install` need no help; th
 3. Verify against **every ledger so far**:
 
 ```sh
-sudo env "PATH=$PATH" uv run --package sparq-server python -m sparq_server.durability verify \
+sudo env "PATH=$PATH" uv run --package sparq-durability python -m sparq_durability verify \
   --url 'postgresql+asyncpg://postgres@/sparq_test?host=/var/run/postgresql&port=5433' \
   --ledger-directory <copy-of-ledger-data>
 ```

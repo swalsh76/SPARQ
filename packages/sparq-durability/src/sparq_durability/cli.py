@@ -1,4 +1,4 @@
-"""``python -m sparq_server.durability``: the ledger, the writer and the check for the power cut.
+"""``python -m sparq_durability``: the ledger, the writer and the check for the power cut.
 
 Exit codes: 0 fine, 1 bad command line or the writer refused, 2 a check failed.
 """
@@ -10,11 +10,11 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from sparq_server.durability.ledger import SILENCE_SECONDS
+from sparq_durability.ledger import SILENCE_SECONDS
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sparq_server.durability", description=__doc__)
+    parser = argparse.ArgumentParser(prog="sparq_durability", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     led = sub.add_parser("ledger", help="record acknowledged commits (on another machine)")
     led.add_argument("--directory", type=Path, required=True)
@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "ledger":
-        from sparq_server.durability.ledger import serve_forever
+        from sparq_durability.ledger import serve_forever
 
         print(f"ledger listening on {args.host}:{args.port}, writing to {args.directory}")
         with contextlib.suppress(KeyboardInterrupt):
@@ -52,7 +52,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "writer":
         from sparq_server.db.guard import NotATestDatabase
-        from sparq_server.durability.writer import WriterRefused, run_writer
+
+        from sparq_durability.writer import WriterRefused, run_writer
 
         try:
             stats = asyncio.run(
@@ -67,7 +68,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     from sparq_server.admin.preflight import refused, render
     from sparq_server.db.guard import NotATestDatabase
-    from sparq_server.durability.verify import run_pitr_check, run_verify
+
+    from sparq_durability.verify import run_pitr_check, run_verify
 
     try:
         if args.command == "pitr":
