@@ -10,9 +10,14 @@ from typing import Literal
 
 from sparq_server.admin.answers import DatabaseHost
 from sparq_server.admin.managed import network_ports
-from sparq_server.admin.system import System
+from sparq_server.admin.system import System, installed_version
+from sparq_server.admin.versions import PINS, POSTGRES_MAJOR
 
 Status = Literal["ok", "warn", "fail"]
+PACKAGE_LABELS = {
+    f"postgresql-{POSTGRES_MAJOR}": f"PostgreSQL {POSTGRES_MAJOR}",
+    f"timescaledb-2-postgresql-{POSTGRES_MAJOR}": "TimescaleDB",
+}
 
 SUPPORTED_UBUNTU = ("24.04", "26.04")
 MIN_MEMORY_GIB = 16
@@ -131,15 +136,11 @@ def check_listeners(system: System, extra_ports: frozenset[int]) -> Check:
 
 def _packages(system: System) -> list[Check]:
     checks = []
-    for label, package in (
-        ("PostgreSQL 18", "postgresql-18"),
-        ("TimescaleDB", "timescaledb-2-postgresql-18"),
-    ):
-        code, version = system.run(["dpkg-query", "-W", "-f=${Version}", package])
-        if code == 0 and version.strip():
-            checks.append(Check(label, "ok", f"installed, {version.strip()}"))
-        else:
-            checks.append(Check(label, "ok", "not installed yet (the install adds it)"))
+    for package in PINS:  # the packages this release pins, which the install adds
+        label = PACKAGE_LABELS.get(package, package)
+        version = installed_version(system, package)
+        detail = f"installed, {version}" if version else "not installed yet (the install adds it)"
+        checks.append(Check(label, "ok", detail))
     return checks
 
 

@@ -66,6 +66,20 @@ class Host(System, Protocol):
         ...
 
 
+def installed_version(system: System, package: str) -> str | None:
+    """The installed version of a Debian package, or None when it is not installed."""
+    code, out = system.run(["dpkg-query", "-W", "-f=${Version}", package])
+    return out.strip() if code == 0 and out.strip() else None
+
+
+def write_if_different(host: Host, path: str, text: str, mode: int, owner: str, group: str) -> bool:
+    """Write the file only when its text differs; returns whether it was written."""
+    if host.read_text(path) == text:
+        return False
+    host.write_text(path, text, mode, owner, group)
+    return True
+
+
 class LocalSystem:
     def read_text(self, path: str) -> str | None:
         try:

@@ -150,6 +150,16 @@ def render_ident() -> str:
     return HEADER + "# MAPNAME  SYSTEM-USERNAME  PG-USERNAME\n" + "\n".join(rows) + "\n"
 
 
+def cluster_files(spec: ClusterSpec) -> tuple[tuple[str, str, int], ...]:
+    """The files that make a cluster ours, as (path, text, mode): its settings, its access rules
+    and its user map."""
+    return (
+        (conf_path(spec), render_conf(spec), 0o644),
+        (hba_path(spec), render_hba(spec), 0o640),
+        (ident_path(spec), render_ident(), 0o640),
+    )
+
+
 def config_directory(spec: ClusterSpec) -> str:
     return f"/etc/postgresql/{POSTGRES_MAJOR}/{spec.name}"
 
@@ -191,7 +201,7 @@ def clusters_of(config: DatabaseHost) -> list[ClusterSpec]:
 
 
 def data_directory(spec: ClusterSpec) -> str:
-    return f"/var/lib/postgresql/{POSTGRES_MAJOR}/{spec.name}"
+    return f"{DATA_ROOT}/{POSTGRES_MAJOR}/{spec.name}"
 
 
 def repo_path(config: DatabaseHost) -> str:
@@ -380,6 +390,14 @@ def render_alerts_config(config: DatabaseHost) -> str:
     )
 
 
+# the sandbox every unit of ours runs in: no new privileges, a read-only system, no home, no devices
+HARDENING = (
+    "NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n"
+    "PrivateDevices=yes\nProtectKernelTunables=yes\nProtectControlGroups=yes\n"
+    "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nLockPersonality=yes\n"
+)
+
+
 def _watchdog_service(description: str, exec_flag: str) -> str:
     """A oneshot run of the watchdog as the service account, with the topic as a credential."""
     start = f"{APP_DIRECTORY}/.venv/bin/python -m sparq_server.watchdog {ALERTS_CONFIG}{exec_flag}"
@@ -392,9 +410,7 @@ def _watchdog_service(description: str, exec_flag: str) -> str:
         + f"LoadCredentialEncrypted={ALERT_CREDENTIAL}:{credential_file(ALERT_CREDENTIAL)}\n"
         + "StateDirectory=sparq-watchdog\n"
         + "TimeoutStartSec=60\nMemoryMax=256M\n"
-        + "NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n"
-        + "PrivateDevices=yes\nProtectKernelTunables=yes\nProtectControlGroups=yes\n"
-        + "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nLockPersonality=yes\n"
+        + HARDENING
     )
 
 
@@ -454,8 +470,6 @@ def render_ingest_unit() -> str:
         + "Restart=always\nRestartSec=5\n"
         + f"RestartPreventExitStatus={EXIT_DISK_FULL} {EXIT_REFUSED}\n"
         + "TimeoutStopSec=90\nMemoryMax=4G\n"
-        + "NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n"
-        + "PrivateDevices=yes\nProtectKernelTunables=yes\nProtectControlGroups=yes\n"
-        + "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nLockPersonality=yes\n\n"
-        + "[Install]\nWantedBy=multi-user.target\n"
+        + HARDENING
+        + "\n[Install]\nWantedBy=multi-user.target\n"
     )

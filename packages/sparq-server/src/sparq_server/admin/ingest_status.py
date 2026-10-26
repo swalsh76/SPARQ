@@ -9,7 +9,7 @@ whether anything needs attention.
 from sparq_server import names
 from sparq_server.admin import managed
 from sparq_server.admin.answers import DatabaseHost
-from sparq_server.admin.install import psql
+from sparq_server.admin.pg import psql
 from sparq_server.admin.preflight import Check, Status
 from sparq_server.admin.system import CommandFailed, Host
 from sparq_server.ingest import gaps, state

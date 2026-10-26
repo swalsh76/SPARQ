@@ -1,26 +1,35 @@
-"""``sparq-admin install`` for the database host: the plan it prints, and the steps it runs.
+"""``sparq-admin install`` for the database host: the steps it runs, and the plan they print.
 
-``--dry-run`` prints the plan and changes nothing. A real run is idempotent: each step looks at the
-machine first, changes only what differs, and says whether it did. A second run therefore changes
-nothing. It must run as root, never prompts, and refuses (changing nothing further) when a
-prerequisite is missing. The database settings follow CLAUDE.md: ``fsync``, ``synchronous_commit``
-and ``full_page_writes`` stay on, data checksums are on, PostgreSQL accepts connections only from
+``--dry-run`` prints the plan and changes nothing. The plan is made from the same table of steps
+the install runs, each describing itself, so it cannot promise what the install does not do. A
+real run is idempotent: each step looks at the machine first, changes only what differs, and says
+whether it did. A second run therefore changes nothing. It must run as root, never prompts, and
+refuses (changing nothing further) when a prerequisite is missing; the dry run refuses what the
+install would. The database settings follow CLAUDE.md: ``fsync``, ``synchronous_commit`` and
+``full_page_writes`` stay on, data checksums are on, PostgreSQL accepts connections only from
 localhost and the listed clients, and passwords use ``scram-sha-256``.
 """
 
-import json
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 from sparq_server import names
 from sparq_server.admin import managed
-from sparq_server.admin.answers import Answers, DatabaseHost, Ingest
+from sparq_server.admin.answers import Answers, DatabaseHost
+from sparq_server.admin.pg import (
+    as_postgres,
+    clusters,
+    ensure_database,
+    ensure_role,
+    ensure_timescaledb,
+    psql,
+    stanza_info,
+)
 from sparq_server.admin.preflight import refused, run_preflight, tpm_state
-from sparq_server.admin.system import CommandFailed, Host, System
+from sparq_server.admin.system import CommandFailed, Host, installed_version, write_if_different
 from sparq_server.admin.versions import PINS, POSTGRES_MAJOR, TPM_LIBRARY
-
-DIRECTORIES = ("/opt/sparq/<version>", "/etc/sparq", "/var/lib/sparq")
 
 
 class InstallRefused(Exception):
@@ -36,92 +45,13 @@ class Outcome:
 
 @dataclass(frozen=True, slots=True)
 class Step:
+    """One line of the plan: the step it belongs to and what it will do."""
+
     area: str
     text: str
 
 
-# --- the plan (what --dry-run prints) -----------------------------------------------------------
-
-
-def plan_install(answers: Answers) -> list[Step]:
-    """The steps for the database host from ``answers`` (raises if the role is not this one)."""
-    host = answers.installable_host()
-    main = managed.main_cluster(host)
-    steps = [Step("packages", f"install {pkg} {pin}* and hold it") for pkg, pin in PINS.items()]
-    steps += [Step("directories", f"create {d}") for d in DIRECTORIES]
-    steps.append(Step("account", f"create the system account {managed.SERVICE_USER}"))
-    steps += [Step("postgres", f"set {key} = {value}") for key, value in managed.settings(main)]
-    steps.append(Step("postgres", "data_checksums on at initdb"))
-    clients = ", ".join(str(a) for a in host.postgres.allowed_clients) or "none"
-    steps += [
-        Step("postgres", f"accept connections from localhost and from: {clients}"),
-        Step("storage", f"enforce a budget of {host.storage.budget_gb} GB (the governor, K1b)"),
-        Step(
-            "backup",
-            f"back up each cluster to {host.backup.target}: a full backup weekly, a differential "
-            f"daily, WAL archived continuously, {host.backup.retention_full_weeks} fulls kept"
-            + (", encrypted" if host.backup.encrypt else ""),
-        ),
-        Step(
-            "tls",
-            "create a new self-signed certificate"
-            if host.tls.mode == "new"
-            else f"restore the certificate from {host.tls.restore_from}",
-        ),
-        Step("web", f"serve the web and API on port {host.web.port} (K6)"),
-    ]
-    if host.test_cluster.enabled:
-        steps.append(
-            Step("test cluster", f"a second cluster on port {host.test_cluster.port} for the tests")
-        )
-    if host.ingest.enabled:
-        steps += [
-            Step(
-                "ingest", f"create the role {managed.INGEST_ROLE} (writes the ingest tables only)"
-            ),
-            Step(
-                "ingest",
-                f"build the program from {host.ingest.checkout} into {managed.APP_DIRECTORY}",
-            ),
-            Step("ingest", f"write {names.INGEST_CONFIG} and the unit {names.INGEST_UNIT}"),
-            Step(
-                "ingest",
-                "start the service once its data key is stored "
-                f"(it stops by itself at {host.ingest.disk_stop_percent}% disk use)",
-            ),
-        ]
-    if host.alerts.enabled:
-        steps.append(
-            Step(
-                "alerts",
-                f"every minute check the ingest and send a message through {host.alerts.server} "
-                f"if it is silent for {host.alerts.silence_seconds // 60} minutes, stopped, "
-                f"short of disk ({host.alerts.disk_warn_percent}%) or its gaps are stuck",
-            )
-        )
-    if host.recovery.from_backup:
-        steps.append(
-            Step(
-                "recovery",
-                f"restore backup set {host.recovery.backup_set} into a NEW cluster "
-                "and compare it with its manifest",
-            )
-        )
-    else:
-        steps.append(Step("database", "create the database and its owner; run the migrations"))
-    return steps
-
-
-def render_plan(steps: list[Step]) -> str:
-    return "\n".join(f"{s.area:<12} {s.text}" for s in steps)
-
-
 # --- helpers ------------------------------------------------------------------------------------
-
-
-def _installed_version(host: Host, package: str) -> str | None:
-    code, out = host.run(["dpkg-query", "-W", "-f=${Version}", package])
-    return out.strip() if code == 0 and out.strip() else None
 
 
 def _candidate_version(host: Host, package: str) -> str | None:
@@ -134,32 +64,13 @@ def _candidate_version(host: Host, package: str) -> str | None:
     return None
 
 
-def write_if_different(host: Host, path: str, text: str, mode: int, owner: str, group: str) -> bool:
-    if host.read_text(path) == text:
-        return False
-    host.write_text(path, text, mode, owner, group)
-    return True
-
-
-def clusters(host: System) -> dict[str, tuple[int, str]]:
-    """The PostgreSQL clusters of this major version: name -> (port, status)."""
-    _, out = host.run(["pg_lsclusters", "-h"])
-    found: dict[str, tuple[int, str]] = {}
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) >= 4 and parts[0] == str(POSTGRES_MAJOR) and parts[2].isdigit():
-            found[parts[1]] = (int(parts[2]), parts[3])
-    return found
-
-
-def psql(host: Host, port: int, database: str, sql: str) -> str:
-    """Run SQL as the superuser over the local socket (root maps to ``postgres``)."""
-    argv = ["psql", "-p", str(port), "-U", "postgres", "-d", database]
-    return host.run_checked([*argv, "-v", "ON_ERROR_STOP=1", "-At", "-q", "-f", "-"], sql)
-
-
-def _exists(host: Host, port: int, database: str, sql: str) -> bool:
-    return bool(psql(host, port, database, sql).strip())
+def refusal(config: DatabaseHost) -> str | None:
+    """Why the answers cannot be installed by this release, or None when they can."""
+    if config.recovery.from_backup:
+        return "recovery from a backup is built in K1b; use a fresh install for now"
+    if config.tls.mode == "restore":
+        return "restoring the certificate is built in K1b; use tls mode 'new' for now"
+    return None
 
 
 # --- the steps ----------------------------------------------------------------------------------
@@ -167,7 +78,7 @@ def _exists(host: Host, port: int, database: str, sql: str) -> bool:
 
 def step_repositories(host: Host) -> Outcome:
     for package, pin in PINS.items():
-        installed = _installed_version(host, package)
+        installed = installed_version(host, package)
         if installed is not None and installed.startswith(pin):
             continue
         candidate = _candidate_version(host, package)
@@ -182,7 +93,7 @@ def step_repositories(host: Host) -> Outcome:
 def step_packages(host: Host) -> Outcome:
     changed = False
     for package, pin in PINS.items():
-        installed = _installed_version(host, package)
+        installed = installed_version(host, package)
         if installed is not None and installed.startswith(pin):
             continue
         host.run_checked(
@@ -194,8 +105,17 @@ def step_packages(host: Host) -> Outcome:
     if unheld:
         host.run_checked(["apt-mark", "hold", *unheld])
         changed = True
-    versions = ", ".join(f"{p} {_installed_version(host, p)}" for p in PINS)
+    versions = ", ".join(f"{p} {installed_version(host, p)}" for p in PINS)
     return Outcome("packages", changed, versions)
+
+
+ACCOUNT_DIRECTORIES = (
+    ("/opt/sparq", 0o755, "root"),
+    # these hold no secrets (the key is 0640 and the test password 0600), so a plain account can
+    # read the certificate and `verify` can check it
+    ("/etc/sparq", 0o755, managed.SERVICE_USER),
+    (managed.TLS_DIRECTORY, 0o755, "postgres"),
+)
 
 
 def step_account(host: Host) -> Outcome:
@@ -209,32 +129,11 @@ def step_account(host: Host) -> Outcome:
             ]
         )  # fmt: skip
         changed = True
-    for path, mode, group in (
-        ("/opt/sparq", 0o755, "root"),
-        # these hold no secrets (the key is 0640 and the test password 0600), so a plain account
-        # can read the certificate and `verify` can check it
-        ("/etc/sparq", 0o755, managed.SERVICE_USER),
-        (managed.TLS_DIRECTORY, 0o755, "postgres"),
-    ):
+    for path, mode, group in ACCOUNT_DIRECTORIES:
         if not host.exists(path):
             host.make_dir(path, mode, "root", group)
             changed = True
     return Outcome("account and directories", changed, f"account {managed.SERVICE_USER}")
-
-
-def as_postgres(argv: list[str]) -> list[str]:
-    """Run a command as the ``postgres`` account (pgBackRest and the share are its)."""
-    return ["runuser", "-u", "postgres", "--", *argv]
-
-
-def stanza_info(host: System, name: str) -> dict[str, Any] | None:
-    """What pgBackRest says about one stanza, or None if it cannot be asked."""
-    code, out = host.run(as_postgres(["pgbackrest", f"--stanza={name}", "info", "--output=json"]))
-    try:
-        found = json.loads(out) if code == 0 else []
-    except json.JSONDecodeError:
-        return None
-    return cast(dict[str, Any], found[0]) if found else None
 
 
 def step_backup_files(host: Host, config: DatabaseHost) -> Outcome:
@@ -346,12 +245,7 @@ def _ensure_cluster(host: Host, spec: managed.ClusterSpec) -> bool:
             ]
         )  # fmt: skip
         changed = True
-    files = (
-        (managed.conf_path(spec), managed.render_conf(spec), 0o644),
-        (managed.hba_path(spec), managed.render_hba(spec), 0o640),
-        (managed.ident_path(spec), managed.render_ident(), 0o640),
-    )
-    for path, text, mode in files:
+    for path, text, mode in managed.cluster_files(spec):
         changed |= write_if_different(host, path, text, mode, "postgres", "postgres")
     status = clusters(host).get(spec.name, (spec.port, "down"))[1]
     if changed or status != "online":
@@ -360,31 +254,13 @@ def _ensure_cluster(host: Host, spec: managed.ClusterSpec) -> bool:
     return changed
 
 
-def _ensure_extension(host: Host, port: int, database: str) -> bool:
-    found = "SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'"
-    if _exists(host, port, database, found):
-        return False
-    psql(host, port, database, "CREATE EXTENSION timescaledb")
-    return True
-
-
 def step_main_database(host: Host, config: DatabaseHost) -> Outcome:
     spec = managed.main_cluster(config)
     changed = _ensure_cluster(host, spec)
     port, role, database = spec.port, managed.OWNER_ROLE, managed.DATABASE
-    if not _exists(host, port, "postgres", f"SELECT 1 FROM pg_roles WHERE rolname = '{role}'"):  # noqa: S608 (fixed names)
-        psql(host, port, "postgres", f"CREATE ROLE {role} LOGIN")  # noqa: S608 (fixed names)
-        changed = True
-    if not _exists(
-        host,
-        port,
-        "postgres",
-        f"SELECT 1 FROM pg_database WHERE datname = '{database}'",  # noqa: S608 (fixed names)
-    ):
-        psql(host, port, "postgres", f"CREATE DATABASE {database} OWNER {role}")  # noqa: S608 (fixed names)
-        psql(host, port, "postgres", f"REVOKE CONNECT ON DATABASE {database} FROM PUBLIC")  # noqa: S608 (fixed names)
-        changed = True
-    changed |= _ensure_extension(host, port, database)
+    changed |= ensure_role(host, port, role)
+    changed |= ensure_database(host, port, database, role, private=True)
+    changed |= ensure_timescaledb(host, port, database)
     return Outcome("main cluster", changed, f"database {database}, owner {role}, port {port}")
 
 
@@ -399,23 +275,10 @@ def step_test_cluster(host: Host, config: DatabaseHost) -> Outcome:
         password = secrets.token_hex(16)
         host.write_text(managed.TEST_PASSWORD_FILE, password + "\n", 0o600, "root", "root")
         changed = True
-    password = password.strip()
-    if not _exists(host, port, "postgres", f"SELECT 1 FROM pg_roles WHERE rolname = '{role}'"):  # noqa: S608 (fixed names)
-        psql(host, port, "postgres", f"CREATE ROLE {role} LOGIN SUPERUSER PASSWORD '{password}'")  # noqa: S608 (fixed names)
-        changed = True
-    if not _exists(
-        host,
-        port,
-        "postgres",
-        f"SELECT 1 FROM pg_database WHERE datname = '{database}'",  # noqa: S608 (fixed names)
-    ):
-        psql(host, port, "postgres", f"CREATE DATABASE {database} OWNER {role}")  # noqa: S608 (fixed names)
-        changed = True
-    changed |= _ensure_extension(host, port, database)
+    changed |= ensure_role(host, port, role, f"LOGIN SUPERUSER PASSWORD '{password.strip()}'")
+    changed |= ensure_database(host, port, database, role)
+    changed |= ensure_timescaledb(host, port, database)
     return Outcome("test cluster", changed, f"database {database}, port {port}")
-
-
-# --- the install --------------------------------------------------------------------------------
 
 
 def ingest_grants_missing(host: Host, port: int) -> bool:
@@ -434,7 +297,7 @@ def step_tpm_support(host: Host) -> Outcome:
     refuses: a chip that still cannot seal is reported, and ``verify`` fails until that is dealt
     with (the key is then stored another way, by the owner's decision)."""
     changed = False
-    if _installed_version(host, TPM_LIBRARY) is None:
+    if installed_version(host, TPM_LIBRARY) is None:
         host.run_checked(["apt-get", "install", "-y", "--no-install-recommends", TPM_LIBRARY])
         changed = True
     state = tpm_state(host)
@@ -449,22 +312,19 @@ def step_ingest_role(host: Host, config: DatabaseHost) -> Outcome:
     migrations that create them need no second step."""
     port, role = managed.main_cluster(config).port, managed.INGEST_ROLE
     database, owner = managed.DATABASE, managed.OWNER_ROLE
-    changed = False
-    if not _exists(host, port, "postgres", f"SELECT 1 FROM pg_roles WHERE rolname = '{role}'"):  # noqa: S608 (fixed names)
-        psql(host, port, "postgres", f"CREATE ROLE {role} LOGIN")  # noqa: S608 (fixed names)
-        changed = True
+    changed = ensure_role(host, port, role)
     if ingest_grants_missing(host, port):
         psql(host, port, database, managed.render_ingest_grants(role, database, owner))
         changed = True
     return Outcome("ingest role", changed, f"{role}: writes the ingest tables, nothing else")
 
 
-def step_ingest_app(host: Host, ingest: Ingest) -> Outcome:
+def step_ingest_app(host: Host, config: DatabaseHost) -> Outcome:
     """Build the service's environment from the checkout, until release bundles exist (K1b).
 
     The environment lives in a root-owned directory the service can read and not write, with its
     own interpreter, and is rebuilt only when the checkout's commit differs from the built one."""
-    checkout, uv = cast(str, ingest.checkout), cast(str, ingest.uv)
+    checkout, uv = cast(str, config.ingest.checkout), cast(str, config.ingest.uv)
     commit = host.run_checked(
         ["git", "-c", "safe.directory=*", "-C", checkout, "rev-parse", "HEAD"]
     )
@@ -556,37 +416,180 @@ def step_watchdog(host: Host, config: DatabaseHost) -> Outcome:
     return Outcome("watchdog", changed or unit_changed, "checking every minute")
 
 
+# --- the table: what each step does, in order, and what it says it will do ---------------------
+
+
+Run = Callable[[Host, DatabaseHost, dict[str, Outcome]], Outcome]
+Describe = Callable[[DatabaseHost], list[str]]
+
+
+@dataclass(frozen=True, slots=True)
+class InstallStep:
+    name: str  # the outcome's step name, and the plan's area
+    describe: Describe
+    run: Run
+    wanted: Callable[[DatabaseHost], bool] = lambda config: True
+
+
+def _ingest(config: DatabaseHost) -> bool:
+    return config.ingest.enabled
+
+
+def _alerts(config: DatabaseHost) -> bool:
+    return config.ingest.enabled and config.alerts.enabled
+
+
+def _describe_main(config: DatabaseHost) -> list[str]:
+    main = managed.main_cluster(config)
+    clients = ", ".join(str(a) for a in config.postgres.allowed_clients) or "none"
+    return [
+        f"the cluster on port {main.port}, data_checksums on at initdb",
+        *[f"set {key} = {value}" for key, value in managed.settings(main)],
+        f"accept connections from localhost and from: {clients}",
+        f"create the database {managed.DATABASE}, its owner {managed.OWNER_ROLE} and TimescaleDB "
+        "(the schema is `sparq-admin migrate`)",
+    ]
+
+
+def _describe_backup_files(config: DatabaseHost) -> list[str]:
+    backup = config.backup
+    return [
+        f"back up each cluster to {backup.target}: a full backup weekly, a differential daily, "
+        f"WAL archived continuously, {backup.retention_full_weeks} fulls kept"
+        + (", encrypted with a passphrase made once" if backup.encrypt else ""),
+        "write pgBackRest's configuration, the table-count query and the backup timers",
+    ]
+
+
+def _describe_alerts(config: DatabaseHost) -> list[str]:
+    alerts = config.alerts
+    return [
+        f"alerts: every minute check the ingest and send a message through {alerts.server} if it "
+        f"is silent for {alerts.silence_seconds // 60} minutes, stopped, short of disk "
+        f"({alerts.disk_warn_percent}%) or its gaps are stuck; the timer starts once the topic "
+        "is stored"
+    ]
+
+
+STEPS = (
+    InstallStep(
+        "repositories",
+        lambda c: ["check that the apt repositories offer the pinned versions"],
+        lambda host, c, _: step_repositories(host),
+    ),
+    InstallStep(
+        "packages",
+        lambda c: [f"install {pkg} {pin}* and hold it" for pkg, pin in PINS.items()],
+        lambda host, c, _: step_packages(host),
+    ),
+    InstallStep(
+        "account and directories",
+        lambda c: [
+            f"create the system account {managed.SERVICE_USER}",
+            *[f"create {path}" for path, _, _ in ACCOUNT_DIRECTORIES],
+        ],
+        lambda host, c, _: step_account(host),
+    ),
+    InstallStep(
+        "certificate",
+        lambda c: ["create a new self-signed certificate, unless there is one"],
+        lambda host, c, _: step_tls(host),
+    ),
+    InstallStep(
+        "backup files", _describe_backup_files, lambda host, c, _: step_backup_files(host, c)
+    ),
+    InstallStep("main cluster", _describe_main, lambda host, c, _: step_main_database(host, c)),
+    InstallStep(
+        "test cluster",
+        lambda c: (
+            [f"a second cluster on port {c.test_cluster.port} for the tests"]
+            if c.test_cluster.enabled
+            else []
+        ),
+        lambda host, c, _: step_test_cluster(host, c),
+    ),
+    InstallStep(
+        "backups",
+        lambda c: [
+            "for each cluster: its stanza, a check that WAL reaches the share, and a "
+            "first full backup"
+        ],  # fmt: skip
+        lambda host, c, _: step_backups(host, c),
+    ),
+    InstallStep(
+        "tpm support",
+        lambda c: [f"make sure systemd can seal credentials with the TPM ({TPM_LIBRARY})"],
+        lambda host, c, _: step_tpm_support(host),
+        _ingest,
+    ),
+    InstallStep(
+        "ingest role",
+        lambda c: [f"create the role {managed.INGEST_ROLE} (writes the ingest tables only)"],
+        lambda host, c, _: step_ingest_role(host, c),
+        _ingest,
+    ),
+    InstallStep(
+        "ingest program",
+        lambda c: [f"build the program from {c.ingest.checkout} into {managed.APP_DIRECTORY}"],
+        lambda host, c, _: step_ingest_app(host, c),
+        _ingest,
+    ),
+    InstallStep(
+        "ingest service",
+        lambda c: [
+            f"write {names.INGEST_CONFIG} and the unit {names.INGEST_UNIT}",
+            "start the service once its data key is stored "
+            f"(it stops by itself at {c.ingest.disk_stop_percent}% disk use)",
+        ],
+        lambda host, c, done: step_ingest_service(host, c, rebuilt=done["ingest program"].changed),
+        _ingest,
+    ),
+    InstallStep("watchdog", _describe_alerts, lambda host, c, _: step_watchdog(host, c), _alerts),
+)
+
+
+def _installable(answers: Answers) -> DatabaseHost:
+    """The database host's answers, refused when this release cannot install them."""
+    config = answers.installable_host()  # raises RoleUnavailable for another role
+    reason = refusal(config)
+    if reason is not None:
+        raise InstallRefused(reason)
+    return config
+
+
+def plan_install(answers: Answers) -> list[Step]:
+    """What ``run_install`` would do with ``answers``, step by step (it refuses what it would)."""
+    config = _installable(answers)
+    return [
+        Step(step.name, text)
+        for step in STEPS
+        if step.wanted(config)
+        for text in step.describe(config)
+    ]
+
+
+def render_plan(steps: list[Step]) -> str:
+    width = max((len(s.area) for s in steps), default=0)
+    return "\n".join(f"{s.area:<{width}}  {s.text}" for s in steps)
+
+
 def run_install(host: Host, answers: Answers) -> list[Outcome]:
     """Run every step for the database host; raises InstallRefused, with its reason, to refuse."""
-    config = answers.installable_host()
-    if config.recovery.from_backup:
-        raise InstallRefused("recovery from a backup is built in K1b; use a fresh install for now")
+    config = _installable(answers)
     if not host.is_root():
         raise InstallRefused("install must run as root (use sudo)")
     checks = run_preflight(host, config)
     if refused(checks):
         failed = ", ".join(c.name for c in checks if c.status == "fail")
         raise InstallRefused(f"preflight refused: {failed}")
+    done: dict[str, Outcome] = {}
     try:
-        outcomes = [
-            step_repositories(host),
-            step_packages(host),
-            step_account(host),
-            step_tls(host),
-            step_backup_files(host, config),
-            step_main_database(host, config),
-            step_test_cluster(host, config),
-            step_backups(host, config),
-        ]
-        if config.ingest.enabled:
-            outcomes += [step_tpm_support(host), step_ingest_role(host, config)]
-            built = step_ingest_app(host, config.ingest)
-            outcomes += [built, step_ingest_service(host, config, rebuilt=built.changed)]
-            if config.alerts.enabled:
-                outcomes += [step_watchdog(host, config)]
-        return outcomes
+        for step in STEPS:
+            if step.wanted(config):
+                done[step.name] = step.run(host, config, done)
     except CommandFailed as error:
         raise InstallRefused(f"a step failed: {error}") from error
+    return list(done.values())
 
 
 def render_outcomes(outcomes: list[Outcome]) -> str:
