@@ -25,11 +25,11 @@ from typing import Any
 
 import asyncpg
 from sparq_core.endpoints import MarketData
+from sparq_core.markets import is_combo
 from sparq_core.models import Trade
 
 from sparq_server.ingest import gaps
 from sparq_server.ingest.discovery import store_rejects
-from sparq_server.ingest.records import is_combo
 from sparq_server.ingest.rows import TradeRow, check_trade, floor_ms
 from sparq_server.ingest.writer import IngestWriter
 

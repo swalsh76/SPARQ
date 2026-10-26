@@ -26,6 +26,7 @@ from typing import Any
 
 import asyncpg
 from sparq_core.endpoints import MarketData
+from sparq_core.markets import is_combo, market_values
 
 from sparq_server.ingest import records, state
 from sparq_server.ingest.writer import scrub
@@ -150,9 +151,9 @@ class Discovery:
         )
         async for page in pages:
             rows = [
-                records.market_record(market, raw, "live")
+                market_values(market, raw, "live")
                 for market, raw in zip(page.items, page.raw, strict=True)
-                if not records.is_combo(market.ticker)
+                if not is_combo(market.ticker)
             ]
             await store_rejects(conn, "market", page.invalid)
             inserted, updated, history = await records.upsert_markets(conn, rows, at)
