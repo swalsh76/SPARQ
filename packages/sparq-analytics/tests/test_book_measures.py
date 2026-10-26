@@ -1,6 +1,7 @@
 """S1.2a's measures on the hand-built scenarios in bookhelpers (answers worked out by hand)."""
 
 import dataclasses
+from datetime import UTC, datetime
 
 import polars as pl
 import pytest
@@ -14,6 +15,7 @@ from sparq_analytics.live.book import (
     tag_trades,
     trade_measures,
 )
+from sparq_analytics.study.rules import add_rule_features
 
 FAR = BASE + 10 * 86_400_000  # a data end far beyond every window
 
@@ -50,6 +52,43 @@ def test_tags_tiers_quiet_time_and_the_rule() -> None:
     scored = tagged.filter("in_rule").select("ticker", "trade_id").rows()
     assert sorted(scored) == [("M1", "a1"), ("M1", "a2"), ("M1", "a3"), ("M1", "a4"),
                               ("M2", "b1"), ("M2", "b2"), ("M3", "c1")]  # fmt: skip
+
+
+def test_the_rule_features_are_the_studys() -> None:
+    # the same trades in the study's shape, with a microsecond time built apart from the live code
+    source = (
+        trades()
+        .join(markets().select("ticker", "series_ticker"), on="ticker", how="left")
+        .sort("ticker", "ts_ms", "trade_id")
+    )
+    times = [datetime.fromtimestamp(ms / 1000, UTC) for ms in source["ts_ms"]]
+    study = (
+        add_rule_features(
+            source.with_columns(t=pl.Series(times), p=pl.col("yes_price_e6")).lazy(), busy()
+        )
+        .with_columns(in_rule=rule().expr())
+        .collect()
+    )
+    live = tag_trades(trades().lazy(), markets().lazy(), busy(), rule()).collect()
+    columns = ["trade_id", "quiet_s", "first", "ny_hour", "in_rule"]
+    assert live.select(columns).sort("trade_id").equals(study.select(columns).sort("trade_id"))
+
+
+def test_trades_at_one_millisecond_are_tagged_the_same_in_any_input_order() -> None:
+    # a second trade at a3's millisecond: by trade id a3 comes first and a3b follows it at once
+    tie = trades().filter(pl.col("trade_id") == "a3").with_columns(trade_id=pl.lit("a3b"))
+    both = pl.concat([trades(), tie])
+    forward = tag_trades(both.lazy(), markets().lazy(), busy(), rule()).collect()
+    backward = tag_trades(both.reverse().lazy(), markets().lazy(), busy(), rule()).collect()
+    assert forward.equals(backward)
+    assert row_of(forward, "a3")["quiet_s"] == 100.0 and row_of(forward, "a3")["in_rule"]
+    assert row_of(forward, "a3b")["quiet_s"] == 0.0 and not row_of(forward, "a3b")["in_rule"]
+
+
+def row_of(frame: pl.DataFrame, trade_id: str) -> dict[str, object]:
+    found = frame.filter(pl.col("trade_id") == trade_id)
+    assert found.height == 1
+    return found.row(0, named=True)
 
 
 def test_the_book_the_taker_met_is_the_last_frame_strictly_before() -> None:

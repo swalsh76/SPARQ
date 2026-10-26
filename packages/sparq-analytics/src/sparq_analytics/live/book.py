@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 import polars as pl
 
-from sparq_analytics.study.rules import Rule
+from sparq_analytics.study.rules import Rule, add_trade_features
 
 GUARD_MS = 600_000  # D11: ten minutes
 BOOK_SETTLE_MS = 60_000  # after an outage, a minute for every market's book to be shown again
@@ -102,27 +102,26 @@ def tag_trades(
         .then(pl.lit("middle"))
         .otherwise(pl.lit("busy"))
     )
-    return (
+    joined = (
         trades.join(
             markets.select("ticker", "series_ticker", "event_ticker", "category"),
             on="ticker",
             how="left",
         )
         .join(busy.lazy(), on="series_ticker", how="left")
-        .sort("ticker", "ts_ms", "trade_id")
-        .with_columns(previous=pl.col("ts_ms").shift(1).over("ticker"))
+        .sort("ticker", "ts_ms", "trade_id")  # trades at the same millisecond in a fixed order
+        .with_columns(t=pl.from_epoch("ts_ms", time_unit="ms").dt.replace_time_zone("UTC"))
+    )
+    # the rule's features exactly as the study defined them when the rule was chosen
+    return (
+        add_trade_features(joined)
         .with_columns(
             p=pl.col("yes_price_e6"),
-            first=pl.col("previous").is_null(),
-            quiet_s=(pl.col("ts_ms") - pl.col("previous")) / 1000.0,
-            ny_hour=pl.from_epoch("ts_ms", time_unit="ms")
-            .dt.replace_time_zone("UTC")
-            .dt.convert_time_zone("America/New_York")
-            .dt.hour(),
             taker_yes=pl.col("taker_side") == "yes",
             tier=tier,
         )
         .with_columns(in_rule=rule.expr())
+        .drop("t")
     )
 
 

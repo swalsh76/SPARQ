@@ -36,11 +36,19 @@ def populations(rule: Rule) -> dict[str, pl.Expr]:
     }
 
 
+def in_any_population(rule: Rule) -> pl.Expr:
+    """True for a row that some population summarises: the rows worth reading back."""
+    return pl.any_horizontal(list(populations(rule).values()))
+
+
 def estimate(frame: pl.DataFrame, value: str, *, resamples: int, seed: int) -> dict[str, Any]:
     """The contract-weighted mean of ``value`` with its interval over events."""
     rows = frame.filter(pl.col(value).is_not_null())
-    per = rows.group_by(pl.coalesce("event_ticker", "ticker").alias("event")).agg(
-        num=(pl.col(value) * pl.col("count_e2")).sum(), den=pl.col("count_e2").sum()
+    # group_by's order varies between runs, and the resampling draws by position: sort the events
+    per = (
+        rows.group_by(pl.coalesce("event_ticker", "ticker").alias("event"))
+        .agg(num=(pl.col(value) * pl.col("count_e2")).sum(), den=pl.col("count_e2").sum())
+        .sort("event")
     )
     result = cluster_bootstrap(
         per["num"].cast(pl.Float64).to_numpy(),

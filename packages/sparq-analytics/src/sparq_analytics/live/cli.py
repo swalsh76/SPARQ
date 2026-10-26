@@ -43,7 +43,7 @@ from sparq_analytics.live.source import (
     last_hour_end,
     load_source,
 )
-from sparq_analytics.live.summary import render, summarize
+from sparq_analytics.live.summary import in_any_population, render, summarize
 from sparq_analytics.study.forward import busy_digest, read_busy
 from sparq_analytics.study.rules import Rule, rules_from_json
 
@@ -159,9 +159,12 @@ def _measure(args: argparse.Namespace) -> int:
     config = BookConfig()
     results = args.data / "results"
     results.mkdir(parents=True, exist_ok=True)
-    all_trades, all_bursts, days, data_end, dropped = [], [], [], None, 0
+    days: list[str] = []
+    data_end: datetime | None = None
+    dropped = 0
     day = first
     while day < last:
+        # one day in memory at a time: it is written, then let go
         measured, bursts, data_end, near = measure_day(args.data, day, rule, busy, config)
         measured.write_parquet(results / f"trades-{day}.parquet")
         bursts.write_parquet(results / f"bursts-{day}.parquet")
@@ -169,14 +172,15 @@ def _measure(args: argparse.Namespace) -> int:
             f"{day}: {measured.height:,} trades, {bursts.height:,} taker orders; "
             f"{near:,} trades left out near feed outages"
         )
-        all_trades.append(measured)
-        all_bursts.append(bursts)
+        del measured, bursts
         days.append(str(day))
         dropped += near
         day += timedelta(days=1)
-    summary = summarize(
-        pl.concat(all_trades), pl.concat(all_bursts), rule, config, resamples=args.resamples
-    )
+    # read back only the rows a population summarises (most trades are in none of them)
+    keep = in_any_population(rule)
+    trades = pl.scan_parquet([results / f"trades-{d}.parquet" for d in days]).filter(keep)
+    orders = pl.scan_parquet([results / f"bursts-{d}.parquet" for d in days]).filter(keep)
+    summary = summarize(trades.collect(), orders.collect(), rule, config, resamples=args.resamples)
     summary |= {
         "days": days,
         "data_end": str(data_end),

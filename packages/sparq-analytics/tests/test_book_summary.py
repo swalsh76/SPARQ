@@ -12,7 +12,13 @@ from sparq_analytics.live.book import (
     tag_trades,
     trade_measures,
 )
-from sparq_analytics.live.summary import estimate, render, stop_rule, summarize
+from sparq_analytics.live.summary import (
+    estimate,
+    in_any_population,
+    render,
+    stop_rule,
+    summarize,
+)
 
 FAR = BASE + 10 * 86_400_000
 
@@ -83,6 +89,26 @@ def test_summarize_reads_each_population() -> None:
     assert summary["stop"]["outcome"] == "too few"
     assert groups["busy, 20-80c"]["trades"] == 2 and groups["thin, 20-80c"]["trades"] == 1
     assert summary["config"]["stop_within_ms"] == 1_000
+
+
+def test_only_the_populations_rows_are_needed_for_the_summary() -> None:
+    per_trade, per_order = measures()
+    keep = in_any_population(rule())
+    assert per_trade.filter(keep).height < per_trade.height  # some rows really are left out
+    whole = summarize(per_trade, per_order, rule(), BookConfig(), resamples=200)
+    kept = summarize(
+        per_trade.filter(keep), per_order.filter(keep), rule(), BookConfig(), resamples=200
+    )
+    assert kept == whole
+
+
+def test_the_summary_does_not_depend_on_the_order_of_the_rows() -> None:
+    per_trade, per_order = measures()
+    forward = summarize(per_trade, per_order, rule(), BookConfig(), resamples=200)
+    backward = summarize(
+        per_trade.reverse(), per_order.reverse(), rule(), BookConfig(), resamples=200
+    )
+    assert backward == forward
 
 
 def test_render_names_the_stop_rule_and_every_population() -> None:
