@@ -1,6 +1,6 @@
 # SPARQ plan
 
-**Status:** S0 is done. S1 was approved (2026-10-25); its first slice, **S1.1, returned a NO-GO** (`docs/research/middle-tier.md`), so under D3 S1 stopped for a rethink. S1.1b's forward test was registered and then **dropped unopened (D13, 2026-10-27)** after S1.2a's live reading, and S1.2 is on hold: the direction was reassessed from §9 and **S2, weather against station observations (§6.2), is proposed**. This document is the source of truth for the direction, the architecture and the build order. [ASSESSMENT.md](ASSESSMENT.md) holds the reasoning and the sources; [LESSONS.md](LESSONS.md) holds what the predecessors measured. SPARQ carries much of KAPS's design by reference: where this plan says "KAPS PLAN §x", read [KAPS's plan](https://github.com/swalsh76/KAPS/blob/main/docs/PLAN.md) at that section.
+**Status:** S0 is done. S1 was approved (2026-10-25); its first slice, **S1.1, returned a NO-GO** (`docs/research/middle-tier.md`), so under D3 S1 stopped for a rethink. S1.1b's forward test was registered and then **dropped unopened (D13, 2026-10-27)** after S1.2a's live reading, and S1.2 is on hold: the direction was reassessed from §9 and **S2, weather against station observations (§6.2), was approved on 2026-10-27**. This document is the source of truth for the direction, the architecture and the build order. [ASSESSMENT.md](ASSESSMENT.md) holds the reasoning and the sources; [LESSONS.md](LESSONS.md) holds what the predecessors measured. SPARQ carries much of KAPS's design by reference: where this plan says "KAPS PLAN §x", read [KAPS's plan](https://github.com/swalsh76/KAPS/blob/main/docs/PLAN.md) at that section.
 
 ## 1. Goal
 
@@ -64,7 +64,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 |---|---|---|---|
 | **S0** | **The fork:** the repository, the renamed packages, the founding documents, CI in the new repository, one live check | CI green on Ubuntu and macOS and the database job; `test_live_public` passes; the owner merges | done (BUILD-LOG S0) |
 | **S1** | **Evidence for the quoter** (§6.1): S1.1 the pre-registered middle-tier test; S1.2 the shadow quoter; S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | Each slice's gate in §6.1; a slice starts only when the one before it passes | approved 2026-10-25; **S1.1 NO-GO**; S1.2a done (go on); **S1.1b's forward test dropped and S1.2 on hold (D13, 2026-10-27)**; the direction is reassessed from §9 |
-| **S2** | **Weather against station observations** (§6.2): S2.1 sources, terms and the observation history; S2.2 exploration on the fit and validate parts; S2.3 the pre-registered test on the held-out part; S2.4 a live shadow run against the real books | Each slice's gate in §6.2 | **proposed 2026-10-27, awaiting the owner's approval** |
+| **S2** | **Weather against station observations** (§6.2): S2.1 sources, terms and the observation history; S2.2 exploration on the fit and validate parts; S2.3 the pre-registered test on the held-out part; S2.4 a live shadow run against the real books | Each slice's gate in §6.2 | **approved 2026-10-27**; S2.1 next |
 
 ### 6.1 S1 Evidence for the quoter: decisions and slices (approved 2026-10-25)
 
@@ -101,7 +101,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | S1.4 | The tiny live pilot | D8 | not started |
 | S1.2p | Shared definitions (owner approved 2026-10-26, from a code review; items 1 and 5 of the review went into S1.2a): the stored market in `sparq_core.markets` (combo prefix, labels, columns, the row builder) for the downloader, the ingest and the schema; the WebSocket address per environment in `config.py`, demo by default, the ingest asking for production; `sparq_server.names` for the names install, the ingest and the watchdog share, with the state keys and gap kinds imported, not spelled out | Behaviour unchanged: format, lint, types, tests and coverage; planted bugs caught | **done** (BUILD-LOG S1.2p) |
 
-### 6.2 S2 Weather against station observations (proposed 2026-10-27, awaiting the owner's approval)
+### 6.2 S2 Weather against station observations (approved 2026-10-27)
 
 **Why this strand (the §9 reassessment, 2026-10-27).**
 - K0.5 showed Kalshi's prices are close to the true probability.
@@ -141,19 +141,19 @@ The question is whether the book still offers prices on the wrong side of a boun
 
 | Slice | What it builds | Gate | Status |
 |---|---|---|---|
-| S2.1 | **Sources and terms:**<ul><li>the station map, from the series' rules;</li><li>the observation sources' terms, read and recorded;</li><li>`sparq_analytics.weather`, with a downloader of the archived reports for the 77 days (resumable, GET only) and a parser for temperature and precipitation;</li><li>a check of the observed bounds against Kalshi's results on the fit part;</li><li>a live measurement, over one day, of the aviation weather service's publication delay.</li></ul> | The map covers every in-scope series; on the fit part the bound is never on the wrong side of the result (every exception explained); the delay is measured | proposed |
-| S2.2 | **Exploration on the fit and validate parts:**<ul><li>how often and by how much trades crossed a bound after the report counted, by series, hour and side, with fees;</li><li>how fast the book reprices;</li><li>a proposal of at most 4 rules, with reasons, for the owner.</li></ul> | The owner approves the rule list | proposed |
-| S2.3 | **The pre-registered test:** rules and settings locked by hash, the test part opened once, the write-up in `docs/research/weather.md` | W7 | proposed |
-| S2.4 | **A live shadow run (only on GO), for two weeks:** the observation feed and the ingest's books in real time, with the would-be orders logged against the live book and no order sent | Its own plan, set before it starts | proposed |
+| S2.1 | **Sources and terms:**<ul><li>the station map, from the series' rules;</li><li>the observation sources' terms, read and recorded;</li><li>`sparq_analytics.weather`, with a downloader of the archived reports for the 77 days (resumable, GET only) and a parser for temperature and precipitation;</li><li>a check of the observed bounds against Kalshi's results on the fit part;</li><li>a live measurement, over one day, of the aviation weather service's publication delay.</li></ul> | The map covers every in-scope series; on the fit part the bound is never on the wrong side of the result (every exception explained); the delay is measured | not started |
+| S2.2 | **Exploration on the fit and validate parts:**<ul><li>how often and by how much trades crossed a bound after the report counted, by series, hour and side, with fees;</li><li>how fast the book reprices;</li><li>a proposal of at most 4 rules, with reasons, for the owner.</li></ul> | The owner approves the rule list | not started |
+| S2.3 | **The pre-registered test:** rules and settings locked by hash, the test part opened once, the write-up in `docs/research/weather.md` | W7 | not started |
+| S2.4 | **A live shadow run (only on GO), for two weeks:** the observation feed and the ingest's books in real time, with the would-be orders logged against the live book and no order sent | Its own plan, set before it starts | not started |
 
 **What it changes on machines:** the analytics node only. The data goes under the SPARQ data folder on the external drive, a few MB of reports a day.
 
 **New packages:** none expected. The parser is a few lines, and downloads use `httpx`.
 
-**Open questions for the owner:**
-- the $25-a-day floor in W7;
-- whether S2 starts before or after S1.2r (S2 does not need it);
-- whether the daily lows join the scope from the start.
+**The owner's answers (2026-10-27):**
+- the $25-a-day floor in W7 stands for now;
+- S2 goes before S1.2r;
+- the daily lows join only if the highs show an edge (W1 as written).
 
 ## 7. Risks
 
