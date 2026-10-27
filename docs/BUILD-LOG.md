@@ -63,7 +63,7 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 
 **Still to do in S1.1b.** After the window closes on 2026-11-23 and its markets settle (allow a few days): re-run KAPS's downloader for the forward days (trades, then markets; owner approved, D10), then `s11b_run.sh verdict` once, and the write-up.
 
-### S1.2a What the live book shows (2026-10-25 to 2026-10-27, in progress; the reading is on 2026-10-25 and 2026-10-26)
+### S1.2a What the live book shows (2026-10-25 to 2026-10-27, done: the stop rule says "go on")
 
 **Decisions (owner).** D11, live-data work in parallel with the forward test, with a guard: no edge to settlement on forward-test events before S1.1b's verdict, and windows of ten minutes at most. **The stop rule**, fixed before any reading: among the forward rule's own trades, if more than 50% of the levels takers cleared are refilled at the same price or better within 1 s, S1.2 is not started; fewer than 300 cleared levels is "too few". It is read once, on the UTC days 2026-10-25 and 2026-10-26. Trades near a feed outage are left out (decided before any reading). The storage budget was raised from 500 to 700 GB. S1.2's plan (D12) was approved for the case "go on".
 
@@ -90,6 +90,7 @@ The registered forward rule and its frozen activity file are reused as they stan
 - **Volume.**
   - About 89 M ticker rows and 14 M non-combo trades a day; the last 24 hours to 23:03 UTC on 25 October held 14,117,468 trades.
   - Kalshi's history shows growth from about 7.8 M trades a day in mid-August to 12.95 M in the week to 18 October. Weekends run about 10 to 15% above weekdays.
+  - *The first two whole UTC days, counted at the reading (2026-10-27):* 25 October (a Sunday) 74,332,325 ticker rows and 14,109,134 trades (about 51,600 and 9,800 a minute); 26 October 58,415,187 and 12,268,181 (about 40,600 and 8,500 a minute). The first day's 89 M ticker rows was scaled from busy hours and is too high. Against KalTerm3's 25,000 ticker rows and 4,000 trades a minute, trades run about 2 to 2.5 times higher and ticker rows about 1.6 to 2 times.
 - **Compression** (24 October's 2.8 hours, compressed by hand by the owner): ticker 10.5 times (2,962 MB to 282 MB, about 24 bytes a row) and trades 6.6 times (625 MB to 95 MB, about 45 bytes a row). Both are floors, since each market had about 133 rows to compress together. Uncompressed, a day takes about 23.5 GB; compressed, about 2.8 GB. The drive has 847 GB free. The budget is enforced nowhere yet: the limits that act are the watchdog's alert at 80% of the drive and the ingest's stop at 90%.
 - **The feed**, in middle-tier markets, 18:00 to 19:00 UTC on 25 October:
   - **timing:** a ticker frame follows 99.95% of trades within 1 s (median 156 ms), and 94.6% of frames change the book;
@@ -116,5 +117,49 @@ The registered forward rule and its frozen activity file are reused as they stan
 - *Built.* `extract` copies each gap's reason. An `all` gap (a channel that could not be resubscribed) counts as a ticker outage only when its reason names the ticker channel, and since the ingest that writes the log (KAPS's, frozen) never closes it, it ends at the next `ticker` gap, the reconnect or restart that subscribed again, or else at the end of the data. Before, one such gap would have dropped every later trade. `measure_day` measures the day in 16 groups of markets of about equal trade counts, tagging each group on its own; every step is per market (its previous trade, its book, its windows), so the result does not depend on the grouping.
 - *Verified.* Tests: a failed resubscribe counts only for the ticker channel and ends at the next reconnect, or runs to the end of the data without one; any number of groups gives the same trade and order measures as one. Three planted bugs, all caught. The full suite: 1,689 passed. On the analytics node (after `extract` refreshed the gap list: 7 ticker gaps, none of kind `all`), 2026-10-25 by the old code and the new: identical per-trade and per-order outputs, the same 274,865 left out. Memory, by a step-by-step probe: tagging the whole day held 10.4 GB and the outage filter 4.4 GB before any grouping, and groups balanced by trades still differ in frames (5.5 to 28.6 million in four groups); tagging per group and 16 groups bring the peak from 20 to 23 GB down to 14.5 GB (8 groups 15.3 GB, 32 groups 13.4 GB), in 24 to 27 s. What remains is mostly the day's own output and memory the allocator keeps. The comparison files were deleted.
 
-**Still to do in S1.2a.** After 2026-10-27 01:10 UTC: `extract`, `measure --start 2026-10-25 --end 2026-10-27` with `docs/research/forward-rule.json` and the frozen activity file, check the activity hash, `report`, add the reading here, and close the slice (the PLAN row, the merge of PR #5).
+**The reading (2026-10-27 01:17 UTC, once, as approved).** On the analytics node, the check clone at `8d82def`: `extract` from 2026-10-24 21:00 copied the 14 new hours (to the end of 00:00 to 01:00 UTC on 27 October; 7 ticker gaps, none of kind `all`); `measure --start 2026-10-25 --end 2026-10-27` with `docs/research/forward-rule.json` and the frozen activity file took 52.8 s for both days with a peak of 14.3 GB; `report`. `book.json` records the activity hash `edf3189cf82aa9f340aaf3b9798c7a0465c17a643e64b5b9ab36e1b9b6e7abf8`, equal to the frozen one. Measured: 25 October 13,834,269 trades and 8,007,274 taker orders, 274,865 trades left out near feed outages (13,834,269 + 274,865 = the day's 14,109,134 copied); 26 October 12,268,181 trades and 6,803,744 taker orders, none left out. All figures are cents a contract, contract-weighted, **before fees**, with 95% intervals from the bootstrap clustered by event.
+
+**Stop rule: go on.** Among the forward rule's own trades, 11.1% of 43,742 cleared levels over 2,491 events were refilled at the same price or better within 1 s (stop above 50%; at least 300 needed).
+
+| Population | Trades | Events | Book shown | Median spread | Median size at level | Half-spread earned |
+|---|---|---|---|---|---|---|
+| forward rule | 226,563 | 2,872 | 99.9% | 1.0 | 693 | +0.98 (+0.91 to +1.05) |
+| middle, 20-80c | 5,116,552 | 5,828 | 100.0% | 1.0 | 115 | +1.51 (+1.40 to +1.61) |
+| busy, 20-80c | 7,017,144 | 1,027 | 100.0% | 1.0 | 4,228 | +0.76 (+0.72 to +0.80) |
+| thin, 20-80c | 378,117 | 2,372 | 98.6% | 4.0 | 57 | +3.14 (+2.90 to +3.44) |
+
+Markouts of the resting maker against the later mid:
+
+| Population | 5 s | 60 s | 600 s |
+|---|---|---|---|
+| forward rule | +0.53 (+0.45 to +0.57) | +0.44 (+0.37 to +0.49) | +0.23 (-1.07 to +0.55) |
+| middle, 20-80c | +0.36 (+0.31 to +0.41) | +0.28 (+0.22 to +0.34) | +0.41 (+0.23 to +0.58) |
+| busy, 20-80c | +0.19 (+0.13 to +0.25) | +0.14 (+0.03 to +0.24) | +0.04 (-0.36 to +0.41) |
+| thin, 20-80c | +0.91 (+0.53 to +1.27) | +0.78 (-0.04 to +1.26) | +1.05 (+0.25 to +1.77) |
+
+An order joining 1 s after the trade, filled within 600 s, and the markouts of the filled ones (strict rule; the queue rule's markouts are within about 0.5 cents of these):
+
+| Population | Joinable | Strict fills | Queue fills | 5 s | 60 s | 600 s |
+|---|---|---|---|---|---|---|
+| forward rule | 219,774 | 34.7% | 36.7% | +0.20 (-0.10 to +0.32) | -0.32 (-0.44 to -0.21) | -2.91 (-6.70 to -1.90) |
+| middle, 20-80c | 4,337,687 | 84.1% | 85.4% | -0.40 (-0.49 to -0.31) | -0.81 (-0.92 to -0.70) | -1.42 (-1.71 to -1.13) |
+| busy, 20-80c | 6,110,173 | 87.0% | 87.7% | -0.27 (-0.36 to -0.17) | -0.61 (-0.76 to -0.45) | -1.00 (-1.46 to -0.52) |
+| thin, 20-80c | 344,364 | 69.3% | 72.4% | +0.01 (-0.52 to +0.45) | -0.81 (-2.10 to -0.11) | -1.98 (-3.30 to -0.74) |
+
+Refills of the levels takers cleared (share refilled at the same price or better within the time):
+
+| Population | Cleared | 0.5 s | 1 s | 2 s | 5 s | 10 s | 60 s | 600 s |
+|---|---|---|---|---|---|---|---|---|
+| forward rule | 43,742 | 8.6% | 11.1% | 13.3% | 18.4% | 22.8% | 38.3% | 62.2% |
+| middle, 20-80c | 411,478 | 16.3% | 26.3% | 32.8% | 42.3% | 49.7% | 67.9% | 83.2% |
+| busy, 20-80c | 135,011 | 19.1% | 33.1% | 41.2% | 51.0% | 57.5% | 74.4% | 88.0% |
+| thin, 20-80c | 64,776 | 9.9% | 13.4% | 16.8% | 23.9% | 29.5% | 51.9% | 73.3% |
+
+**What it says.**
+- *Bots do not requote after every trade* in the forward rule's markets: a cleared level is back within a second one time in nine, and only 62% of the time within ten minutes, slower than the middle and busy tiers. By the stop rule, S1.2 goes ahead (D12).
+- *The maker already resting earns:* a 1-cent spread with deep size, and a positive markout at 5 s and 60 s, before fees.
+- *A maker who joins after the trade is adversely selected.* In the forward rule's markets it fills only about a third of the time (the middle and busy tiers about 85%), and the fills it gets lose 0.3 cents by 60 s and about 2.9 cents by 10 minutes, before fees; in every tier the joiner's 60 s and 600 s markouts are negative. S1.2's gate (D12) asks for a positive 10-minute realized spread after fees, so this is the main risk for S1.2: its simulator must quote before the trade, not chase it, and its fair-value filter has to keep it off the side that is about to be taken. The reading decides nothing about the edge itself; S1.2c's held-out run does.
+- *For S1.2's settings:* the queue rule and the strict rule give fills within about 3 percentage points and markouts within about 0.5 cents of each other, so the fill model's choice is not what decides S1.2; the book is shown at 98.6% or more of trades, so the ticker's top of book suffices to cross-check the recorder.
+
+**Still to do (after the reading).** Two small leftovers, `ONE_E6` in `live/book.py` and the live command line's command list, go into the next slice that touches the live code (S1.2r). The result files stay in the data folder's `results`.
 
