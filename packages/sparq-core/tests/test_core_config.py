@@ -43,17 +43,21 @@ def test_the_defaults_are_the_conservative_ones() -> None:
 
 @pytest.mark.parametrize(
     ("env", "expected"),
-    [({}, Environment.DEMO), ({"KALSHI_ENV": "production"}, Environment.PRODUCTION),
-     ({"KALSHI_ENV": " Production "}, Environment.PRODUCTION),
-     ({"KALSHI_ENV": "DEMO"}, Environment.DEMO)],
+    [({}, Environment.DEMO), ({"SPARQ_KALSHI_ENV": "production"}, Environment.PRODUCTION),
+     ({"SPARQ_KALSHI_ENV": " Production "}, Environment.PRODUCTION),
+     ({"SPARQ_KALSHI_ENV": "DEMO"}, Environment.DEMO)],
 )  # fmt: skip
 def test_the_environment_comes_from_kalshi_env(env: dict[str, str], expected: Environment) -> None:
     assert KalshiConfig.from_env(env).environment is expected
 
 
+def test_kaps_variable_never_switches_sparq_to_production() -> None:
+    assert KalshiConfig.from_env({"KALSHI_ENV": "production"}).environment is Environment.DEMO
+
+
 def test_an_unknown_environment_is_refused() -> None:
-    with pytest.raises(ConfigError, match="KALSHI_ENV"):
-        KalshiConfig.from_env({"KALSHI_ENV": "staging"})
+    with pytest.raises(ConfigError, match="SPARQ_KALSHI_ENV"):
+        KalshiConfig.from_env({"SPARQ_KALSHI_ENV": "staging"})
 
 
 def test_the_rate_can_be_set_from_the_environment() -> None:
@@ -70,7 +74,7 @@ def test_a_bad_rate_is_refused(raw: str) -> None:
 
 
 def test_from_env_reads_the_process_environment_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("KALSHI_ENV", "production")
+    monkeypatch.setenv("SPARQ_KALSHI_ENV", "production")
     monkeypatch.delenv("SPARQ_RATE_LIMIT_PER_SECOND", raising=False)
     assert KalshiConfig.from_env().is_production
 

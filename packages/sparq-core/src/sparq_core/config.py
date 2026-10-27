@@ -1,6 +1,6 @@
 """Environments and client settings: the one place that knows Kalshi's addresses.
 
-Demo is the default. Production is an explicit opt-in (``KALSHI_ENV=production`` or passing
+Demo is the default. Production is an explicit opt-in (``SPARQ_KALSHI_ENV=production`` or passing
 ``Environment.PRODUCTION``), and every client logs a warning when it is used.
 """
 
@@ -33,6 +33,7 @@ WS_URLS: dict[Environment, str] = {
 # Measured live (BUILD-LOG K0.5.3c and K0.5.4): the historical trades endpoint held 10 requests a
 # second for a full minute, but the live trades endpoint and both markets listings answered 429
 # after a burst of about 12 and then allowed only about 4 a second (4 held for 30 seconds).
+ENV_VARIABLE = "SPARQ_KALSHI_ENV"
 DEFAULT_RATE_LIMIT_PER_SECOND = 10.0  # historical trades; PLAN.md D3
 DEFAULT_LIVE_RATE_LIMIT_PER_SECOND = 3.5  # live trades and the markets listings; PLAN.md D3
 DEFAULT_REQUEST_COST_TOKENS = 10  # Kalshi's default cost of one request, in tokens
@@ -94,14 +95,16 @@ class KalshiConfig:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "KalshiConfig":
-        """Settings from ``KALSHI_ENV`` (demo or production) and ``SPARQ_RATE_LIMIT_PER_SECOND``."""
+        """Settings from ``SPARQ_KALSHI_ENV`` (demo or production) and
+        ``SPARQ_RATE_LIMIT_PER_SECOND``. SPARQ reads only its own names, so another project's
+        ``KALSHI_ENV`` on the same machine can never switch it to production."""
         env = os.environ if environ is None else environ
-        raw_env = env.get("KALSHI_ENV", Environment.DEMO.value).strip().lower()
+        raw_env = env.get(ENV_VARIABLE, Environment.DEMO.value).strip().lower()
         try:
             environment = Environment(raw_env)
         except ValueError:
             raise ConfigError(
-                f"KALSHI_ENV must be 'demo' or 'production', got {raw_env!r}"
+                f"{ENV_VARIABLE} must be 'demo' or 'production', got {raw_env!r}"
             ) from None
         raw_rate = env.get("SPARQ_RATE_LIMIT_PER_SECOND")
         if raw_rate is None:

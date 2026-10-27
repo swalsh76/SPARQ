@@ -28,7 +28,7 @@ from sparq_core.ws import (
     ResubscribeFailed,
     SequenceGap,
 )
-from sparq_core.ws_models import TradeMsg
+from sparq_core.ws_models import MARKET_DATA_CHANNELS, TradeMsg
 from websockets.asyncio.server import ServerConnection
 
 FAST = {"reconnect_base": 0.01, "reconnect_max": 0.05, "command_timeout": 2.0}
@@ -116,6 +116,20 @@ async def test_subscribing_with_no_tickers_asks_for_every_market() -> None:
     async with FakeKalshi(subscribe_then()) as srv, feed_for(srv) as feed:
         await feed.subscribe("ticker")
     assert srv.commands[0][0]["params"] == {"channels": ["ticker"]}
+
+
+@pytest.mark.parametrize(
+    "channel", ["fill", "orders", "market_positions", "order_group_updates", ""]
+)
+async def test_a_private_channel_is_refused_before_anything_is_sent(channel: str) -> None:
+    async with FakeKalshi(subscribe_then()) as srv, feed_for(srv) as feed:
+        with pytest.raises(FeedError, match="market-data channels only"):
+            await feed.subscribe(channel)
+    assert srv.commands == [[]]  # connected, and nothing sent
+
+
+async def test_every_market_data_channel_is_allowed() -> None:
+    assert {"ticker", "trade", "market_lifecycle_v2", "orderbook_delta"} <= MARKET_DATA_CHANNELS
 
 
 async def test_a_command_before_the_feed_is_started_is_refused() -> None:

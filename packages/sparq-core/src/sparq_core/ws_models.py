@@ -25,6 +25,7 @@ from pydantic import Field, ValidationError, model_validator
 from sparq_core.models import (
     Model,
     Moment,
+    OptAmountE6,
     OptCountE2,
     OptDollarsE6,
     RequiredCountE2,
@@ -38,6 +39,12 @@ TRADE = "trade"
 MARKET_LIFECYCLE = "market_lifecycle_v2"
 EVENT_LIFECYCLE = "event_lifecycle"
 COMBO_LIFECYCLE = "multivariate_market_lifecycle"
+ORDERBOOK = "orderbook_delta"  # its first message is a snapshot
+# The channels the data key may subscribe to: market data only. The private channels (fills,
+# orders, positions and the like) carry account data and are never subscribed with this key.
+MARKET_DATA_CHANNELS = frozenset(
+    {TICKER, TRADE, MARKET_LIFECYCLE, EVENT_LIFECYCLE, COMBO_LIFECYCLE, ORDERBOOK}
+)
 RESPONSE_TYPES = frozenset({"subscribed", "ok", "unsubscribed", "error"})
 
 
@@ -57,8 +64,8 @@ class TickerMsg(WsModel):
     volume_e2: OptCountE2 = Field(default=None, validation_alias="volume_fp")
     open_interest_e2: OptCountE2 = Field(default=None, validation_alias="open_interest_fp")
     last_trade_size_e2: OptCountE2 = Field(default=None, validation_alias="last_trade_size_fp")
-    dollar_volume_e6: OptDollarsE6 = Field(default=None, validation_alias="dollar_volume")
-    dollar_open_interest_e6: OptDollarsE6 = Field(
+    dollar_volume_e6: OptAmountE6 = Field(default=None, validation_alias="dollar_volume")
+    dollar_open_interest_e6: OptAmountE6 = Field(
         default=None, validation_alias="dollar_open_interest"
     )  # both arrive as whole dollars
     ts_ms: int | None = None  # when it happened, in milliseconds

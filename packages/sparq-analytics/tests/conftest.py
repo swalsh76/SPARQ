@@ -26,9 +26,10 @@ def rig(tmp_path: Path, fake: FakeKalshi) -> Callable[..., Rig]:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Tests marked ``integration`` talk to the real Kalshi API: they run only on request."""
-    if os.environ.get("KALSHI_INTEGRATION") == "1":
+    if os.environ.get("SPARQ_LIVE") == "1":
         return
-    skip = pytest.mark.skip(reason="live test: set KALSHI_INTEGRATION=1 to run")
+    skip = pytest.mark.skip(reason="live test: set SPARQ_LIVE=1 to run")
     for item in items:
-        if "integration" in item.keywords:
+        # a real marker only: item.keywords would also match folder, module and test names
+        if item.get_closest_marker("integration") is not None:
             item.add_marker(skip)

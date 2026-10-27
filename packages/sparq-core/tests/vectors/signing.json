@@ -778,72 +778,72 @@
   {
    "timestampMs": 0,
    "method": "GET",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "R81b+EdzsugQcpXSPX/BTjWri+0P6Txfdp0CbxQJrNjrjBiVOSprbVNLyN4LD4PW+lAPGXNcW5yQLj07AMt2BQ==",
-   "expect": "R81b+EdzsugQcpXSPX/BTjWri+0P6Txfdp0CbxQJrNjrjBiVOSprbVNLyN4LD4PW+lAPGXNcW5yQLj07AMt2BQ=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "qjE06B1sLJ7SaLVXxUiV9FzOZUf/s/sKxLvOnXS2SxvqLLQ12ri9cV4YLUSPwyfIYZ9E+X/WXWqyF2cRKubzBA==",
+   "expect": "qjE06B1sLJ7SaLVXxUiV9FzOZUf/s/sKxLvOnXS2SxvqLLQ12ri9cV4YLUSPwyfIYZ9E+X/WXWqyF2cRKubzBA=="
   },
   {
    "timestampMs": 1,
    "method": "GET",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "NGj8vDJZDpzMzNZxew3yOcBizLr+vTmLgV8J/+WIAjs6LzRCX9qjpIRBd5cWFJsEYWdLJxXrD4Zly32m73RcBg==",
-   "expect": "NGj8vDJZDpzMzNZxew3yOcBizLr+vTmLgV8J/+WIAjs6LzRCX9qjpIRBd5cWFJsEYWdLJxXrD4Zly32m73RcBg=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "e3deGz41SGoRUsofi5yRQGjDc75t1cWXaOetNyM31UnHWcY/Bjry9z2fEA6KO3UigPtezgEY/eXj67YaZMwlCw==",
+   "expect": "e3deGz41SGoRUsofi5yRQGjDc75t1cWXaOetNyM31UnHWcY/Bjry9z2fEA6KO3UigPtezgEY/eXj67YaZMwlCw=="
   },
   {
    "timestampMs": 1700000000000,
    "method": "GET",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "jXAPj01bgZESjSTfoodPCJORcdSsU5bmo3LD7mjc1qkPKKY4I2G8c5RDRZJXK5bRP3CxIt/HS+fVH9zo6w0MAQ==",
-   "expect": "jXAPj01bgZESjSTfoodPCJORcdSsU5bmo3LD7mjc1qkPKKY4I2G8c5RDRZJXK5bRP3CxIt/HS+fVH9zo6w0MAQ=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "4taObep6VoJpjYuHXHzoLT42zlkbSIF2SqhSKQrH2IE4k9Bl/6f6zjlJEhVHneUFs8oXb5j6aWFdKSU4IrEwBQ==",
+   "expect": "4taObep6VoJpjYuHXHzoLT42zlkbSIF2SqhSKQrH2IE4k9Bl/6f6zjlJEhVHneUFs8oXb5j6aWFdKSU4IrEwBQ=="
   },
   {
    "timestampMs": 1792785174669,
    "method": "GET",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "/8WgFr3NqkGRc7/ce71bVVBF1umvc5Ke05GCt5DK3oRF6wkRC9tDMVxa07n1xYSXFr0kDDL4NgVgpOp7/VXMBw==",
-   "expect": "/8WgFr3NqkGRc7/ce71bVVBF1umvc5Ke05GCt5DK3oRF6wkRC9tDMVxa07n1xYSXFr0kDDL4NgVgpOp7/VXMBw=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "zKaA3CrF8Ya16R4tvrTSXhbyJUFlG59ZFmTcWOpGYyjArHRMDN5my6+EmgbZExHhPrbekMYZX5DlGf5ZIi6pBw==",
+   "expect": "zKaA3CrF8Ya16R4tvrTSXhbyJUFlG59ZFmTcWOpGYyjArHRMDN5my6+EmgbZExHhPrbekMYZX5DlGf5ZIi6pBw=="
   },
   {
    "timestampMs": 9999999999999,
    "method": "GET",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "7a2J+GODwpdZdPzrB2TPzjDVmm5WnwztWC3+UyqrRW6GJcD7/78+IWm/tAZ4gpQeto6AtgPq/ZqSU+ty81mxBA==",
-   "expect": "7a2J+GODwpdZdPzrB2TPzjDVmm5WnwztWC3+UyqrRW6GJcD7/78+IWm/tAZ4gpQeto6AtgPq/ZqSU+ty81mxBA=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "kM/9iD06El1HpNr9edjI2u2Vx5MVNq7j4ipQ7QrTksRX7SGzrjVhywvrtL3tjLNc+6aJ178ZCXSSo6YuNNnABw==",
+   "expect": "kM/9iD06El1HpNr9edjI2u2Vx5MVNq7j4ipQ7QrTksRX7SGzrjVhywvrtL3tjLNc+6aJ178ZCXSSo6YuNNnABw=="
   },
   {
    "timestampMs": 0,
    "method": "get",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "R81b+EdzsugQcpXSPX/BTjWri+0P6Txfdp0CbxQJrNjrjBiVOSprbVNLyN4LD4PW+lAPGXNcW5yQLj07AMt2BQ==",
-   "expect": "R81b+EdzsugQcpXSPX/BTjWri+0P6Txfdp0CbxQJrNjrjBiVOSprbVNLyN4LD4PW+lAPGXNcW5yQLj07AMt2BQ=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "qjE06B1sLJ7SaLVXxUiV9FzOZUf/s/sKxLvOnXS2SxvqLLQ12ri9cV4YLUSPwyfIYZ9E+X/WXWqyF2cRKubzBA==",
+   "expect": "qjE06B1sLJ7SaLVXxUiV9FzOZUf/s/sKxLvOnXS2SxvqLLQ12ri9cV4YLUSPwyfIYZ9E+X/WXWqyF2cRKubzBA=="
   },
   {
    "timestampMs": 1,
    "method": "get",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "NGj8vDJZDpzMzNZxew3yOcBizLr+vTmLgV8J/+WIAjs6LzRCX9qjpIRBd5cWFJsEYWdLJxXrD4Zly32m73RcBg==",
-   "expect": "NGj8vDJZDpzMzNZxew3yOcBizLr+vTmLgV8J/+WIAjs6LzRCX9qjpIRBd5cWFJsEYWdLJxXrD4Zly32m73RcBg=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "e3deGz41SGoRUsofi5yRQGjDc75t1cWXaOetNyM31UnHWcY/Bjry9z2fEA6KO3UigPtezgEY/eXj67YaZMwlCw==",
+   "expect": "e3deGz41SGoRUsofi5yRQGjDc75t1cWXaOetNyM31UnHWcY/Bjry9z2fEA6KO3UigPtezgEY/eXj67YaZMwlCw=="
   },
   {
    "timestampMs": 1700000000000,
    "method": "get",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "jXAPj01bgZESjSTfoodPCJORcdSsU5bmo3LD7mjc1qkPKKY4I2G8c5RDRZJXK5bRP3CxIt/HS+fVH9zo6w0MAQ==",
-   "expect": "jXAPj01bgZESjSTfoodPCJORcdSsU5bmo3LD7mjc1qkPKKY4I2G8c5RDRZJXK5bRP3CxIt/HS+fVH9zo6w0MAQ=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "4taObep6VoJpjYuHXHzoLT42zlkbSIF2SqhSKQrH2IE4k9Bl/6f6zjlJEhVHneUFs8oXb5j6aWFdKSU4IrEwBQ==",
+   "expect": "4taObep6VoJpjYuHXHzoLT42zlkbSIF2SqhSKQrH2IE4k9Bl/6f6zjlJEhVHneUFs8oXb5j6aWFdKSU4IrEwBQ=="
   },
   {
    "timestampMs": 1792785174669,
    "method": "get",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "/8WgFr3NqkGRc7/ce71bVVBF1umvc5Ke05GCt5DK3oRF6wkRC9tDMVxa07n1xYSXFr0kDDL4NgVgpOp7/VXMBw==",
-   "expect": "/8WgFr3NqkGRc7/ce71bVVBF1umvc5Ke05GCt5DK3oRF6wkRC9tDMVxa07n1xYSXFr0kDDL4NgVgpOp7/VXMBw=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "zKaA3CrF8Ya16R4tvrTSXhbyJUFlG59ZFmTcWOpGYyjArHRMDN5my6+EmgbZExHhPrbekMYZX5DlGf5ZIi6pBw==",
+   "expect": "zKaA3CrF8Ya16R4tvrTSXhbyJUFlG59ZFmTcWOpGYyjArHRMDN5my6+EmgbZExHhPrbekMYZX5DlGf5ZIi6pBw=="
   },
   {
    "timestampMs": 9999999999999,
    "method": "get",
-   "path": "/trade-api/v2/account/limits",
-   "reference": "7a2J+GODwpdZdPzrB2TPzjDVmm5WnwztWC3+UyqrRW6GJcD7/78+IWm/tAZ4gpQeto6AtgPq/ZqSU+ty81mxBA==",
-   "expect": "7a2J+GODwpdZdPzrB2TPzjDVmm5WnwztWC3+UyqrRW6GJcD7/78+IWm/tAZ4gpQeto6AtgPq/ZqSU+ty81mxBA=="
+   "path": "/trade-api/v2/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
+   "reference": "kM/9iD06El1HpNr9edjI2u2Vx5MVNq7j4ipQ7QrTksRX7SGzrjVhywvrtL3tjLNc+6aJ178ZCXSSo6YuNNnABw==",
+   "expect": "kM/9iD06El1HpNr9edjI2u2Vx5MVNq7j4ipQ7QrTksRX7SGzrjVhywvrtL3tjLNc+6aJ178ZCXSSo6YuNNnABw=="
   },
   {
    "timestampMs": 0,
@@ -1088,6 +1088,146 @@
    "method": "GET",
    "path": "/trade-api/v2/account",
    "reference": "LxdWtzeqtPpMrQa7QvnEkIx7Dv0lddJzHt0hQgmI90r6T/3uPQeMoN+GK0fKVQNv74pa4oTjU3o1XJYaZmzTDA==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 0,
+   "method": "GET",
+   "path": "/trade-api/v2/account/limits",
+   "reference": "R81b+EdzsugQcpXSPX/BTjWri+0P6Txfdp0CbxQJrNjrjBiVOSprbVNLyN4LD4PW+lAPGXNcW5yQLj07AMt2BQ==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1,
+   "method": "GET",
+   "path": "/trade-api/v2/account/limits",
+   "reference": "NGj8vDJZDpzMzNZxew3yOcBizLr+vTmLgV8J/+WIAjs6LzRCX9qjpIRBd5cWFJsEYWdLJxXrD4Zly32m73RcBg==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1700000000000,
+   "method": "GET",
+   "path": "/trade-api/v2/account/limits",
+   "reference": "jXAPj01bgZESjSTfoodPCJORcdSsU5bmo3LD7mjc1qkPKKY4I2G8c5RDRZJXK5bRP3CxIt/HS+fVH9zo6w0MAQ==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1792785174669,
+   "method": "GET",
+   "path": "/trade-api/v2/account/limits",
+   "reference": "/8WgFr3NqkGRc7/ce71bVVBF1umvc5Ke05GCt5DK3oRF6wkRC9tDMVxa07n1xYSXFr0kDDL4NgVgpOp7/VXMBw==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 9999999999999,
+   "method": "GET",
+   "path": "/trade-api/v2/account/limits",
+   "reference": "7a2J+GODwpdZdPzrB2TPzjDVmm5WnwztWC3+UyqrRW6GJcD7/78+IWm/tAZ4gpQeto6AtgPq/ZqSU+ty81mxBA==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 0,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/fills",
+   "reference": "/Lg6cJtzHA2o004hqhbY6oSJ6yHa4Yu2uc6Gcpzu5fkasKOlzUENJdZxG81QYJ8Uyxt3esD8JHE8q8bIDZNhCA==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/fills",
+   "reference": "c9q4g43ggBOX/Kev8j5vCbg7I4u2VpcWZ592g0Zcaq3HUoglQJ9gxhQ9v5FDh6jf0cOKPl1xLFD72da5raafCw==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1700000000000,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/fills",
+   "reference": "6antcG1Ea7x9BsMf9mK13S9Lk3VakbtJJjyOVIdvuGQJgbkhf+XDPSrYuBglyHNqXERLuF1J0r/YxX/GyiRnCg==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1792785174669,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/fills",
+   "reference": "9N6b62qFJzElLEeDPd40zOfR2y3oF1eExQqzxgmfg6RRL52SkyhJmE0pZuVdZFb63wxCoWXw5nSN3kR2b3ucAg==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 9999999999999,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/fills",
+   "reference": "UDv8wJmxk0/p8ZwZZP8+GTPuwWkXNjpm2RxvH836Tm7TwyhChUIsX7XZJLlDIOb4W0YA3CfT4c2i0CW/SedhAg==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 0,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/orders",
+   "reference": "4I9Pf7ConKvRR5DuUDz8jmbMCUiG+Klqq5YNblHrbT+mh4XpHErGNKntP2lcu/MMicgCJCCIQmhKr92Pxvz/Bg==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/orders",
+   "reference": "7R+5gNVyyWK4KO4O1FdFy1fGdM53596qXsApQWhjSJzh4q7P4Yh8b7XmFx2xT35Ve7z1Xit4AUiTwBPNcu0eCA==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1700000000000,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/orders",
+   "reference": "FvZxkIK0dK1TVR+y/eNg5uGT0IbSAfOCzDgvv4Q7WvCix9GUp2EchneFBv9p8ZyrsvllVrR0F6EqvXTSJ9aPAw==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1792785174669,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/orders",
+   "reference": "24IIOTEtnl47YbtaT2PhPYyRoTvtlNW+1uR92oKpYXSblFfiQ6T9Aj50FuKFeEUlyLxwClpxF1/PWoT6mh89AA==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 9999999999999,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/orders",
+   "reference": "IxQNRkrkMQgXKTssItoAF88SCfsmnafFlDoe2Wlp5QNhX5jd3w8i8nM2sRaUJEe4+bTA8xiGJI9OTLPTDwjZCA==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 0,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/positions",
+   "reference": "V2Xhx32rXtN8EScgZeEUgRtjn3G1e7ICckwCFxZ1cckNFL/FqYIRXVmSvLeKQk2JhS6Q91Fdo7WNm97nPyuwDQ==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/positions",
+   "reference": "ybmIMUFk1UvVwnRMYonJiZiqgvnfGOJNumSLk9ayBQV4OEb5Mw34FjB51P2e67KH1QYncQL+Xp6e75nafE5LBg==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1700000000000,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/positions",
+   "reference": "rNMBXKXgpuIPUPEZfXV12VwKy3pY5SSeoSJqWveOU5nJsWhL7OsfLLopcNF6DNKIQL/c7d0469mxmUl2OUllAA==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 1792785174669,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/positions",
+   "reference": "icSgyPJflNJ+XTgCGM2zjSmlYEPQa1rv+9KCvOmR2Vk37AUvovaYSkOxc9Ll7zt9LkQvH23fVZx42wjBh3RiDA==",
+   "expect": "refuse"
+  },
+  {
+   "timestampMs": 9999999999999,
+   "method": "GET",
+   "path": "/trade-api/v2/historical/positions",
+   "reference": "pm9j79KAKA1mT7m90vLTXqnVGLEdMHeRHmbXIr84EuK+o0pp+DyHaFcYmnXEAdSjJRDBeaUdsJClt8Q6Z84kDQ==",
    "expect": "refuse"
   },
   {

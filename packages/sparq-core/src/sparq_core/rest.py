@@ -1,9 +1,12 @@
 """Async, read-only REST client for Kalshi's public market-data endpoints.
 
 Read-only is enforced twice and structurally: no write method exists, and a transport-level guard
-refuses any request that is not a GET to the configured host and to an allowed family of paths
-(``/historical``, ``/markets``, ``/series``, ``/events``, ``/exchange``). The trading client, when
-it exists (K7), is a separate class with its own key; this one never signs and never sends an order.
+refuses any request that is not a GET to the configured host and to a public market-data route
+(``sparq_core.auth.public_route``, the one table the data signer uses too: ``/markets``,
+``/series``, ``/events``, ``/exchange`` and the historical cutoff, markets and trades, never an
+account archive).
+The trading client, when it exists (S1.3), is a separate class with its own key; this one never
+signs and never sends an order.
 
 Every wait is bounded: each attempt has a timeout, retries have a limit and backoff is capped.
 JSON is read with floats kept as text, so a multiplier such as ``0.5`` never becomes a binary float.
@@ -13,7 +16,6 @@ import asyncio
 import json
 import logging
 import random
-import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from types import TracebackType
@@ -22,13 +24,13 @@ from urllib.parse import urlparse
 
 import httpx
 
+from sparq_core.auth import API_PREFIX, public_route
 from sparq_core.config import KalshiConfig
 from sparq_core.ratelimit import TokenBucket, backoff
 
 log = logging.getLogger("sparq_core")
 
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
-_ALLOWED_PATH = re.compile(r"/(?:historical|markets|series|events|exchange)(?:/[A-Za-z0-9_.\-]+)*")
 
 
 class KalshiError(Exception):
@@ -58,10 +60,8 @@ class ReadOnlyViolation(KalshiError):
 
 
 def path_allowed(path: str) -> bool:
-    """Whether ``path`` (relative to the API base, no query string) is in an allowed family."""
-    if not _ALLOWED_PATH.fullmatch(path):
-        return False
-    return all(segment not in {".", ".."} for segment in path.split("/"))
+    """Whether ``path`` (relative to the API base, no query string) is a public market-data read."""
+    return public_route(API_PREFIX + path)
 
 
 def _guard(base_host: str, base_path: str) -> Callable[[httpx.Request], Awaitable[None]]:

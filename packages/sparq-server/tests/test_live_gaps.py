@@ -1,6 +1,6 @@
 """Opt-in: the whole ingest against the real Kalshi, into a test database.
 
-    $env:KALSHI_INTEGRATION = '1'            # and KALSHI_KEY_ID, KALSHI_PRIVATE_KEY_PATH
+    $env:SPARQ_LIVE = '1'            # and SPARQ_KALSHI_KEY_ID, SPARQ_KALSHI_PRIVATE_KEY_PATH
     $env:SPARQ_TEST_DATABASE_URL = '...'      # a test database (the guard refuses any other)
     pytest packages/sparq-server/tests/test_live_gaps.py -q
 
@@ -60,8 +60,8 @@ def summary() -> Any:
 
 @pytest.fixture(autouse=True)
 def opted_in() -> None:
-    if os.environ.get("KALSHI_INTEGRATION") != "1":
-        pytest.skip("live test: set KALSHI_INTEGRATION=1 to run")
+    if os.environ.get("SPARQ_LIVE") != "1":
+        pytest.skip("live test: set SPARQ_LIVE=1 to run")
 
 
 def connector(url: str) -> Any:
@@ -100,7 +100,7 @@ async def test_a_dropped_link_is_repaired_and_the_stored_trades_match_rest(migra
     try:
         signer = DataSigner.from_environment()
     except AuthError:
-        pytest.skip("no usable data key in KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH")
+        pytest.skip("no usable data key in SPARQ_KALSHI_KEY_ID and SPARQ_KALSHI_PRIVATE_KEY_PATH")
     tickers = busiest(5)
     started = time.time()
     async with KalshiPublicClient(PRODUCTION) as client:

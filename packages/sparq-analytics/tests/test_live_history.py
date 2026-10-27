@@ -1,6 +1,6 @@
 """Opt-in live check of the downloader against the real Kalshi API (GET only, no key).
 
-    $env:KALSHI_INTEGRATION = '1'; $env:SPARQ_LIVE_SUMMARY = "$env:TEMP\\sparq-live-summary.txt"
+    $env:SPARQ_LIVE = '1'; $env:SPARQ_LIVE_SUMMARY = "$env:TEMP\\sparq-live-summary.txt"
     python -m uv run pytest packages/sparq-analytics/tests/test_live_history.py -q
 
 A full day of trades is millions of rows, so this fetches two 20-minute windows through the same

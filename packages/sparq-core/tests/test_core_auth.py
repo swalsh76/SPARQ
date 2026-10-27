@@ -16,8 +16,10 @@ from sparq_core.auth import (
     AuthError,
     DataSigner,
     SigningRefused,
+    key_id_problem,
     load_private_key,
     parse_private_key,
+    public_route,
     read_route,
 )
 
@@ -25,6 +27,7 @@ VECTORS: dict[str, Any] = json.loads(
     (Path(__file__).parent / "vectors" / "signing.json").read_text(encoding="utf-8")
 )
 SEED = bytes.fromhex(VECTORS["seedHex"])
+KEY_ID = "a952bcbe-ec3b-4b5b-b8f9-11dae589608c"  # made up, in Kalshi's form
 posix_only = pytest.mark.skipif(os.name != "posix", reason="file modes are a POSIX matter")
 
 
@@ -78,10 +81,27 @@ def test_the_vectors_cover_both_outcomes_in_quantity() -> None:
 @pytest.mark.parametrize(
     "path",
     ["/trade-api/v2/markets", "/trade-api/v2/historical/markets/ABC-1/candlesticks",
-     "/trade-api/v2/account/limits", "/trade-api/ws/v2"],
+     "/trade-api/v2/historical/cutoff", "/trade-api/v2/historical/trades", "/trade-api/ws/v2"],
 )  # fmt: skip
 def test_read_routes_are_allowed(path: str) -> None:
     assert read_route(path)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/trade-api/v2/account/limits", "/trade-api/v2/historical/fills",
+     "/trade-api/v2/historical/orders", "/trade-api/v2/historical/positions",
+     "/trade-api/v2/historical/fills/x", "/trade-api/v2/historical", "/trade-api/v2/historical/x"],
+)  # fmt: skip
+def test_account_data_is_never_a_read_route(path: str) -> None:
+    # the account archives under /historical and the account's limits are account data (S2.h)
+    assert not read_route(path) and not public_route(path)
+    with pytest.raises(SigningRefused):
+        signer().headers("GET", path)
+
+
+def test_the_websocket_handshake_is_signed_but_is_not_a_public_route() -> None:
+    assert read_route("/trade-api/ws/v2") and not public_route("/trade-api/ws/v2")
 
 
 @pytest.mark.parametrize(
@@ -143,6 +163,34 @@ def test_an_empty_key_id_is_refused() -> None:
         DataSigner("  ", Ed25519PrivateKey.generate())
 
 
+def test_a_key_id_pasted_with_quotes_is_refused_without_showing_it() -> None:
+    with pytest.raises(AuthError, match="quotes or spaces") as caught:
+        DataSigner('"secret-id-value"', Ed25519PrivateKey.generate())
+    assert "secret-id-value" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("key_id", "reason"),
+    [
+        (KEY_ID, None),
+        (KEY_ID.upper(), None),
+        (f'"{KEY_ID}"', "quotes or spaces"),
+        (f"{KEY_ID[:8]} {KEY_ID[9:]}", "quotes or spaces"),
+        ("abc", "3 characters, not 36"),
+        ("g" * 8 + KEY_ID[8:], "8-4-4-4-12"),
+        (KEY_ID.replace("-", "x"), "8-4-4-4-12"),
+    ],
+)
+def test_what_is_wrong_with_a_key_id_is_said_without_the_id(
+    key_id: str, reason: str | None
+) -> None:
+    problem = key_id_problem(key_id)
+    if reason is None:
+        assert problem is None
+    else:
+        assert problem is not None and reason in problem and key_id not in problem
+
+
 # --- key files ---------------------------------------------------------------------------------
 
 
@@ -188,18 +236,57 @@ def test_a_key_that_is_not_an_unencrypted_ed25519_pem_is_refused(
         load_private_key(write_key(tmp_path, make()))
 
 
-def test_a_missing_key_file_is_reported_without_a_traceback(tmp_path: Path) -> None:
-    with pytest.raises(AuthError, match="cannot read private key file"):
-        load_private_key(tmp_path / "absent.pem")
+def test_a_missing_key_file_is_reported_without_its_path(tmp_path: Path) -> None:
+    folder = tmp_path / "secret-folder-name"
+    with pytest.raises(AuthError, match="cannot read the private key file") as caught:
+        load_private_key(folder / "absent.pem")
+    assert "secret-folder-name" not in str(caught.value) and caught.value.__cause__ is None
+
+
+@posix_only
+def test_an_open_key_file_is_refused_without_its_path(tmp_path: Path) -> None:
+    folder = tmp_path / "secret-folder-name"
+    folder.mkdir()
+    path = write_key(folder, pem(Ed25519PrivateKey.generate()), 0o644)
+    with pytest.raises(AuthError, match=r"\$SPARQ_KALSHI_PRIVATE_KEY_PATH") as caught:
+        load_private_key(path)
+    assert "secret-folder-name" not in str(caught.value)
+
+
+def test_a_bad_key_file_is_named_without_its_path(tmp_path: Path) -> None:
+    folder = tmp_path / "secret-folder-name"
+    folder.mkdir()
+    with pytest.raises(AuthError, match="the private key file is not") as caught:
+        load_private_key(write_key(folder, b"not a key"))
+    assert "secret-folder-name" not in str(caught.value)
 
 
 def test_the_environment_supplies_the_key_id_and_the_path(tmp_path: Path) -> None:
     path = write_key(tmp_path, pem(Ed25519PrivateKey.from_private_bytes(SEED)))
-    s = DataSigner.from_environment({"KALSHI_KEY_ID": "abc", "KALSHI_PRIVATE_KEY_PATH": str(path)})
-    assert s.headers("GET", "/trade-api/ws/v2", timestamp_ms=1)[HEADER_KEY] == "abc"
+    s = DataSigner.from_environment(
+        {"SPARQ_KALSHI_KEY_ID": f" {KEY_ID} ", "SPARQ_KALSHI_PRIVATE_KEY_PATH": str(path)}
+    )
+    assert s.headers("GET", "/trade-api/ws/v2", timestamp_ms=1)[HEADER_KEY] == KEY_ID
 
 
-@pytest.mark.parametrize("env", [{}, {"KALSHI_KEY_ID": "a"}, {"KALSHI_PRIVATE_KEY_PATH": "/x"}])
+def test_the_environment_refuses_a_key_id_that_is_not_kalshis(tmp_path: Path) -> None:
+    path = write_key(tmp_path, pem(Ed25519PrivateKey.generate()))
+    with pytest.raises(AuthError, match="SPARQ_KALSHI_KEY_ID is not a Kalshi key id: it is 3") as e:
+        DataSigner.from_environment(
+            {"SPARQ_KALSHI_KEY_ID": "abc", "SPARQ_KALSHI_PRIVATE_KEY_PATH": str(path)}
+        )
+    assert "abc" not in str(e.value).split(":", 1)[1]
+
+
+def test_kaps_variables_never_reach_sparq(tmp_path: Path) -> None:
+    path = write_key(tmp_path, pem(Ed25519PrivateKey.generate()))
+    with pytest.raises(AuthError, match="must both be set"):
+        DataSigner.from_environment({"KALSHI_KEY_ID": KEY_ID, "KALSHI_PRIVATE_KEY_PATH": str(path)})
+
+
+@pytest.mark.parametrize(
+    "env", [{}, {"SPARQ_KALSHI_KEY_ID": "a"}, {"SPARQ_KALSHI_PRIVATE_KEY_PATH": "/x"}]
+)
 def test_the_environment_needs_both_variables(env: dict[str, str]) -> None:
     with pytest.raises(AuthError, match="must both be set"):
         DataSigner.from_environment(env)

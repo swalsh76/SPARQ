@@ -37,7 +37,7 @@ from websockets.exceptions import ConnectionClosed, WebSocketException
 from sparq_core.auth import DataSigner
 from sparq_core.config import WS_URLS, Environment
 from sparq_core.ratelimit import backoff
-from sparq_core.ws_models import Frame, parse_frame
+from sparq_core.ws_models import MARKET_DATA_CHANNELS, Frame, parse_frame
 
 log = logging.getLogger("sparq_core")
 
@@ -224,8 +224,14 @@ class KalshiFeed:
     async def subscribe(self, channel: str, market_tickers: list[str] | None = None) -> int:
         """Subscribe to a channel (all markets if no tickers); returns the subscription id.
 
-        The subscription is remembered and restored after every reconnect.
+        The subscription is remembered and restored after every reconnect. Only market-data
+        channels are allowed: a private channel would carry account data over the data key, so it
+        is refused here before anything is sent.
         """
+        if channel not in MARKET_DATA_CHANNELS:
+            raise FeedError(
+                f"the data key subscribes to market-data channels only, not {channel!r}"
+            )
         params: dict[str, Any] = {"channels": [channel]}
         if market_tickers:
             params["market_tickers"] = list(market_tickers)

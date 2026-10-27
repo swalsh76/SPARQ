@@ -1,6 +1,6 @@
 """Opt-in checks of the signing and the WebSocket feed against the real Kalshi service.
 
-    $env:KALSHI_INTEGRATION = '1'      # the key: KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH
+    $env:SPARQ_LIVE = '1'      # the key: SPARQ_KALSHI_KEY_ID and SPARQ_KALSHI_PRIVATE_KEY_PATH
     pytest packages/sparq-core/tests/test_live_ws.py -q
 
 Read-only: one signed GET and a short subscription to the public ticker, trade and lifecycle
@@ -48,7 +48,7 @@ def signer() -> DataSigner:
     try:
         return DataSigner.from_environment()
     except AuthError:
-        pytest.skip("no usable data key in KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH")
+        pytest.skip("no usable data key in SPARQ_KALSHI_KEY_ID and SPARQ_KALSHI_PRIVATE_KEY_PATH")
 
 
 def busiest_markets(count: int) -> list[str]:

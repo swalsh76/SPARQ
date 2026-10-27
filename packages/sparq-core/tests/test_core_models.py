@@ -89,6 +89,23 @@ def test_bad_values_are_refused_not_rounded(sample: Sample, field: str, value: A
         Market.model_validate(sample("market_settled.json") | {field: value})
 
 
+@pytest.mark.parametrize(
+    "field", ["yes_bid_dollars", "last_price_dollars", "settlement_value_dollars"]
+)
+@pytest.mark.parametrize("value", [1, 0, 61])
+def test_a_dollar_price_sent_as_a_bare_number_is_refused(
+    sample: Sample, field: str, value: int
+) -> None:
+    # Kalshi sends every dollar price as text; a bare 61 could be cents read as $61 (S2.h)
+    with pytest.raises(ValidationError, match="must arrive as text"):
+        Market.model_validate(sample("market_settled.json") | {field: value})
+
+
+def test_a_trade_price_sent_as_a_bare_number_is_refused(sample: Sample) -> None:
+    with pytest.raises(ValidationError, match="must arrive as text"):
+        Trade.model_validate(sample("trade.json") | {"yes_price_dollars": 0, "no_price_dollars": 1})
+
+
 def test_a_trade(sample: Sample) -> None:
     trade = Trade.model_validate(sample("trade.json"))
     assert trade.yes_price_e6 == 220_000
