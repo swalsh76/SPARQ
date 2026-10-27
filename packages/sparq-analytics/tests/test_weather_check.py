@@ -33,10 +33,12 @@ MARKETS = [
     market("KXHIGHNY-26AUG08-T80", "no", "greater", "80", None, "recorded at New York City for"),
     market("KXRAIN-26SEP15-NYC", "yes", "greater", "0", None, "precipitation at CLINYC in NYC"),
     market("KXRAIN-26SEP15-MKE", "no", "greater", "0", None, "precipitation at KMKE in Milwaukee"),
-    market("KXHIGHZZ-26SEP15-T50", "no", "greater", "50", None, "recorded at Nowhere (CLIZZZ)"),
+    market("KXHIGHTSEA-26SEP15-T50", "no", "greater", "50", None, "recorded at Nowhere (CLIZZZ)"),
     market("KXHIGHNY-26SEP16-T70", "", "greater", "70", None, NY_RULES),  # not settled
     market("KXTEMPNYCH-26SEP1510-T70.99", "no", "greater", "70.99", None, NY_RULES),  # not in scope
     market("KXHIGHNY-26OCT12-T70", "no", "greater", "70", None, NY_RULES),  # test part
+    # a series named like a high but not about weather, with no day in its event ticker
+    market("KXHIGHINFLATION-26DEC-T3", "no", "greater", "3", None, "inflation above 3%"),
 ]
 
 
@@ -122,13 +124,13 @@ def test_the_scope_takes_settled_markets_with_their_site(tmp_path: Path) -> None
         "KXHIGHNY-26AUG08-T80",
         "KXRAIN-26SEP15-NYC",
         "KXRAIN-26SEP15-MKE",
-        "KXHIGHZZ-26SEP15-T50",
+        "KXHIGHTSEA-26SEP15-T50",
     }
     assert by_ticker["KXHIGHNY-26AUG08-T80"]["code"] == "CLINYC"  # the series' only code
     assert by_ticker["KXHIGHNY-26AUG08-T80"]["station"] == "KNYC"
     assert by_ticker["KXRAIN-26SEP15-MKE"]["station"] == "KMKE"
     assert by_ticker["KXRAIN-26SEP15-MKE"]["city"] == "MKE"
-    assert by_ticker["KXHIGHZZ-26SEP15-T50"]["station"] is None
+    assert by_ticker["KXHIGHTSEA-26SEP15-T50"]["station"] is None
     assert by_ticker["KXHIGHNY-26SEP15-T72"]["day"] == SEP15
 
 
@@ -154,7 +156,7 @@ def test_the_check_counts_calls_and_finds_the_wrong_one(tmp_path: Path) -> None:
     assert (new_york["called_no_margin"], new_york["wrong_no_margin"]) == (3, 1)
     assert (standard["NYC"]["called"], standard["NYC"]["wrong"]) == (1, 0)
     assert (standard["MKE"]["with_data"], standard["MKE"]["called"]) == (0, 0)
-    assert standard["KXHIGHZZ"]["with_station"] == 0
+    assert standard["KXHIGHTSEA"]["with_station"] == 0
     civil = {r["city"]: r for r in summary.filter(pl.col("mode") == "civil").to_dicts()}
     # at 72 only B70.5 is settled with no margin, and the T73 call needs 73
     assert (civil["KXHIGHNY"]["called"], civil["KXHIGHNY"]["called_no_margin"]) == (0, 1)

@@ -48,7 +48,12 @@ def test_an_event_ticker_without_a_day_is_refused(ticker: str) -> None:
 
 def test_the_scope_is_the_daily_highs_and_rain() -> None:
     assert in_scope("KXRAIN") and in_scope("KXHIGHTSEA")
-    assert not in_scope("KXTEMPNYCH") and not in_scope("KXLOWTAUS") and not in_scope("KXRAINNYCM")
+    assert (
+        not in_scope("KXHIGHINFLATION")
+        and not in_scope("KXTEMPNYCH")
+        and not in_scope("KXLOWTAUS")
+        and not in_scope("KXRAINNYCM")
+    )
 
 
 def test_in_summer_the_standard_day_starts_at_one_on_the_clock() -> None:

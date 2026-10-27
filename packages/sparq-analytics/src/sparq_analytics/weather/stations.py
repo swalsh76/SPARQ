@@ -22,7 +22,37 @@ from zoneinfo import ZoneInfo
 DayMode = Literal["standard", "civil"]
 DAY_MODES: tuple[DayMode, ...] = ("standard", "civil")
 RAIN_SERIES = "KXRAIN"
-HIGH_PREFIX = "KXHIGH"
+# W1's daily highs: every daily-high temperature series in the history (2026-08-07 to 10-22); the
+# prefix alone is not enough (``KXHIGHINFLATION`` is not about weather)
+HIGH_SERIES = frozenset(
+    {
+        "KXHIGHAUS",
+        "KXHIGHCHI",
+        "KXHIGHDEN",
+        "KXHIGHLAX",
+        "KXHIGHMIA",
+        "KXHIGHNY",
+        "KXHIGHPHIL",
+        "KXHIGHTATL",
+        "KXHIGHTBOS",
+        "KXHIGHTDAL",
+        "KXHIGHTDC",
+        "KXHIGHTEWR",
+        "KXHIGHTHOU",
+        "KXHIGHTLV",
+        "KXHIGHTMIN",
+        "KXHIGHTNOLA",
+        "KXHIGHTOKC",
+        "KXHIGHTPHX",
+        "KXHIGHTSAN",
+        "KXHIGHTSATX",
+        "KXHIGHTSDF",
+        "KXHIGHTSEA",
+        "KXHIGHTSFO",
+        "KXHIGHTTTN",
+    }
+)
+SCOPE = HIGH_SERIES | {RAIN_SERIES}
 # the test part of W6 starts here: nothing in S2.1 or S2.2 reads a result from it
 TEST_START = date(2026, 10, 11)
 FIT_END = date(2026, 9, 28)
@@ -93,7 +123,7 @@ class WeatherDataError(Exception):
 
 def in_scope(series: str) -> bool:
     """W1: the daily highs and the daily rain markets."""
-    return series == RAIN_SERIES or series.startswith(HIGH_PREFIX)
+    return series in SCOPE
 
 
 def code_in(rules: str | None) -> str | None:

@@ -34,7 +34,7 @@ def test_stations_lists_the_sites_and_flags_an_unmapped_one(
     out, err = capsys.readouterr()
     assert "CLINYC" in out and "KMKE" in out
     assert "1 markets name no mapped site" in err
-    mapped = write_history(tmp_path / "ok", [m for m in MARKETS if "ZZ" not in str(m["ticker"])])
+    mapped = write_history(tmp_path / "ok", [m for m in MARKETS if "SEA" not in str(m["ticker"])])
     assert main(["stations", "--kalshi", str(mapped)]) == 0
 
 
@@ -50,7 +50,7 @@ def test_check_writes_its_summary_and_fails_on_a_wrong_call(
     assert {w["ticker"] for w in saved["wrong"]} == {"KXHIGHNY-26SEP15-T73"}
     assert "no mapped site" in capsys.readouterr().err
     clean = [
-        m for m in MARKETS if m["ticker"] not in ("KXHIGHNY-26SEP15-T73", "KXHIGHZZ-26SEP15-T50")
+        m for m in MARKETS if m["ticker"] not in ("KXHIGHNY-26SEP15-T73", "KXHIGHTSEA-26SEP15-T50")
     ]
     assert (
         main(["check", "--data", str(data), "--kalshi", str(write_history(tmp_path / "c", clean))])

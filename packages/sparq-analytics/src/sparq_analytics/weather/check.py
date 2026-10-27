@@ -27,8 +27,8 @@ import polars as pl
 from sparq_analytics.study.dataset import scan_markets
 from sparq_analytics.weather.stations import (
     DAY_MODES,
-    HIGH_PREFIX,
     RAIN_SERIES,
+    SCOPE,
     SITES,
     TEST_START,
     WeatherDataError,
@@ -86,10 +86,7 @@ def scope_markets(kalshi_root: Path, first: date, last: date) -> pl.DataFrame:
         )
     markets = (
         scan_markets(kalshi_root, MARKET_COLUMNS)
-        .filter(  # stations.in_scope, in polars
-            (pl.col("series_ticker") == RAIN_SERIES)
-            | pl.col("series_ticker").str.starts_with(HIGH_PREFIX)
-        )
+        .filter(pl.col("series_ticker").is_in(sorted(SCOPE)))  # stations.in_scope, in polars
         .filter(pl.col("result").is_in(["yes", "no"]))
         .collect()
     )
