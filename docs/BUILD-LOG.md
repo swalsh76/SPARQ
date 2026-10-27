@@ -61,7 +61,7 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 
 **Problems and fixes.** In the first version of the scan test, two variants selected the same trades (the thin series' activity, 84, sits below both lower edges), so the simplest correctly won; the test now uses edges that differ. The scan of 72 scorings at 10,000 resamples takes over ten minutes on the analytics node.
 
-**Still to do in S1.1b.** After the window closes on 2026-11-23 and its markets settle (allow a few days): re-run KAPS's downloader for the forward days (trades, then markets; owner approved, D10), then `s11b_run.sh verdict` once, and the write-up.
+**Dropped (owner, 2026-10-27; PLAN D13).** After S1.2a's reading the owner dropped the forward test. It was never opened: no ledger was written and no forward day was read, so the registration stands only as a record. The forward days are not downloaded.
 
 ### S1.2a What the live book shows (2026-10-25 to 2026-10-27, done: the stop rule says "go on")
 
