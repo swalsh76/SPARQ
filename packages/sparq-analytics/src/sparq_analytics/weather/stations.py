@@ -74,7 +74,8 @@ SITES: dict[str, Site] = {
     "CLIDCA": Site("KDCA", "America/New_York"),
     "CLIDEN": Site("KDEN", "America/Denver"),
     "CLIDFW": Site("KDFW", "America/Chicago"),
-    "CLIDJT": Site("KPBI", "America/New_York"),  # West Palm Beach; from 2026-10-18 only (test part)
+    # West Palm Beach, renamed with a new identifier (KPBI has no reports); from 2026-10-18 only
+    "CLIDJT": Site("KDJT", "America/New_York"),
     "CLIDTW": Site("KDTW", "America/Detroit"),
     "CLIEWR": Site("KEWR", "America/New_York"),
     "CLIHOU": Site("KHOU", "America/Chicago"),  # Hobby
