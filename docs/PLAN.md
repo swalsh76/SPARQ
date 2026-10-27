@@ -1,6 +1,6 @@
 # SPARQ plan
 
-**Status:** S0 is done. S1 was approved (2026-10-25); its first slice, **S1.1, returned a NO-GO** (`docs/research/middle-tier.md`), so under D3 S1 stopped for a rethink. S1.1b's forward test was registered and then **dropped unopened (D13, 2026-10-27)** after S1.2a's live reading, and S1.2 is on hold: the direction is being reassessed from §9. This document is the source of truth for the direction, the architecture and the build order. [ASSESSMENT.md](ASSESSMENT.md) holds the reasoning and the sources; [LESSONS.md](LESSONS.md) holds what the predecessors measured. SPARQ carries much of KAPS's design by reference: where this plan says "KAPS PLAN §x", read [KAPS's plan](https://github.com/swalsh76/KAPS/blob/main/docs/PLAN.md) at that section.
+**Status:** S0 is done. S1 was approved (2026-10-25); its first slice, **S1.1, returned a NO-GO** (`docs/research/middle-tier.md`), so under D3 S1 stopped for a rethink. S1.1b's forward test was registered and then **dropped unopened (D13, 2026-10-27)** after S1.2a's live reading, and S1.2 is on hold: the direction was reassessed from §9 and **S2, weather against station observations (§6.2), is proposed**. This document is the source of truth for the direction, the architecture and the build order. [ASSESSMENT.md](ASSESSMENT.md) holds the reasoning and the sources; [LESSONS.md](LESSONS.md) holds what the predecessors measured. SPARQ carries much of KAPS's design by reference: where this plan says "KAPS PLAN §x", read [KAPS's plan](https://github.com/swalsh76/KAPS/blob/main/docs/PLAN.md) at that section.
 
 ## 1. Goal
 
@@ -64,6 +64,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 |---|---|---|---|
 | **S0** | **The fork:** the repository, the renamed packages, the founding documents, CI in the new repository, one live check | CI green on Ubuntu and macOS and the database job; `test_live_public` passes; the owner merges | done (BUILD-LOG S0) |
 | **S1** | **Evidence for the quoter** (§6.1): S1.1 the pre-registered middle-tier test; S1.2 the shadow quoter; S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | Each slice's gate in §6.1; a slice starts only when the one before it passes | approved 2026-10-25; **S1.1 NO-GO**; S1.2a done (go on); **S1.1b's forward test dropped and S1.2 on hold (D13, 2026-10-27)**; the direction is reassessed from §9 |
+| **S2** | **Weather against station observations** (§6.2): S2.1 sources, terms and the observation history; S2.2 exploration on the fit and validate parts; S2.3 the pre-registered test on the held-out part; S2.4 a live shadow run against the real books | Each slice's gate in §6.2 | **proposed 2026-10-27, awaiting the owner's approval** |
 
 ### 6.1 S1 Evidence for the quoter: decisions and slices (approved 2026-10-25)
 
@@ -100,6 +101,60 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | S1.4 | The tiny live pilot | D8 | not started |
 | S1.2p | Shared definitions (owner approved 2026-10-26, from a code review; items 1 and 5 of the review went into S1.2a): the stored market in `sparq_core.markets` (combo prefix, labels, columns, the row builder) for the downloader, the ingest and the schema; the WebSocket address per environment in `config.py`, demo by default, the ingest asking for production; `sparq_server.names` for the names install, the ingest and the watchdog share, with the state keys and gap kinds imported, not spelled out | Behaviour unchanged: format, lint, types, tests and coverage; planted bugs caught | **done** (BUILD-LOG S1.2p) |
 
+### 6.2 S2 Weather against station observations (proposed 2026-10-27, awaiting the owner's approval)
+
+**Why this strand (the §9 reassessment, 2026-10-27).**
+- K0.5 showed Kalshi's prices are close to the true probability.
+- S1 showed that plain spread capture is closed to a late joiner: in S1.2a, a joining order's fills lose 2.9 cents by 10 minutes before fees.
+- So an edge needs a fair value better than the book's, from information the book is slow to price.
+
+Kalshi's daily temperature and rain markets settle on a station's measurement, and the station's own reports during the day put **hard bounds** on that measurement:
+- once the reported temperature has passed a bracket's top, that bracket cannot win;
+- once measurable rain is reported, "rain today" is settled in practice.
+
+The question is whether the book still offers prices on the wrong side of a bound after the report is public: how often, for how long, in what size, and what that is worth after fees. It is the cheapest strand to test, because the 77 days of trades are already on the analytics node and the observation archives are free.
+
+**What the history holds** (2026-08-07 to 2026-10-22, read on 2026-10-27 for this proposal; no outcome was measured). Climate and Weather has 458 series and 11.1 M trades, 1.4% of all trades. The 25 busiest series hold 89% of the weather contracts.
+- **Rain.** `KXRAIN` is the busiest weather series, with 2.4 M trades (about 31,000 a day). It is one event a day with about 30 city markets. A market settles YES when precipitation at the climate station is strictly greater than 0 inches; a trace counts as 0.
+- **Daily highs.** About 20 cities, each with six markets a city-day (two tails and four 2-degree brackets):
+  - the busiest: `KXHIGHLAX` (1.1 M trades), `KXHIGHNY` (0.6 M), `KXHIGHMIA`, `KXHIGHCHI` and `KXHIGHAUS`;
+  - then `KXHIGHTPHX`, `KXHIGHTSFO`, `KXHIGHTDAL`, `KXHIGHTSEA`, `KXHIGHTATL`, `KXHIGHPHIL`, `KXHIGHDEN`, `KXHIGHTHOU`, `KXHIGHTLV`, `KXHIGHTBOS`, `KXHIGHTOKC`, `KXHIGHTMIN`, `KXHIGHTDC` and smaller ones.
+
+  A few cities also have daily lows.
+- **Settlement.** The highs and rain now settle on **The Weather Company's** value for a named NWS climate station (`CLINYC`, `CLIMDW`, `CLILAX` and so on). Markets of December 2025 named the NWS Climatological Report (Daily) instead. The **hourly** temperature series (`KXTEMP...H`, `...HS`) settle on Synoptic Data's reading at a set hour.
+- **Times.** A daily market opens the day before and closes at about 01:00 local time after its day, so it trades through the whole observed day.
+
+**Decisions proposed (W1 to W8).**
+
+| # | Decision |
+|---|---|
+| W1 | **Scope: the daily-high markets and `KXRAIN`.** Daily lows follow only if the highs show an edge. The hourly temperature series are **out**: their value is one reading at a set hour, so any edge is a race to see the reading first, which a feed arriving 0.55 s late (S1.2a) would lose. Taking stale quotes is tested first. Quoting around an observation-based fair value is a later slice, only if S2.3 passes. |
+| W2 | **Ground truth is Kalshi's settled result,** not a weather source. Each test is scored on the market's own result, so a disagreement between the observations and The Weather Company shows up as a loss, not as an excluded case. |
+| W3 | **Observations: the NWS's hourly and special station reports (METAR)** for each climate station. The history comes from the Iowa Environmental Mesonet's archive, and live use from NOAA's aviation weather service; both are free. Each source's terms are read and recorded before use (decision 34 carried). The station map (series, climate code, station identifier, time zone) is stored as data and checked against each series' rules text. |
+| W4 | **When a report counts: from its time of issue plus a publication delay.** The delay is set from a live measurement in S2.1, and is never below 5 minutes for the history. **The bound is conservative:**<ul><li>reported temperatures, converted from tenths of a degree Celsius, are rounded down;</li><li>a bracket is ruled out only when the bound clears its top by at least 1 °F (the climate value is a whole °F from finer data, and its maximum can only be higher than any hourly report);</li><li>rain counts only from a report of at least 0.01 inch.</li></ul>Both margins are fixed before S2.2's results are seen; afterwards they may be widened, never narrowed. |
+| W5 | **Fills.** The history shows only trades, so a rule may take at most the size that actually traded on the wrong side of the bound after the report counted, at that trade's price or one worse for us. In the live run, at most the size shown. Taker fees follow Kalshi's schedule (KAPS D13), rounded up per order. |
+| W6 | **Parts:**<ul><li>fit, 2026-08-07 to 2026-09-28, and validate, 2026-09-29 to 2026-10-10: explored freely;</li><li>test, 2026-10-11 to 2026-10-22: opened once.</li></ul>The unit, and the bootstrap's cluster, is the **city-day**, since a `KXRAIN` event spans 30 cities. *Caveat:* K0.5's Weather segments were scored on these test days, but as price-only rules; nothing about observations was read there. |
+| W7 | **Gate for S2.3 (GO).** The chosen rules (at most 4, approved by the owner from the validate part and locked by hash) must meet two conditions:<ul><li>their profit to settlement after fees has a lower bound above zero (one-sided 0.025, clustered by city-day), over at least 100 city-days with a signal;</li><li>they average at least **$25 a day** at the size the fill rule allows; below that the strand does not pay for its build.</li></ul>Fewer than 100 signalled city-days is INCONCLUSIVE, and the test is extended once with the live recording's days. |
+| W8 | **Reported for every rule:**<ul><li>how long after a report counts the book moves past the bound (the competition's speed);</li><li>how often the ruled-out side traded after the bound (it should never happen; any case is studied);</li><li>the profit by hour of the local day.</li></ul>**No real order in S2.** A GO leads to a live shadow run (S2.4), then S1.3's write path on demo. |
+
+**Slices.**
+
+| Slice | What it builds | Gate | Status |
+|---|---|---|---|
+| S2.1 | **Sources and terms:**<ul><li>the station map, from the series' rules;</li><li>the observation sources' terms, read and recorded;</li><li>`sparq_analytics.weather`, with a downloader of the archived reports for the 77 days (resumable, GET only) and a parser for temperature and precipitation;</li><li>a check of the observed bounds against Kalshi's results on the fit part;</li><li>a live measurement, over one day, of the aviation weather service's publication delay.</li></ul> | The map covers every in-scope series; on the fit part the bound is never on the wrong side of the result (every exception explained); the delay is measured | proposed |
+| S2.2 | **Exploration on the fit and validate parts:**<ul><li>how often and by how much trades crossed a bound after the report counted, by series, hour and side, with fees;</li><li>how fast the book reprices;</li><li>a proposal of at most 4 rules, with reasons, for the owner.</li></ul> | The owner approves the rule list | proposed |
+| S2.3 | **The pre-registered test:** rules and settings locked by hash, the test part opened once, the write-up in `docs/research/weather.md` | W7 | proposed |
+| S2.4 | **A live shadow run (only on GO), for two weeks:** the observation feed and the ingest's books in real time, with the would-be orders logged against the live book and no order sent | Its own plan, set before it starts | proposed |
+
+**What it changes on machines:** the analytics node only. The data goes under the SPARQ data folder on the external drive, a few MB of reports a day.
+
+**New packages:** none expected. The parser is a few lines, and downloads use `httpx`.
+
+**Open questions for the owner:**
+- the $25-a-day floor in W7;
+- whether S2 starts before or after S1.2r (S2 does not need it);
+- whether the daily lows join the scope from the start.
+
 ## 7. Risks
 
 - **The middle-tier lead may not hold.** It is exploratory, from the validate part, with intervals that cross zero; KAPS's validate leads all failed on the test part. S1.1 decides.
@@ -124,7 +179,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 - **Kalshi's Liquidity Incentive Program**: measured (6,560 markets, about $293,000 a day, ends 2027-01-01 at the latest), not relied on (Q4).
 - **Perpetual futures:** as a carry trade they are a modest yield (BTC funding about 9% a year since June 2026, ETH about zero); as a **hedge** for a binary quoter in the same account they may matter (crypto, the S&P 500, the Nasdaq 100, metals, oil).
 - **Outside fair values with hedges** through Interactive Brokers (Fed meetings against Fed funds futures, index ranges against options).
-- **Weather brackets against live station observations** (they settle on The Weather Company's station value).
+- **Weather brackets against live station observations:** proposed as **S2** (§6.2, 2026-10-27).
 - **Late-game sports mispricing** (Moshrefi, 2026).
 - **Language-model forecasts for the thin long tail**, forward-tested.
 - **KAPS's proposed K0.6 flow spike** (signals from the trade tape).
