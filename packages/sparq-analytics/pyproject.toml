@@ -9,7 +9,7 @@ description = "Features, models, recommendations and the trading service (runs o
 license = "MIT"
 license-files = ["../../LICENSE"]
 requires-python = ">=3.12"
-dependencies = ["sparq-core", "asyncpg>=0.30", "numpy>=2.1", "polars>=1.30", "pyarrow>=21", "tzdata; sys_platform == 'win32'"]
+dependencies = ["sparq-core", "asyncpg>=0.30", "httpx>=0.28", "numpy>=2.1", "polars>=1.30", "pyarrow>=21", "tzdata; sys_platform == 'win32'"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sparq_analytics"]
