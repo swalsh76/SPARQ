@@ -78,6 +78,19 @@ def test_stations_are_kept_apart() -> None:
     assert new_york["bound_f"].to_list() == [77, 77]
 
 
+def test_a_special_report_does_not_restart_the_rain_window() -> None:
+    # the routine report at 05:51 counts its rain from 04:51, the day before, even though a special
+    # came at 05:10, inside the new standard day
+    rows = [
+        ("routine", ms(4, 51), "KNYC 150451Z AUTO 10SM 20/10 RMK AO2 T02000100"),
+        ("special", ms(5, 10), "KNYC 150510Z AUTO 10SM 20/10 RMK AO2"),
+        ("routine", ms(5, 51), "KNYC 150551Z AUTO 10SM 20/10 RMK AO2 T02000100 P0002"),
+    ]
+    bounds = report_bounds(frame(rows))
+    day = bounds.filter((pl.col("mode") == "standard") & (pl.col("day") == OCT15))
+    assert day["rain"].to_list() == [False, False]
+
+
 def test_a_station_no_site_uses_is_refused() -> None:
     with pytest.raises(ValueError, match="KZZZ"):
         report_bounds(frame(REPORTS, "KZZZ"))
