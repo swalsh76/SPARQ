@@ -56,7 +56,7 @@ class Backup(_Section):
 
 
 class Storage(_Section):
-    budget_gb: int = Field(default=500, ge=50, le=800)
+    budget_gb: int = Field(default=700, ge=50, le=800)
 
 
 class Postgres(_Section):

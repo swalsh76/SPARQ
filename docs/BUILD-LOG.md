@@ -63,6 +63,106 @@ How each SPARQ slice was built and verified. One section per milestone, one subs
 
 **Still to do in S1.1b.** After the window closes on 2026-11-23 and its markets settle (allow a few days): re-run KAPS's downloader for the forward days (trades, then markets; owner approved, D10), then `s11b_run.sh verdict` once, and the write-up.
 
+### S1.2a What the live book shows (2026-10-25 to 2026-10-27, done: the stop rule says "go on")
+
+**Decisions (owner).** D11, live-data work in parallel with the forward test, with a guard: no edge to settlement on forward-test events before S1.1b's verdict, and windows of ten minutes at most. **The stop rule**, fixed before any reading: among the forward rule's own trades, if more than 50% of the levels takers cleared are refilled at the same price or better within 1 s, S1.2 is not started; fewer than 300 cleared levels is "too few". It is read once, on the UTC days 2026-10-25 and 2026-10-26. Trades near a feed outage are left out (decided before any reading). The storage budget was raised from 500 to 700 GB. S1.2's plan (D12) was approved for the case "go on".
+
+**Access.** The production database (the owner's choice over a nightly export) already accepted the analytics node over TLS with `scram-sha-256` for any role. The owner created a read-only role on the server host: forced read-only transactions, at most 2 connections, a 15-minute statement timeout, `SELECT` on the tables and on those made later. It can write 0 of 19 tables (public and TimescaleDB's internal schema) and has no special attribute. The password is in the agent account's `~/.pgpass` on the analytics node; the server's certificate is pinned there, and its name matches, so the client checks the server fully. The role is outside `kaps-admin install`'s management.
+
+**Built.** `sparq_analytics.live`:
+- `source.py`: the connection settings file (no password allowed), the TLS connection, and `extract`. It copies whole UTC hours of the ticker frames and trades, once each and at least 10 minutes old, with times as whole milliseconds and through `COPY` to CSV and then Parquet, under temporary names. It copies the market list (without results) and the ticker gaps afresh each run, and refuses a gap in the hours it is asked to read.
+- `book.py`, the measures, with every window capped at ten minutes in the settings:
+  - the book the taker met: the last frame strictly before the trade;
+  - markouts against the later mid;
+  - S1.1's strict fill rule against a queue rule, for an order joining 1 s after the trade behind the size shown at its price, with no credit for cancellations ahead;
+  - refills after a taker order clears a level;
+  - trades near a feed outage left out.
+
+  The forward windows are computed on reversed time per market with probe rows, so they are exact.
+- `summary.py`: four populations (the forward rule's own trades, and the middle, busy and thin tiers in the rule's price band), contract-weighted means with K0.5's clustered bootstrap, the stop rule, and the markdown.
+- `cli.py`: `extract`, `measure` (one UTC day at a time, from an hour before) and `report`.
+
+The registered forward rule and its frozen activity file are reused as they stand.
+
+**What was kept, changed and why.** Kept: the study's `Rule` and its filter, the frozen activity file and its hash, and the bootstrap, so that the population measured is exactly the forward test's kind. New: nothing in KalshiTerm2 or KAPS measured the book, so there was nothing to port. Questioned and corrected: KalTerm3's figure of 25,000 ticker rows and 4,000 trades a minute (LESSONS). It came from its first minutes on 18 October, scaled to a day, and caught about half of that hour's trades, which history shows at 478,007 for 04:00 to 05:00 UTC on 19 October.
+
+**Measured (the ingest's first day, before any reading).**
+- **Volume.**
+  - About 89 M ticker rows and 14 M non-combo trades a day; the last 24 hours to 23:03 UTC on 25 October held 14,117,468 trades.
+  - Kalshi's history shows growth from about 7.8 M trades a day in mid-August to 12.95 M in the week to 18 October. Weekends run about 10 to 15% above weekdays.
+  - *The first two whole UTC days, counted at the reading (2026-10-27):* 25 October (a Sunday) 74,332,325 ticker rows and 14,109,134 trades (about 51,600 and 9,800 a minute); 26 October 58,415,187 and 12,268,181 (about 40,600 and 8,500 a minute). The first day's 89 M ticker rows was scaled from busy hours and is too high. Against KalTerm3's 25,000 ticker rows and 4,000 trades a minute, trades run about 2 to 2.5 times higher and ticker rows about 1.6 to 2 times.
+- **Compression** (24 October's 2.8 hours, compressed by hand by the owner): ticker 10.5 times (2,962 MB to 282 MB, about 24 bytes a row) and trades 6.6 times (625 MB to 95 MB, about 45 bytes a row). Both are floors, since each market had about 133 rows to compress together. Uncompressed, a day takes about 23.5 GB; compressed, about 2.8 GB. The drive has 847 GB free. The budget is enforced nowhere yet: the limits that act are the watchdog's alert at 80% of the drive and the ingest's stop at 90%.
+- **The feed**, in middle-tier markets, 18:00 to 19:00 UTC on 25 October:
+  - **timing:** a ticker frame follows 99.95% of trades within 1 s (median 156 ms), and 94.6% of frames change the book;
+  - **spacing:** frames are spaced at a median of 2.0 s with a broad peak near 1 s and no hard floor (some markets look batched on half a second);
+  - **lag:** the feed reaches the server about 0.55 s after Kalshi's timestamp (95th percentile 1.07 s).
+
+  So the book resolves to about a second.
+- **Copying:** an hour takes about 9 s and 82 MB, so a day takes about 3.5 minutes and 2 GB. The copied trade counts equal the database's.
+
+**Verified (local).** 40 tests on hand-built books with answers worked out by hand. They pass on Windows and on the analytics node. Planted bugs: 22. Of the first 18, 6 survived the first run, because the scenarios had no frame at a trade's own millisecond, no later trade exactly at a joined order's price, no trade between a trade and the join, no series on the tier boundary, and no priced ask with zero size; a pattern was also ambiguous. The scenarios were extended, and all 22 are caught, including 4 for the outage rule. The full suite: 1,680 passed and 197 skipped. Ruff and mypy are clean. CI is green on draft PR #5 (Ubuntu, macOS and the database job).
+
+**Problems and fixes.**
+- Two of the first connection checks failed with "relation `_hyper_…` does not exist". One used `approximate_row_count`, and the other looked tables up by unqualified name across TimescaleDB's chunks. Plain time-bounded queries work, and every query in `extract` is bounded by time, which also keeps its load small.
+- The first grant script put `\password` in the middle of a pasted block, so the lines after it were taken as password input and the grants did not run. The owner re-ran them as one command.
+- `~/.pgpass` was first written in the owner's account, not the agent account the copies run as; the owner wrote it there instead, readable by that account only.
+- SPARQ's CLAUDE.md carried the analytics node's real data path (from S1.1b); it was replaced by neutral wording, and the path is in the assistant's memory.
+- The planted-bug script rewrote files with Windows line endings; they were converted back to LF before the commit.
+
+**Code review fixes before the reading (owner asked and approved, 2026-10-26; review items 1 and 5).** A review of the codebase found that the live tagging computed the rule's features (`first`, `quiet_s`, `ny_hour`) with its own code instead of the study's, so the two definitions could drift and the live work score a different rule from the one registered; and that `measure` held every day's frames until the summary, which ten days (S1.2c) would not fit.
+- *Built.* `add_trade_features` is split out of the study's `add_rule_features` with no change to the study's output, and the live `tag_trades` calls it after sorting trades of one millisecond by trade id. `measure` writes each day and lets it go, then reads back only the rows a population summarises (`in_any_population`). Two determinism gaps found on the way were fixed: the summary now sorts events before resampling (intervals repeat exactly), and frames of a market at one millisecond are ordered by arrival, so the as-of join takes the frame received last.
+- *Verified.* New tests: the live features equal the study's on the same trades (time built apart from the live code); a tie at one millisecond is tagged the same in any input order; reading back only the populations gives the same summary; the summary does not depend on row order; of two frames at one millisecond the book is the later arrival. Six planted bugs, all caught. The full suite: 1,687 passed, 197 skipped; ruff and mypy clean. On the analytics node, 2026-10-25 measured with `measure_day` only (no summary, no share): the old code and the new gave 13,834,269 per-trade and 8,007,274 per-order rows and the same 274,865 left out; the first comparison differed in one `q_ahead_e2` value, traced to frames at one millisecond (47,444 market-milliseconds of 74.3 million frames); after the fix two runs were identical to each other and to the old run. One day still peaks at about 23 GB inside `measure_day`; the summary reads back 6,679,905 trade and 4,211,672 order rows a day. The comparison files were deleted.
+
+**Second review's items 1 and 2, before the reading (owner asked, 2026-10-26).**
+- *Built.* `extract` copies each gap's reason. An `all` gap (a channel that could not be resubscribed) counts as a ticker outage only when its reason names the ticker channel, and since the ingest that writes the log (KAPS's, frozen) never closes it, it ends at the next `ticker` gap, the reconnect or restart that subscribed again, or else at the end of the data. Before, one such gap would have dropped every later trade. `measure_day` measures the day in 16 groups of markets of about equal trade counts, tagging each group on its own; every step is per market (its previous trade, its book, its windows), so the result does not depend on the grouping.
+- *Verified.* Tests: a failed resubscribe counts only for the ticker channel and ends at the next reconnect, or runs to the end of the data without one; any number of groups gives the same trade and order measures as one. Three planted bugs, all caught. The full suite: 1,689 passed. On the analytics node (after `extract` refreshed the gap list: 7 ticker gaps, none of kind `all`), 2026-10-25 by the old code and the new: identical per-trade and per-order outputs, the same 274,865 left out. Memory, by a step-by-step probe: tagging the whole day held 10.4 GB and the outage filter 4.4 GB before any grouping, and groups balanced by trades still differ in frames (5.5 to 28.6 million in four groups); tagging per group and 16 groups bring the peak from 20 to 23 GB down to 14.5 GB (8 groups 15.3 GB, 32 groups 13.4 GB), in 24 to 27 s. What remains is mostly the day's own output and memory the allocator keeps. The comparison files were deleted.
+
+**The reading (2026-10-27 01:17 UTC, once, as approved).** On the analytics node, the check clone at `8d82def`: `extract` from 2026-10-24 21:00 copied the 14 new hours (to the end of 00:00 to 01:00 UTC on 27 October; 7 ticker gaps, none of kind `all`); `measure --start 2026-10-25 --end 2026-10-27` with `docs/research/forward-rule.json` and the frozen activity file took 52.8 s for both days with a peak of 14.3 GB; `report`. `book.json` records the activity hash `edf3189cf82aa9f340aaf3b9798c7a0465c17a643e64b5b9ab36e1b9b6e7abf8`, equal to the frozen one. Measured: 25 October 13,834,269 trades and 8,007,274 taker orders, 274,865 trades left out near feed outages (13,834,269 + 274,865 = the day's 14,109,134 copied); 26 October 12,268,181 trades and 6,803,744 taker orders, none left out. All figures are cents a contract, contract-weighted, **before fees**, with 95% intervals from the bootstrap clustered by event.
+
+**Stop rule: go on.** Among the forward rule's own trades, 11.1% of 43,742 cleared levels over 2,491 events were refilled at the same price or better within 1 s (stop above 50%; at least 300 needed).
+
+| Population | Trades | Events | Book shown | Median spread | Median size at level | Half-spread earned |
+|---|---|---|---|---|---|---|
+| forward rule | 226,563 | 2,872 | 99.9% | 1.0 | 693 | +0.98 (+0.91 to +1.05) |
+| middle, 20-80c | 5,116,552 | 5,828 | 100.0% | 1.0 | 115 | +1.51 (+1.40 to +1.61) |
+| busy, 20-80c | 7,017,144 | 1,027 | 100.0% | 1.0 | 4,228 | +0.76 (+0.72 to +0.80) |
+| thin, 20-80c | 378,117 | 2,372 | 98.6% | 4.0 | 57 | +3.14 (+2.90 to +3.44) |
+
+Markouts of the resting maker against the later mid:
+
+| Population | 5 s | 60 s | 600 s |
+|---|---|---|---|
+| forward rule | +0.53 (+0.45 to +0.57) | +0.44 (+0.37 to +0.49) | +0.23 (-1.07 to +0.55) |
+| middle, 20-80c | +0.36 (+0.31 to +0.41) | +0.28 (+0.22 to +0.34) | +0.41 (+0.23 to +0.58) |
+| busy, 20-80c | +0.19 (+0.13 to +0.25) | +0.14 (+0.03 to +0.24) | +0.04 (-0.36 to +0.41) |
+| thin, 20-80c | +0.91 (+0.53 to +1.27) | +0.78 (-0.04 to +1.26) | +1.05 (+0.25 to +1.77) |
+
+An order joining 1 s after the trade, filled within 600 s, and the markouts of the filled ones (strict rule; the queue rule's markouts are within about 0.5 cents of these):
+
+| Population | Joinable | Strict fills | Queue fills | 5 s | 60 s | 600 s |
+|---|---|---|---|---|---|---|
+| forward rule | 219,774 | 34.7% | 36.7% | +0.20 (-0.10 to +0.32) | -0.32 (-0.44 to -0.21) | -2.91 (-6.70 to -1.90) |
+| middle, 20-80c | 4,337,687 | 84.1% | 85.4% | -0.40 (-0.49 to -0.31) | -0.81 (-0.92 to -0.70) | -1.42 (-1.71 to -1.13) |
+| busy, 20-80c | 6,110,173 | 87.0% | 87.7% | -0.27 (-0.36 to -0.17) | -0.61 (-0.76 to -0.45) | -1.00 (-1.46 to -0.52) |
+| thin, 20-80c | 344,364 | 69.3% | 72.4% | +0.01 (-0.52 to +0.45) | -0.81 (-2.10 to -0.11) | -1.98 (-3.30 to -0.74) |
+
+Refills of the levels takers cleared (share refilled at the same price or better within the time):
+
+| Population | Cleared | 0.5 s | 1 s | 2 s | 5 s | 10 s | 60 s | 600 s |
+|---|---|---|---|---|---|---|---|---|
+| forward rule | 43,742 | 8.6% | 11.1% | 13.3% | 18.4% | 22.8% | 38.3% | 62.2% |
+| middle, 20-80c | 411,478 | 16.3% | 26.3% | 32.8% | 42.3% | 49.7% | 67.9% | 83.2% |
+| busy, 20-80c | 135,011 | 19.1% | 33.1% | 41.2% | 51.0% | 57.5% | 74.4% | 88.0% |
+| thin, 20-80c | 64,776 | 9.9% | 13.4% | 16.8% | 23.9% | 29.5% | 51.9% | 73.3% |
+
+**What it says.**
+- *Bots do not requote after every trade* in the forward rule's markets: a cleared level is back within a second one time in nine, and only 62% of the time within ten minutes, slower than the middle and busy tiers. By the stop rule, S1.2 goes ahead (D12).
+- *The maker already resting earns:* a 1-cent spread with deep size, and a positive markout at 5 s and 60 s, before fees.
+- *A maker who joins after the trade is adversely selected.* In the forward rule's markets it fills only about a third of the time (the middle and busy tiers about 85%), and the fills it gets lose 0.3 cents by 60 s and about 2.9 cents by 10 minutes, before fees; in every tier the joiner's 60 s and 600 s markouts are negative. S1.2's gate (D12) asks for a positive 10-minute realized spread after fees, so this is the main risk for S1.2: its simulator must quote before the trade, not chase it, and its fair-value filter has to keep it off the side that is about to be taken. The reading decides nothing about the edge itself; S1.2c's held-out run does.
+- *For S1.2's settings:* the queue rule and the strict rule give fills within about 3 percentage points and markouts within about 0.5 cents of each other, so the fill model's choice is not what decides S1.2; the book is shown at 98.6% or more of trades, so the ticker's top of book suffices to cross-check the recorder.
+
+**Still to do (after the reading).** Two small leftovers, `ONE_E6` in `live/book.py` and the live command line's command list, go into the next slice that touches the live code (S1.2r). The result files stay in the data folder's `results`.
+
 
 ### S1.2p Shared definitions (2026-10-26, done)
 

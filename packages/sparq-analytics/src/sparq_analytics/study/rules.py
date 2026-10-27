@@ -47,18 +47,28 @@ def busy_table(fit: pl.LazyFrame) -> pl.DataFrame:
     )
 
 
+def add_trade_features(frame: pl.LazyFrame) -> pl.LazyFrame:
+    """Add ``quiet_s``, ``first`` and ``ny_hour`` from each trade's UTC time ``t``.
+
+    The one definition of the features a rule reads, for the study and for the live data alike.
+    Trades of a market at the same time keep the frame's order, so a caller that needs a fixed
+    order sorts first.
+    """
+    previous = pl.col("t").shift(1).over("ticker", order_by="t")
+    return frame.with_columns(
+        (pl.col("t") - previous).dt.total_seconds(fractional=True).alias("quiet_s"),
+        previous.is_null().alias("first"),
+        pl.col("t").dt.convert_time_zone("America/New_York").dt.hour().alias("ny_hour"),
+    )
+
+
 def add_rule_features(frame: pl.LazyFrame, busy: pl.DataFrame) -> pl.LazyFrame:
     """Add ``busy``, ``quiet_s``, ``first`` and ``ny_hour`` to a part of the study frame.
 
     A market belongs to one event and an event to one part, so the previous trade of a market is
     always in the same part.
     """
-    previous = pl.col("t").shift(1).over("ticker", order_by="t")
-    return frame.join(busy.lazy(), on="series_ticker", how="left").with_columns(
-        (pl.col("t") - previous).dt.total_seconds(fractional=True).alias("quiet_s"),
-        previous.is_null().alias("first"),
-        pl.col("t").dt.convert_time_zone("America/New_York").dt.hour().alias("ny_hour"),
-    )
+    return add_trade_features(frame.join(busy.lazy(), on="series_ticker", how="left"))
 
 
 @dataclass(frozen=True, slots=True)

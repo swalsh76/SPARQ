@@ -186,7 +186,7 @@ def _share(system: System, backup_target: str) -> Check:
 def run_preflight(system: System, config: DatabaseHost | None = None) -> list[Check]:
     """All checks for the database host. With the answers, the budget, ports and share are checked
     too; without them the report covers the machine alone."""
-    budget = config.storage.budget_gb if config is not None else 500
+    budget = config.storage.budget_gb if config is not None else 700
     ports = network_ports(config) if config is not None else frozenset()
     checks = [
         _os_release(system),

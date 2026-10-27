@@ -9,7 +9,7 @@ retention_full_weeks = 5      # full backups kept, one a week
 encrypt = true               # encrypt the repository on the share; keep the passphrase offline
 
 [database_host.storage]
-budget_gb = 500
+budget_gb = 700
 
 [database_host.postgres]
 port = 5432
