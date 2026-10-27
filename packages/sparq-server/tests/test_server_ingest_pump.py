@@ -287,6 +287,21 @@ async def test_a_subscription_kalshi_will_not_restore_is_recorded_as_a_failed_ga
     assert pump.resubscribe_failures == 1 and pump.stats()["resubscribe_failures"] == 1
 
 
+async def test_a_failed_resubscribe_ends_when_the_next_window_begins(migrated: str) -> None:
+    events: list[FeedEvent] = [
+        ResubscribeFailed("ticker", "[7] no such channel", 2),  # recorded at the clock, NOW
+        frame(2, -30),  # frames of the other channels go on arriving
+        Reconnected(3, "connection_lost", 5.0),
+    ]
+    pump, _, _, _ = pump_for(migrated, events)
+    await pump.run()
+    lost = (await rows(migrated, "SELECT started_at, ended_at FROM gap_log WHERE kind = 'all'"))[0]
+    window = (await rows(migrated, "SELECT started_at FROM gap_log WHERE kind = 'ticker'"))[0]
+    # the lost subscription ends where the reconnect's window starts, at the last frame received
+    assert lost["started_at"] == NOW
+    assert lost["ended_at"] == window["started_at"] == NOW + timedelta(seconds=30)
+
+
 async def test_a_gap_is_still_recorded_when_the_database_is_away_for_a_moment(
     migrated: str,
 ) -> None:

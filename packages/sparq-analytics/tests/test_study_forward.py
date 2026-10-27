@@ -19,8 +19,6 @@ from sparq_analytics.study.forward import (
     write_busy,
 )
 from sparq_analytics.study.rules import (
-    GO,
-    NO_GO,
     Rule,
     RulePrereg,
     add_rule_features,
@@ -31,6 +29,7 @@ from sparq_analytics.study.scan import Grid, ScanRow, choose, grid_from_json, va
 from sparq_analytics.study.segments import PreregistrationError
 from sparq_analytics.study.session import Study
 from sparq_analytics.study.synthetic import World, write_world
+from sparq_analytics.study.verdict import GO, NO_GO
 
 DOCS = Path(__file__).resolve().parents[3] / "docs" / "research"
 S1_1_SHARES = (
@@ -49,6 +48,19 @@ def test_the_s1_1_registration_keeps_the_digest_locked_on_the_analytics_node() -
     rules = rules_from_json(json.loads((DOCS / "middle-tier-rules.json").read_text("utf-8")))
     digest = RulePrereg(rules, config).digest()
     assert digest == "95eec43a8d2d7ebefcdafef1e44a15b22ff218791ca4fc6b2af2a59775942455"
+
+
+def test_the_forward_registration_keeps_its_digest() -> None:
+    """S1.1b's forward test is locked by this digest until its verdict (about 2026-11-26), so
+    no change to the code may move it."""
+    config = StudyConfig(
+        window_start="2026-10-26", window_end="2026-11-23", sample_share=0.0366, sample_seed=1,
+        category_shares=S1_1_SHARES, resamples=10_000, min_events=300,
+    )  # fmt: skip
+    rules = rules_from_json(json.loads((DOCS / "forward-rule.json").read_text("utf-8")))
+    busy = "edf3189cf82aa9f340aaf3b9798c7a0465c17a643e64b5b9ab36e1b9b6e7abf8"
+    digest = ForwardPrereg(rules[0], config, busy).digest()
+    assert digest == "0af9ea44be7fa121f36db9d5d52629e2768da910532eea390a06c9a9b4859b01"
 
 
 def quiet_frame() -> pl.DataFrame:

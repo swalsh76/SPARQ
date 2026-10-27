@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 import httpx
 
 from sparq_core.config import KalshiConfig
-from sparq_core.ratelimit import TokenBucket
+from sparq_core.ratelimit import TokenBucket, backoff
 
 log = logging.getLogger("sparq_core")
 
@@ -148,8 +148,7 @@ class KalshiPublicClient:
 
     def _backoff(self, attempt: int) -> float:
         cfg = self._config
-        delay = min(cfg.backoff_max_seconds, cfg.backoff_base_seconds * (2.0**attempt))
-        return delay * self._jitter()
+        return backoff(attempt, cfg.backoff_base_seconds, cfg.backoff_max_seconds) * self._jitter()
 
     async def get_json(self, path: str, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
         """GET ``path`` (relative to the API base) and return the JSON object.

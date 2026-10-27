@@ -123,18 +123,17 @@ def test_a_bad_or_missing_answer_file_exits_one(
     assert capsys.readouterr().err.count("error:") == 3
 
 
-def test_a_recovery_plan_restores_into_a_new_cluster(
+def test_the_dry_run_refuses_what_the_install_cannot_do_yet(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    text = (
-        'role = "database_host"\n[database_host.backup]\ntarget = "/mnt/sparq-backup"\n'
-        '[database_host.tls]\nmode = "restore"\nrestore_from = "/mnt/sparq-backup/tls"\n'
-        '[database_host.recovery]\nfrom_backup = true\nbackup_set = "20261023-020000F"\n'
-    )
-    assert main(["install", "--answers", str(write(tmp_path, text)), "--dry-run"]) == 0
-    out = capsys.readouterr().out
-    assert "into a NEW cluster" in out and "restore the certificate from" in out
-    assert "initialise a new cluster" not in out
+    base = 'role = "database_host"\n[database_host.backup]\ntarget = "/mnt/sparq-backup"\n'
+    recovery = '[database_host.recovery]\nfrom_backup = true\nbackup_set = "20261023-020000F"\n'
+    tls = '[database_host.tls]\nmode = "restore"\nrestore_from = "/mnt/sparq-backup/tls"\n'
+    # restoring a backup or a certificate is built in K1b: the plan does not promise either
+    for extra, why in ((recovery, "recovery from a backup"), (tls, "restoring the certificate")):
+        assert main(["install", "--answers", str(write(tmp_path, base + extra)), "--dry-run"]) == 2
+        captured = capsys.readouterr()
+        assert f"REFUSING: {why}" in captured.err and captured.out == ""
 
 
 def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPatch) -> None:

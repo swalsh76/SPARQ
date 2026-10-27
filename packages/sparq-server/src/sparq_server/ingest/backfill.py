@@ -25,11 +25,11 @@ from typing import Any
 
 import asyncpg
 from sparq_core.endpoints import MarketData
+from sparq_core.markets import is_combo
 from sparq_core.models import Trade
 
 from sparq_server.ingest import gaps
 from sparq_server.ingest.discovery import store_rejects
-from sparq_server.ingest.records import is_combo
 from sparq_server.ingest.rows import TradeRow, check_trade, floor_ms
 from sparq_server.ingest.writer import IngestWriter
 
@@ -92,7 +92,7 @@ class Backfiller:
         """Run again every trades gap left open or half done; returns how many."""
         conn = await self._connect()
         try:
-            pending = [g for g in await gaps.unfinished(conn) if g.kind == "trades"]
+            pending = [g for g in await gaps.unfinished(conn) if g.kind == gaps.TRADES]
         finally:
             await conn.close()
         for gap in pending:
@@ -124,7 +124,7 @@ class Backfiller:
         conn = await self._connect()
         try:
             gap = await gaps.get(conn, gap_id)
-            if gap is None or gap.kind != "trades":
+            if gap is None or gap.kind != gaps.TRADES:
                 return
             await gaps.mark(conn, gap_id, gaps.BACKFILLING)
             start = gap.started_at - self._config.margin

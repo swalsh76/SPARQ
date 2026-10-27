@@ -10,6 +10,7 @@ resolution-markers = [
 members = [
     "sparq-analytics",
     "sparq-core",
+    "sparq-durability",
     "sparq-server",
     "sparq-workspace",
 ]
@@ -1365,6 +1366,21 @@ requires-dist = [
 ]
 
 [[package]]
+name = "sparq-durability"
+version = "0.0.0"
+source = { editable = "packages/sparq-durability" }
+dependencies = [
+    { name = "asyncpg" },
+    { name = "sparq-server" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asyncpg", specifier = ">=0.30" },
+    { name = "sparq-server", editable = "packages/sparq-server" },
+]
+
+[[package]]
 name = "sparq-server"
 version = "0.0.0"
 source = { editable = "packages/sparq-server" }
@@ -1400,6 +1416,7 @@ dev = [
     { name = "ruff" },
     { name = "sparq-analytics" },
     { name = "sparq-core" },
+    { name = "sparq-durability" },
     { name = "sparq-server" },
 ]
 
@@ -1415,6 +1432,7 @@ dev = [
     { name = "ruff", specifier = ">=0.14" },
     { name = "sparq-analytics", editable = "packages/sparq-analytics" },
     { name = "sparq-core", editable = "packages/sparq-core" },
+    { name = "sparq-durability", editable = "packages/sparq-durability" },
     { name = "sparq-server", editable = "packages/sparq-server" },
 ]
 

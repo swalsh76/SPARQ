@@ -11,6 +11,13 @@ from datetime import datetime
 
 import asyncpg
 
+# kinds: what was missed
+TICKER = "ticker"
+TRADES = "trades"
+LIFECYCLE = "lifecycle"
+ALL = "all"  # every channel (a subscription could not be restored)
+
+# statuses: what became of it
 OPEN = "open"
 BACKFILLING = "backfilling"
 DONE = "done"
@@ -75,6 +82,17 @@ async def finish(
         "WHERE id = $1",
         gap_id, status, found, added, duplicate, note,
     )  # fmt: skip
+
+
+async def close_open(conn: asyncpg.Connection, kind: str, ended_at: datetime) -> int:
+    """Give every gap of ``kind`` that has no end the end ``ended_at``; returns how many.
+
+    A subscription Kalshi would not restore stays lost until the next link subscribes again, so
+    its ``all`` gap ends when a reconnect or a restart opens a new window."""
+    status = await conn.execute(
+        "UPDATE gap_log SET ended_at = $2 WHERE kind = $1 AND ended_at IS NULL", kind, ended_at
+    )
+    return int(status.rsplit(" ", 1)[1])
 
 
 async def mark(conn: asyncpg.Connection, gap_id: int, status: str) -> None:

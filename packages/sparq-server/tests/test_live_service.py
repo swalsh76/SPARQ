@@ -36,7 +36,8 @@ from sparq_core.auth import AuthError, DataSigner
 from sparq_core.config import Environment, KalshiConfig
 from sparq_core.endpoints import MarketData
 from sparq_core.rest import KalshiPublicClient
-from sparq_server.ingest.service import STOPPED_REASON, ServiceConfig, parse_config, supervise
+from sparq_server.ingest.service import ServiceConfig, parse_config, supervise
+from sparq_server.ingest.state import STOPPED_REASON
 
 pytestmark = [pytest.mark.integration, pytest.mark.db]
 

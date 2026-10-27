@@ -1,7 +1,6 @@
 """Opening a connection for the power-cut test, only ever to a test database."""
 
 import asyncpg
-
 from sparq_server.db.guard import check_test_database
 
 TABLE = "durability_rows"

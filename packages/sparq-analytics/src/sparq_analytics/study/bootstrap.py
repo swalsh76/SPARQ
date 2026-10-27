@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+import polars as pl
 from numpy.typing import NDArray
 
 _CELLS_PER_CHUNK = 20_000_000  # bound the size of one block of resampling weights
@@ -36,6 +37,21 @@ class Estimate:
 EMPTY = Estimate(float("nan"), float("nan"), float("nan"), 0, 0)
 
 
+def ratio_and_se(num: NDArray[np.float64], den: NDArray[np.float64]) -> tuple[float, float]:
+    """The ratio of sums over events and its cluster-robust standard error: the root of the summed
+    squared residuals ``numerator - ratio x denominator``, over the total denominator."""
+    total = float(den.sum())
+    ratio = float(num.sum() / total)
+    return ratio, float(np.sqrt(((num - ratio * den) ** 2).sum()) / total)
+
+
+def ratio_and_se_exprs(numerator: pl.Expr, denominator: pl.Expr) -> tuple[pl.Expr, pl.Expr]:
+    """:func:`ratio_and_se` as polars aggregations, for a table of groups of events."""
+    total = denominator.sum()
+    ratio = numerator.sum() / total
+    return ratio, ((numerator - ratio * denominator) ** 2).sum().sqrt() / total
+
+
 def _studentized(
     num: NDArray[np.float64],
     den: NDArray[np.float64],
@@ -54,9 +70,8 @@ def _studentized(
     if n == 0:
         return EMPTY
     total = float(den.sum())
-    point = float(num.sum() / total)
+    point, se = ratio_and_se(num, den)
     contracts = int(total)
-    se = float(np.sqrt(((num - point * den) ** 2).sum()) / total)
     if se == 0.0:
         return Estimate(point, point, point, n, contracts)
     num_sq, num_den, den_sq = num * num, num * den, den * den

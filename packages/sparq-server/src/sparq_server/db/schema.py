@@ -7,6 +7,7 @@ for ``int64``).
 """
 
 import sqlalchemy as sa
+from sparq_core.markets import LABELS, MARKET_INTS, MARKET_TEXT, MARKET_TIMES
 from sqlalchemy.dialects import postgresql
 
 metadata = sa.MetaData()
@@ -38,68 +39,24 @@ fee_change = sa.Table(
     sa.Column("fetched_at", TIMESTAMPTZ),
 )
 
-MARKET_TEXT = [
-    "event_ticker",
-    "series_ticker",
-    "source",
-    "label",
-    "status",
-    "result",
-    "market_type",
-    "title",
-    "yes_sub_title",
-    "no_sub_title",
-    "rules_primary",
-    "rules_secondary",
-    "early_close_condition",
-    "strike_type",
-    "floor_strike",
-    "cap_strike",
-    "price_level_structure",
-]
-MARKET_TIMES = [
-    "created_time",
-    "open_time",
-    "close_time",
-    "expected_expiration_time",
-    "expiration_time",
-    "latest_expiration_time",
-    "occurrence_datetime",
-    "settlement_ts",
-    "updated_time",
-]
-MARKET_BIGINTS = [
-    "settlement_value_e6",
-    "last_price_e6",
-    "previous_price_e6",
-    "yes_bid_e6",
-    "yes_ask_e6",
-    "no_bid_e6",
-    "no_ask_e6",
-    "yes_bid_size_e2",
-    "yes_ask_size_e2",
-    "volume_e2",
-    "volume_24h_e2",
-    "open_interest_e2",
-    "notional_value_e6",
-]
 
-LABELS = ("yes", "no", "scalar", "other_settled", "unsettled")
+def _one_of(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in values)})"
 
+
+# the downloader's market file and this table are one row: the columns come from sparq_core
 market = sa.Table(
     "market",
     metadata,
     sa.Column("ticker", sa.Text, primary_key=True),
-    *[sa.Column(name, sa.Text) for name in MARKET_TEXT],
+    *[sa.Column(name, sa.Text) for name in MARKET_TEXT if name != "ticker"],
     sa.Column("exchange_index", sa.Integer),
     sa.Column("can_close_early", sa.Boolean),
     *[sa.Column(name, TIMESTAMPTZ) for name in MARKET_TIMES],
-    *[sa.Column(name, sa.BigInteger) for name in MARKET_BIGINTS],
+    *[sa.Column(name, sa.BigInteger) for name in MARKET_INTS],
     sa.Column("raw_json", postgresql.JSONB),
     sa.Column("venue", sa.Text, nullable=False, server_default="kalshi"),
-    sa.CheckConstraint(
-        "label IN ('yes', 'no', 'scalar', 'other_settled', 'unsettled')", name="market_label"
-    ),
+    sa.CheckConstraint(_one_of("label", LABELS), name="market_label"),
 )
 
 trade = sa.Table(

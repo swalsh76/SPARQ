@@ -9,6 +9,14 @@ from ipaddress import IPv4Address, IPv6Address
 
 from sparq_server.admin.answers import DatabaseHost
 from sparq_server.admin.versions import POSTGRES_MAJOR
+from sparq_server.names import (
+    ALERT_CREDENTIAL,
+    ALERTS_CONFIG,
+    EXIT_DISK_FULL,
+    EXIT_REFUSED,
+    INGEST_CONFIG,
+    INGEST_CREDENTIALS,
+)
 
 HEADER = "# Managed by sparq-admin. Do not edit: the next install overwrites this file.\n"
 SERVICE_USER = "sparq"
@@ -142,6 +150,16 @@ def render_ident() -> str:
     return HEADER + "# MAPNAME  SYSTEM-USERNAME  PG-USERNAME\n" + "\n".join(rows) + "\n"
 
 
+def cluster_files(spec: ClusterSpec) -> tuple[tuple[str, str, int], ...]:
+    """The files that make a cluster ours, as (path, text, mode): its settings, its access rules
+    and its user map."""
+    return (
+        (conf_path(spec), render_conf(spec), 0o644),
+        (hba_path(spec), render_hba(spec), 0o640),
+        (ident_path(spec), render_ident(), 0o640),
+    )
+
+
 def config_directory(spec: ClusterSpec) -> str:
     return f"/etc/postgresql/{POSTGRES_MAJOR}/{spec.name}"
 
@@ -183,7 +201,7 @@ def clusters_of(config: DatabaseHost) -> list[ClusterSpec]:
 
 
 def data_directory(spec: ClusterSpec) -> str:
-    return f"/var/lib/postgresql/{POSTGRES_MAJOR}/{spec.name}"
+    return f"{DATA_ROOT}/{POSTGRES_MAJOR}/{spec.name}"
 
 
 def repo_path(config: DatabaseHost) -> str:
@@ -286,15 +304,10 @@ def timer_names(config: DatabaseHost) -> list[str]:
 
 # --- the ingest service ---------------------------------------------------------------------------
 
-INGEST_UNIT = "sparq-ingest.service"
-INGEST_CONFIG = "/etc/sparq/ingest.toml"
 CREDENTIALS_DIRECTORY = "/etc/sparq/credentials"
 APP_DIRECTORY = "/opt/sparq/app"
 PYTHON_DIRECTORY = "/opt/sparq/python"  # the interpreter uv installs, readable by the service
 APP_COMMIT_FILE = f"{APP_DIRECTORY}/COMMIT"
-INGEST_CREDENTIALS = ("kalshi-key-id", "kalshi-private-key")  # the names the service reads
-EXIT_DISK_FULL = 75  # service.EXIT_DISK_FULL; the unit must not restart on it
-EXIT_REFUSED = 78  # service.EXIT_REFUSED
 
 
 def credential_file(name: str) -> str:
@@ -359,8 +372,6 @@ def render_ingest_grants_check(role: str, database: str, owner: str) -> str:
 WATCHDOG_SERVICE = "sparq-watchdog.service"
 WATCHDOG_TIMER = "sparq-watchdog.timer"
 ALERT_TEST_SERVICE = "sparq-alert-test.service"
-ALERTS_CONFIG = "/etc/sparq/alerts.toml"
-ALERT_CREDENTIAL = "ntfy-topic"
 
 
 def render_alerts_config(config: DatabaseHost) -> str:
@@ -375,7 +386,16 @@ def render_alerts_config(config: DatabaseHost) -> str:
         + f'data_directory = "{DATA_ROOT}"\n'
         + f"silence_seconds = {config.alerts.silence_seconds}\n"
         + f"disk_warn_percent = {config.alerts.disk_warn_percent}\n"
+        + f"disk_stop_percent = {config.ingest.disk_stop_percent}\n"
     )
+
+
+# the sandbox every unit of ours runs in: no new privileges, a read-only system, no home, no devices
+HARDENING = (
+    "NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n"
+    "PrivateDevices=yes\nProtectKernelTunables=yes\nProtectControlGroups=yes\n"
+    "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nLockPersonality=yes\n"
+)
 
 
 def _watchdog_service(description: str, exec_flag: str) -> str:
@@ -390,9 +410,7 @@ def _watchdog_service(description: str, exec_flag: str) -> str:
         + f"LoadCredentialEncrypted={ALERT_CREDENTIAL}:{credential_file(ALERT_CREDENTIAL)}\n"
         + "StateDirectory=sparq-watchdog\n"
         + "TimeoutStartSec=60\nMemoryMax=256M\n"
-        + "NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n"
-        + "PrivateDevices=yes\nProtectKernelTunables=yes\nProtectControlGroups=yes\n"
-        + "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nLockPersonality=yes\n"
+        + HARDENING
     )
 
 
@@ -452,8 +470,6 @@ def render_ingest_unit() -> str:
         + "Restart=always\nRestartSec=5\n"
         + f"RestartPreventExitStatus={EXIT_DISK_FULL} {EXIT_REFUSED}\n"
         + "TimeoutStopSec=90\nMemoryMax=4G\n"
-        + "NoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\n"
-        + "PrivateDevices=yes\nProtectKernelTunables=yes\nProtectControlGroups=yes\n"
-        + "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6\nLockPersonality=yes\n\n"
-        + "[Install]\nWantedBy=multi-user.target\n"
+        + HARDENING
+        + "\n[Install]\nWantedBy=multi-user.target\n"
     )

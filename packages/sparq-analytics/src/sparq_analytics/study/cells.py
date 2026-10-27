@@ -12,6 +12,7 @@ segments are tested at the corrected tail, on the test part, which none of this 
 
 import polars as pl
 
+from sparq_analytics.study.bootstrap import ratio_and_se_exprs
 from sparq_analytics.study.edge import MEASURES
 
 CELL = ["price_band", "tleft_band", "category", "taker_yes"]
@@ -33,13 +34,8 @@ def cell_table(frame: pl.LazyFrame, minimum_events: int = 30) -> pl.DataFrame:
     outputs: list[pl.Expr] = [pl.len().alias("events"), pl.col("trades").sum().alias("trades")]
     for measure in SHOWN:
         numerator, denominator = MEASURES[measure]
-        total_den = pl.col(denominator).sum()
-        ratio = pl.col(numerator).sum() / total_den
-        residual = (pl.col(numerator) - ratio * pl.col(denominator)) ** 2
-        outputs += [
-            ratio.alias(f"{measure}_e6"),
-            (residual.sum().sqrt() / total_den).alias(f"{measure}_se_e6"),
-        ]
+        ratio, se = ratio_and_se_exprs(pl.col(numerator), pl.col(denominator))
+        outputs += [ratio.alias(f"{measure}_e6"), se.alias(f"{measure}_se_e6")]
     table = per_event.group_by(CELL).agg(outputs).filter(pl.col("events") >= minimum_events)
     for measure in SHOWN:
         table = table.with_columns(

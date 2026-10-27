@@ -1,8 +1,9 @@
-"""The reference tables: rows built the way the downloader builds them, and their upserts.
+"""The reference tables: their rows and their upserts.
 
 ``market`` and ``series`` must hold exactly what the downloader's Parquet files hold, so that K2's
-import of the history is a copy and the live rows and the historical rows are one kind of row.
-A test builds the same markets through the downloader and through here and compares them.
+import of the history is a copy and the live rows and the historical rows are one kind of row. A
+market row is built by :func:`sparq_core.markets.market_values`, the same function the downloader
+uses; a test builds the same markets both ways and compares them.
 
 An upsert stages a chunk with ``COPY`` and merges it with one statement that touches only rows that
 really differ, so a chunk of unchanged markets costs a read and no write. For markets it also
@@ -17,16 +18,14 @@ from datetime import datetime
 from typing import Any
 
 import asyncpg
-from sparq_core.models import Market, Series, SeriesFeeChange
+from sparq_core.markets import MARKET_COLUMNS
+from sparq_core.models import Series, SeriesFeeChange
 
 from sparq_server.db import schema
 from sparq_server.ingest.rows import LIFECYCLE_COLUMNS, LifecycleRow
 
-COMBO_PREFIX = "KXMVE"
-SETTLED_STATUSES = frozenset({"finalized", "settled", "determined"})
 SOURCE_DISCOVERY = "discovery"
 
-MARKET_COLUMNS = tuple(c.name for c in schema.market.columns if c.name != "venue")
 SERIES_COLUMNS = tuple(c.name for c in schema.series.columns)
 FEE_CHANGE_COLUMNS = tuple(c.name for c in schema.fee_change.columns)
 # what is worth a history row when it changes
@@ -35,41 +34,6 @@ TRACKED = (
     "latest_expiration_time", "settlement_ts", "settlement_value_e6", "rules_primary",
     "rules_secondary", "early_close_condition",
 )  # fmt: skip
-
-
-def is_combo(ticker: str) -> bool:
-    return ticker.startswith(COMBO_PREFIX)
-
-
-def series_ticker_of(event_ticker: str | None) -> str | None:
-    """A market's series is the first part of its event ticker."""
-    return event_ticker.split("-")[0] if event_ticker else None
-
-
-def label_of(market: Market) -> str:
-    """The outcome label the study uses (KAPS decision 23)."""
-    if market.result in ("yes", "no", "scalar"):
-        return market.result
-    if market.status in SETTLED_STATUSES:
-        return "other_settled"
-    return "unsettled"
-
-
-def market_record(market: Market, raw: dict[str, Any], source: str) -> tuple[Any, ...]:
-    """One market as a tuple in ``MARKET_COLUMNS`` order."""
-    values: list[Any] = []
-    for name in MARKET_COLUMNS:
-        if name == "series_ticker":
-            values.append(series_ticker_of(market.event_ticker))
-        elif name == "source":
-            values.append(source)
-        elif name == "label":
-            values.append(label_of(market))
-        elif name == "raw_json":
-            values.append(json.dumps(raw, separators=(",", ":")))
-        else:
-            values.append(getattr(market, name))
-    return tuple(values)
 
 
 def series_record(series: Series, fetched_at: datetime) -> tuple[Any, ...]:

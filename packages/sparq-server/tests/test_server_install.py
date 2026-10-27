@@ -6,12 +6,12 @@ from sparq_server.admin import managed
 from sparq_server.admin.answers import Answers, AnswersError, parse_answers
 from sparq_server.admin.install import (
     InstallRefused,
-    clusters,
     plan_install,
     render_outcomes,
     render_plan,
     run_install,
 )
+from sparq_server.admin.pg import clusters
 from sparq_server.admin.versions import PINS
 
 BASE = """
@@ -243,6 +243,16 @@ def test_the_user_map_gives_root_the_superuser_and_the_service_account_the_owner
 def test_clusters_are_read_from_pg_lsclusters() -> None:
     host, _ = installed(TEST)
     assert clusters(host) == {"main": (5432, "online"), "sparq_test": (5433, "online")}
+
+
+def test_the_plan_names_exactly_the_steps_the_install_runs() -> None:
+    for text in (TEST, ""):
+        config = answers(text)
+        planned = list(dict.fromkeys(s.area for s in plan_install(config)))
+        ran = [o.step for o in run_install(FakeHost(), config)]
+        # a step with nothing to say (the test cluster when it is off) runs and is not planned
+        assert planned == [step for step in ran if step in planned]
+        assert set(ran) - set(planned) <= {"test cluster"}
 
 
 def test_the_plan_names_each_area_and_the_pinned_versions() -> None:

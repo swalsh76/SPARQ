@@ -2,8 +2,8 @@
 
 from typing import Any
 
+from sparq_core.markets import MARKET_COLUMNS, market_values
 from sparq_core.models import Market
-from sparq_server.ingest import records
 
 
 def pair(ticker: str, **changes: Any) -> tuple[Market, dict[str, Any]]:
@@ -29,7 +29,7 @@ def pair(ticker: str, **changes: Any) -> tuple[Market, dict[str, Any]]:
 
 
 def test_the_rows_are_the_rows_the_downloader_writes() -> None:
-    from sparq_analytics.history.schemas import MARKETS_SCHEMA, label_of, markets_table
+    from sparq_analytics.history.schemas import markets_table
 
     cases = [
         pair("KXTEST-26OCT24-A"),
@@ -43,11 +43,8 @@ def test_the_rows_are_the_rows_the_downloader_writes() -> None:
         ),
         pair("KXTEST-26OCT22-E", status="closed", result=""),
     ]
+    # what discovery stores, against what the downloader's file holds after a Parquet round trip
     table = markets_table([m for m, _ in cases], [r for _, r in cases], "live").to_pylist()
-    assert list(records.MARKET_COLUMNS) == [n for n in MARKETS_SCHEMA.names]
     for (market, raw), expected in zip(cases, table, strict=True):
-        record = dict(
-            zip(records.MARKET_COLUMNS, records.market_record(market, raw, "live"), strict=True)
-        )
+        record = dict(zip(MARKET_COLUMNS, market_values(market, raw, "live"), strict=True))
         assert record == expected, market.ticker
-        assert records.label_of(market) == label_of(market)

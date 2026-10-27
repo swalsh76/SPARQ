@@ -5,6 +5,7 @@ stored topic, so it proves the credential, the network and the phone together. I
 (it starts a unit) and refuses while the topic is not stored.
 """
 
+from sparq_server import names
 from sparq_server.admin import managed
 from sparq_server.admin.answers import DatabaseHost
 from sparq_server.admin.system import CommandFailed, Host
@@ -20,7 +21,7 @@ def run_alert_test(host: Host, config: DatabaseHost) -> str:
         raise AlertTestRefused("alerts are not enabled in the answer file")
     if not host.is_root():
         raise AlertTestRefused("alert-test must run as root (use sudo)")
-    if not host.exists(managed.credential_file(managed.ALERT_CREDENTIAL)):
+    if not host.exists(managed.credential_file(names.ALERT_CREDENTIAL)):
         raise AlertTestRefused("the alert topic is not stored yet; see the server guide, step 14")
     if not host.exists(f"{managed.SYSTEMD_DIRECTORY}/{managed.ALERT_TEST_SERVICE}"):
         raise AlertTestRefused("the test unit is not installed; run install first")
@@ -28,6 +29,7 @@ def run_alert_test(host: Host, config: DatabaseHost) -> str:
         host.run_checked(["systemctl", "start", managed.ALERT_TEST_SERVICE], timeout=90.0)
     except CommandFailed:
         raise AlertTestRefused(
-            "the test message was not delivered; see: journalctl -u sparq-alert-test -n 20"
+            "the test message was not delivered; see: "
+            f"journalctl -u {managed.ALERT_TEST_SERVICE.removesuffix('.service')} -n 20"
         ) from None
     return f"test message sent through {config.alerts.server}: check your phone"

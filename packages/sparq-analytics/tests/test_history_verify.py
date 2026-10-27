@@ -157,3 +157,20 @@ async def test_only_the_first_few_mismatches_are_listed(rig: MakeRig, fake: Fake
     report = verify(r.downloader.dir, r.downloader.state)
     assert report.reconcile_mismatch_count == 13
     assert len(report.reconcile_mismatched) == 10
+
+
+def test_a_market_is_reconciled_only_when_every_day_of_its_life_was_downloaded() -> None:
+    from datetime import date
+
+    import polars as pl
+    from sparq_analytics.history.verify import _all_days_downloaded
+
+    done = ["2026-10-01", "2026-10-03"]  # the 2nd is missing
+    lives = pl.DataFrame(
+        {
+            "first": [date(2026, 10, 1), date(2026, 10, 1), date(2026, 10, 3), date(2026, 10, 2)],
+            "last": [date(2026, 10, 3), date(2026, 10, 1), date(2026, 10, 3), date(2026, 10, 2)],
+        }
+    )
+    assert _all_days_downloaded(lives, done).to_list() == [False, True, True, False]
+    assert _all_days_downloaded(lives.clear(), done).to_list() == []

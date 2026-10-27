@@ -14,7 +14,6 @@ category's share, and events are resampled within their category (the sampling d
 The rules and every setting are locked by hash in the ledger before the test part is read.
 """
 
-import hashlib
 import json
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -22,12 +21,10 @@ from typing import Any
 import polars as pl
 
 from sparq_analytics.study.bootstrap import EMPTY, Estimate, stratified_bootstrap
-from sparq_analytics.study.config import StudyConfig
+from sparq_analytics.study.config import StudyConfig, sha256_of
 from sparq_analytics.study.segments import PreregistrationError
+from sparq_analytics.study.verdict import outcome
 
-GO = "GO"
-NO_GO = "NO-GO"
-INCONCLUSIVE = "INCONCLUSIVE"
 QUIET_LIMIT_S = 3600  # a market quiet for an hour or more is treated as stale
 PACES = ("any", "human", "never_stale", "first_trade")
 SIDES = ("maker", "taker")
@@ -206,7 +203,7 @@ class RulePrereg:
             "rules": [r.locked() for r in self.rules],
             "config": self.config.digest(),
         }
-        return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        return sha256_of(body)
 
     @property
     def size(self) -> int:
@@ -276,12 +273,7 @@ def evaluate_rule(frame: pl.LazyFrame, rule: Rule, config: StudyConfig, tail: fl
 
 def decide(results: tuple[RuleResult, ...]) -> str:
     """GO if a deciding rule clears zero over enough events; inconclusive if one is short."""
-    deciding = [r for r in results if not r.rule.exploratory]
-    if any(r.go for r in deciding):
-        return GO
-    if any(r.short_of_events for r in deciding):
-        return INCONCLUSIVE
-    return NO_GO
+    return outcome((r.go, r.short_of_events) for r in results if not r.rule.exploratory)
 
 
 def evaluate_rules(frame: pl.LazyFrame, prereg: RulePrereg) -> RuleVerdict:

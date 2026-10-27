@@ -35,11 +35,12 @@ import websockets.asyncio.client
 from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from sparq_core.auth import DataSigner
+from sparq_core.config import WS_URLS, Environment
+from sparq_core.ratelimit import backoff
 from sparq_core.ws_models import Frame, parse_frame
 
 log = logging.getLogger("sparq_core")
 
-DEFAULT_WS_URL = "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
 STABLE_AFTER = 30.0  # a link that lasted this long counts as healthy: the next delay starts over
 
 
@@ -53,7 +54,7 @@ class FeedError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class FeedConfig:
-    url: str = DEFAULT_WS_URL
+    url: str = WS_URLS[Environment.DEMO]  # demo unless production is asked for (CLAUDE.md)
     queue_limit: int = 200_000
     command_timeout: float = 10.0
     idle_timeout: float | None = 60.0  # no frame at all for this long: the link is stalled
@@ -177,6 +178,8 @@ class KalshiFeed:
         self._errors: Counter[str] = Counter()
         self._reasons: Counter[str] = Counter()
         self._high_water = 0
+        if self._config.url == WS_URLS[Environment.PRODUCTION]:
+            log.warning("Kalshi WebSocket feed using the PRODUCTION environment (read-only)")
 
     # --- lifecycle -------------------------------------------------------------------------
 
@@ -360,8 +363,7 @@ class KalshiFeed:
 
     def _backoff(self, attempt: int) -> float:
         cfg = self._config
-        delay = min(cfg.reconnect_max, cfg.reconnect_base * (2.0**attempt))
-        return delay * self._rng.uniform(0.5, 1.0)
+        return backoff(attempt, cfg.reconnect_base, cfg.reconnect_max) * self._rng.uniform(0.5, 1.0)
 
     async def _supervise(self) -> None:
         attempt = 0

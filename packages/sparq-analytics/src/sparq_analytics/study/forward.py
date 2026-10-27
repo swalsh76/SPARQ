@@ -7,14 +7,13 @@ part of the registration, so the forward test cannot shift the tiers it was regi
 test is opened through the same kind of ledger as every other test, once.
 """
 
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
 
-from sparq_analytics.study.config import StudyConfig
+from sparq_analytics.study.config import StudyConfig, sha256_of
 from sparq_analytics.study.dataset import used
 from sparq_analytics.study.edge import add_edges
 from sparq_analytics.study.rules import (
@@ -38,8 +37,7 @@ def write_busy(busy: pl.DataFrame, path: Path) -> str:
 
 def busy_digest(path: Path) -> str:
     """The hash of a frozen activity file's parsed content (so whitespace never counts)."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+    return sha256_of(json.loads(path.read_text(encoding="utf-8")))
 
 
 def read_busy(path: Path) -> pl.DataFrame:
@@ -78,7 +76,7 @@ class ForwardPrereg:
             "config": self.config.digest(),
             "busy": self.busy_hash,
         }
-        return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        return sha256_of(body)
 
     @property
     def size(self) -> int:

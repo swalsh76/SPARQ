@@ -2,44 +2,21 @@ from datetime import UTC, datetime
 
 import pytest
 from sparq_analytics.history.schemas import (
-    COMBO_PREFIX,
+    MARKETS_SCHEMA,
     candles_table,
     fee_changes_table,
-    is_combo,
-    label_of,
     markets_table,
     series_table,
-    series_ticker_of,
     trades_table,
 )
+from sparq_core.markets import MARKET_COLUMNS
 from sparq_core.models import Candlestick, Market, Series, SeriesFeeChange, Trade
 
 WHEN = datetime(2026, 10, 21, 12, tzinfo=UTC)
 
 
-@pytest.mark.parametrize(
-    ("fields", "expected"),
-    [
-        ({"result": "yes", "status": "finalized"}, "yes"),
-        ({"result": "no", "status": "finalized"}, "no"),
-        ({"result": "scalar", "status": "finalized"}, "scalar"),
-        ({"result": "", "status": "finalized"}, "other_settled"),
-        ({"result": "", "status": "determined"}, "other_settled"),
-        ({"result": "", "status": "active"}, "unsettled"),
-        ({}, "unsettled"),
-    ],
-)
-def test_labels(fields: dict[str, str], expected: str) -> None:
-    assert label_of(Market.model_validate({"ticker": "KXA-1", **fields})) == expected
-
-
-def test_combos_and_series_tickers() -> None:
-    assert COMBO_PREFIX == "KXMVE"
-    assert is_combo("KXMVECROSS-1")
-    assert not is_combo("KXBTC-1")
-    assert series_ticker_of("KXBTC15M-26OCT221315") == "KXBTC15M"
-    assert series_ticker_of("") is None
-    assert series_ticker_of(None) is None
+def test_the_market_file_has_the_shared_columns() -> None:
+    assert tuple(MARKETS_SCHEMA.names) == MARKET_COLUMNS
 
 
 def test_a_market_table_keeps_none_as_null_and_the_original_json() -> None:

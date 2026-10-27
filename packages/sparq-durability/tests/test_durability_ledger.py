@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from sparq_server.durability.ledger import (
+from sparq_durability.ledger import (
     ID_SPACE,
     LedgerError,
     Span,

@@ -9,12 +9,12 @@ from pathlib import Path
 
 import asyncpg
 import pytest
+from sparq_durability import writer as writer_module
+from sparq_durability.connection import TABLE, connect
+from sparq_durability.ledger import first_id, merge, read_ledgers, start_ledger
+from sparq_durability.verify import run_pitr_check, run_verify
+from sparq_durability.writer import CREATE, INSERT, WriterRefused, run_writer
 from sparq_server.admin.preflight import Check
-from sparq_server.durability import writer as writer_module
-from sparq_server.durability.connection import TABLE, connect
-from sparq_server.durability.ledger import first_id, merge, read_ledgers, start_ledger
-from sparq_server.durability.verify import run_pitr_check, run_verify
-from sparq_server.durability.writer import CREATE, INSERT, WriterRefused, run_writer
 
 pytestmark = pytest.mark.db
 

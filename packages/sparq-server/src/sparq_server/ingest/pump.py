@@ -25,16 +25,16 @@ from typing import Any, Protocol, TypeVar
 
 import asyncpg
 from sparq_core.ws import Data, FeedEvent, Reconnected, ResubscribeFailed, SequenceGap
+from sparq_core.ws_models import MARKET_LIFECYCLE, TRADE
 
 from sparq_server.ingest import gaps, state
 from sparq_server.ingest.backfill import Backfiller
 from sparq_server.ingest.discovery import DiscoveryRunner
-from sparq_server.ingest.writer import RETRYABLE, IngestWriter
+from sparq_server.ingest.retry import retrying
+from sparq_server.ingest.writer import IngestWriter
 
 log = logging.getLogger("sparq_server")
 T = TypeVar("T")
-TRADE_CHANNEL = "trade"
-LIFECYCLE_CHANNEL = "market_lifecycle_v2"
 
 
 class Feed(Protocol):
@@ -109,7 +109,7 @@ class EventPump:
         """Resume gaps left unfinished, and record the window since the last run stopped."""
         await self._backfiller.requeue_unfinished()
         for gap in await self._db(gaps.unfinished):
-            if gap.kind == "lifecycle":
+            if gap.kind == gaps.LIFECYCLE:
                 self._spawn_lifecycle_recovery(gap.id)
         beat = await self._db(lambda c: state.get_int(c, state.HEARTBEAT))
         if beat is not None:
@@ -138,7 +138,7 @@ class EventPump:
             await self._db(
                 lambda c: gaps.open_gap(
                     c,
-                    "all",
+                    gaps.ALL,
                     self._clock(),
                     None,
                     f"could not resubscribe to {event.channel}",
@@ -155,9 +155,9 @@ class EventPump:
         start = self._last_by_sid.get(event.sid) or self._last_frame or self._clock()
         end = self._clock()
         reason = f"sequence gap: expected {event.expected}, got {event.got}"
-        if channel == TRADE_CHANNEL:
+        if channel == TRADE:
             await self._open_trades_gap(start, end, reason, event.generation)
-        elif channel == LIFECYCLE_CHANNEL:
+        elif channel == MARKET_LIFECYCLE:
             await self._open_lifecycle_gap(start, end, reason, event.generation)
         else:
             log.warning("sequence gap on an unexpected channel %r (sid %d)", channel, event.sid)
@@ -165,11 +165,14 @@ class EventPump:
     async def _open_gaps(
         self, start: datetime, end: datetime, reason: str, generation: int | None
     ) -> None:
+        # a new window subscribes everything again: a subscription that could not be restored
+        # earlier was lost until this window began
+        await self._db(lambda c: gaps.close_open(c, gaps.ALL, start))
         await self._open_trades_gap(start, end, reason, generation)
         await self._db(
             lambda c: gaps.open_gap(
                 c,
-                "ticker",
+                gaps.TICKER,
                 start,
                 end,
                 reason,
@@ -178,25 +181,25 @@ class EventPump:
                 note="ticker data cannot be replayed",
             )  # fmt: skip
         )
-        self.gaps_opened["ticker"] = self.gaps_opened.get("ticker", 0) + 1
+        self.gaps_opened[gaps.TICKER] = self.gaps_opened.get(gaps.TICKER, 0) + 1
         await self._open_lifecycle_gap(start, end, reason, generation)
 
     async def _open_trades_gap(
         self, start: datetime, end: datetime, reason: str, generation: int | None
     ) -> None:
         gap_id = await self._db(
-            lambda c: gaps.open_gap(c, "trades", start, end, reason, generation=generation)
+            lambda c: gaps.open_gap(c, gaps.TRADES, start, end, reason, generation=generation)
         )
-        self.gaps_opened["trades"] = self.gaps_opened.get("trades", 0) + 1
+        self.gaps_opened[gaps.TRADES] = self.gaps_opened.get(gaps.TRADES, 0) + 1
         self._backfiller.submit(gap_id)
 
     async def _open_lifecycle_gap(
         self, start: datetime, end: datetime, reason: str, generation: int | None
     ) -> None:
         gap_id = await self._db(
-            lambda c: gaps.open_gap(c, "lifecycle", start, end, reason, generation=generation)
+            lambda c: gaps.open_gap(c, gaps.LIFECYCLE, start, end, reason, generation=generation)
         )
-        self.gaps_opened["lifecycle"] = self.gaps_opened.get("lifecycle", 0) + 1
+        self.gaps_opened[gaps.LIFECYCLE] = self.gaps_opened.get(gaps.LIFECYCLE, 0) + 1
         self._spawn_lifecycle_recovery(gap_id)
 
     def _spawn_lifecycle_recovery(self, gap_id: int) -> None:
@@ -231,21 +234,26 @@ class EventPump:
         A connection runs one operation at a time, and the main loop and the recovery tasks both
         use this one, so calls are serialised.
         """
+
+        async def once() -> T:
+            if self._conn is None or self._conn.is_closed():
+                self._conn = await self._connect()
+            return await work(self._conn)
+
+        async def reset() -> None:
+            if self._conn is not None:
+                with contextlib.suppress(Exception):
+                    await self._conn.close(timeout=2)
+                self._conn = None
+
         async with self._db_lock:
-            while True:
-                try:
-                    if self._conn is None or self._conn.is_closed():
-                        self._conn = await self._connect()
-                    return await work(self._conn)
-                except RETRYABLE as exc:
-                    log.warning(
-                        "the pump's database call failed (%s); retrying", type(exc).__name__
-                    )
-                    if self._conn is not None:
-                        with contextlib.suppress(Exception):
-                            await self._conn.close(timeout=2)
-                        self._conn = None
-                    await self._sleep(self._retry_every)
+            return await retrying(
+                once,
+                reset=reset,
+                delay=lambda _: self._retry_every,
+                sleep=self._sleep,
+                what="the pump's database call",
+            )
 
     def stats(self) -> dict[str, Any]:
         return {

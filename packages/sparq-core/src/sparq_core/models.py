@@ -57,7 +57,15 @@ Text = Annotated[str | None, BeforeValidator(_blank_is_none)]
 
 
 class Model(BaseModel):
+    """Every Kalshi model, REST and WebSocket: frozen, and blind to fields it does not know."""
+
     model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
+
+
+def check_prices_add_to_a_dollar(yes_e6: int, no_e6: int) -> None:
+    """A trade's yes and no prices must add to exactly one dollar."""
+    if yes_e6 + no_e6 != E6:
+        raise ValueError("yes and no prices do not add to $1")
 
 
 class Market(Model):
@@ -119,34 +127,24 @@ class Trade(Model):
     trade_id: str
     ticker: str
     created_time: AwareDatetime
-    yes_price_e6: int = Field(validation_alias="yes_price_dollars")
-    no_price_e6: int = Field(validation_alias="no_price_dollars")
-    count_e2: int = Field(validation_alias="count_fp")
+    yes_price_e6: RequiredDollarsE6 = Field(validation_alias="yes_price_dollars")
+    no_price_e6: RequiredDollarsE6 = Field(validation_alias="no_price_dollars")
+    count_e2: RequiredCountE2 = Field(validation_alias="count_fp")
     taker_side: Text = None  # yes or no: the taker's outcome side
     taker_book_side: Text = None  # bid or ask
     is_block_trade: bool = False
 
     @model_validator(mode="before")
     @classmethod
-    def _convert(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        data = dict(data)
+    def _outcome_side(cls, data: Any) -> Any:
         # the deprecated ``taker_side`` is the same value as ``taker_outcome_side``
-        data["taker_side"] = data.get("taker_outcome_side") or data.get("taker_side")
-        for key, convert in (
-            ("yes_price_dollars", to_e6),
-            ("no_price_dollars", to_e6),
-            ("count_fp", to_e2),
-        ):
-            if key in data:
-                data[key] = _fixed(convert)(data[key])
+        if isinstance(data, dict):
+            data = {**data, "taker_side": data.get("taker_outcome_side") or data.get("taker_side")}
         return data
 
     @model_validator(mode="after")
     def _prices_add_to_a_dollar(self) -> "Trade":
-        if self.yes_price_e6 + self.no_price_e6 != E6:
-            raise ValueError("yes and no prices do not add to $1")
+        check_prices_add_to_a_dollar(self.yes_price_e6, self.no_price_e6)
         return self
 
 
@@ -218,15 +216,8 @@ class SeriesFeeChange(Model):
     id: str
     series_ticker: str
     fee_type: str
-    fee_multiplier_e6: int = Field(validation_alias="fee_multiplier")
+    fee_multiplier_e6: RequiredDollarsE6 = Field(validation_alias="fee_multiplier")
     scheduled_ts: AwareDatetime
-
-    @model_validator(mode="before")
-    @classmethod
-    def _convert(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "fee_multiplier" in data:
-            data = {**data, "fee_multiplier": _fixed(to_e6)(data["fee_multiplier"])}
-        return data
 
 
 class Event(Model):

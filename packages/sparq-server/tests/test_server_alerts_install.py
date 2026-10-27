@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from fakehost import FakeHost
+from sparq_server import names
 from sparq_server.admin import managed
 from sparq_server.admin.alerts import AlertTestRefused, run_alert_test
 from sparq_server.admin.answers import Answers, AnswersError, parse_answers
@@ -27,7 +28,7 @@ enabled = true
 SERVICE = f"{managed.SYSTEMD_DIRECTORY}/{managed.WATCHDOG_SERVICE}"
 TIMER = f"{managed.SYSTEMD_DIRECTORY}/{managed.WATCHDOG_TIMER}"
 TEST = f"{managed.SYSTEMD_DIRECTORY}/{managed.ALERT_TEST_SERVICE}"
-TOPIC_FILE = managed.credential_file(managed.ALERT_CREDENTIAL)
+TOPIC_FILE = managed.credential_file(names.ALERT_CREDENTIAL)
 
 
 def answers(extra: str = "") -> Answers:
@@ -90,6 +91,24 @@ def test_the_settings_name_the_read_only_role_the_server_and_the_thresholds() ->
     assert "topic" not in text.lower()  # the topic is a credential, never a setting
 
 
+def test_the_watchdog_reads_the_ingests_own_stop_level() -> None:
+    from sparq_server.watchdog import Observation, evaluate
+    from sparq_server.watchdog import parse_config as watchdog_config
+
+    host = answers().installable_host()
+    host = host.model_copy(
+        update={"ingest": host.ingest.model_copy(update={"disk_stop_percent": 85})}
+    )
+    config = watchdog_config(managed.render_alerts_config(host))
+    assert config.disk_stop_percent == 85
+    look = Observation(
+        active=True, state_text="active", restarts=0, db_ok=True, heartbeat_age=1.0,
+        stopped_reason="running", failed_gaps=0, stuck_gaps=0, disk_percent=82.0,
+    )  # fmt: skip
+    (problem,) = evaluate(look, config, [])
+    assert problem.name == "disk" and "stops at 85%" in problem.text
+
+
 def test_the_watchdog_runs_every_minute_as_the_service_account_with_a_credential() -> None:
     units = managed.watchdog_units()
     service, timer = units[SERVICE], units[TIMER]
@@ -121,7 +140,7 @@ def test_without_the_topic_the_files_are_written_and_the_timer_is_left_off() -> 
     host, config = FakeHost(), answers()
     outcomes = {o.step: o for o in run_install(host, config)}
     assert "not started" in outcomes["watchdog"].detail and outcomes["watchdog"].changed
-    for path in (managed.ALERTS_CONFIG, SERVICE, TIMER, TEST):
+    for path in (names.ALERTS_CONFIG, SERVICE, TIMER, TEST):
         assert path in host.files
     assert managed.WATCHDOG_TIMER not in host.enabled and managed.WATCHDOG_TIMER not in host.active
 
@@ -169,7 +188,7 @@ def test_a_timer_that_stopped_is_started_again() -> None:
 def test_with_alerts_off_nothing_is_written() -> None:
     host = FakeHost()
     run_install(host, parse_answers(BASE.split("[database_host.alerts]")[0]))
-    assert managed.ALERTS_CONFIG not in host.files and SERVICE not in host.files
+    assert names.ALERTS_CONFIG not in host.files and SERVICE not in host.files
 
 
 # --- verify -----------------------------------------------------------------------------------
@@ -196,7 +215,7 @@ def test_a_stored_topic_with_the_timer_down_is_a_failure() -> None:
     assert verified(host, config)["alert timer"].status == "fail"
 
 
-@pytest.mark.parametrize("path", [managed.ALERTS_CONFIG, SERVICE, TIMER, TEST])
+@pytest.mark.parametrize("path", [names.ALERTS_CONFIG, SERVICE, TIMER, TEST])
 def test_a_hand_edited_alert_file_is_a_failure(path: str) -> None:
     host, config = installed(topic=True)
     host.files[path] += "# edited"
@@ -268,3 +287,17 @@ def test_the_command_prints_the_result_and_exits_by_it(
     host.files.pop(TOPIC_FILE)
     assert main(["alert-test", "--answers", str(answers_file)], system=host) == 2
     assert "REFUSING" in capsys.readouterr().err
+
+
+def test_every_unit_runs_in_the_full_sandbox() -> None:
+    sandbox = (
+        "NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes",
+        "PrivateDevices=yes", "ProtectKernelTunables=yes", "ProtectControlGroups=yes",
+        "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6", "LockPersonality=yes",
+    )  # fmt: skip
+    units = [managed.render_ingest_unit(), *managed.watchdog_units().values()]
+    for unit in units:
+        if "[Service]" in unit:
+            lines = unit.splitlines()
+            missing = [setting for setting in sandbox if setting not in lines]
+            assert not missing, missing

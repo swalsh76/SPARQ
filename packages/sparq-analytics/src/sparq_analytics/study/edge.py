@@ -18,6 +18,7 @@ conservative share the verdict uses (D13).
 """
 
 import polars as pl
+from sparq_core.fixedpoint import E6
 
 MEASURES = {
     # name: (numerator column, denominator column)
@@ -29,7 +30,6 @@ MEASURES = {
     "mk_pess_nom": ("e_mk_pess_nom", "c_pess"),
     "mk_pess_cons": ("e_mk_pess_cons", "c_pess"),
 }
-_ONE_E6 = 1_000_000
 
 
 def _later_extremes(frame: pl.LazyFrame) -> pl.LazyFrame:
@@ -54,9 +54,9 @@ def add_edges(frame: pl.LazyFrame) -> pl.LazyFrame:
     through = (pl.col("taker_yes") & (pl.col("later_hi") > pl.col("p"))) | (
         ~pl.col("taker_yes") & (pl.col("later_lo") < pl.col("p"))
     )
-    paid = pl.when(pl.col("taker_yes")).then(pl.col("p")).otherwise(_ONE_E6 - pl.col("p"))
+    paid = pl.when(pl.col("taker_yes")).then(pl.col("p")).otherwise(E6 - pl.col("p"))
     won = pl.when(pl.col("taker_yes")).then(pl.col("y")).otherwise(1 - pl.col("y"))
-    gross = pl.col("c") * (won.cast(pl.Int64) * _ONE_E6 - paid)
+    gross = pl.col("c") * (won.cast(pl.Int64) * E6 - paid)
     frame = frame.with_columns(
         through.fill_null(False).alias("filled_pess"),
         gross.alias("gross"),

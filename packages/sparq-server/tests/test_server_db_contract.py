@@ -9,6 +9,7 @@ from sparq_analytics.history.schemas import (
     SERIES_SCHEMA,
     TRADES_SCHEMA,
 )
+from sparq_core.markets import MARKET_COLUMNS
 from sparq_server.db import schema
 from sqlalchemy.dialects import postgresql
 
@@ -74,5 +75,13 @@ def test_the_trade_primary_key_starts_with_the_ticker_and_has_the_time_column() 
     assert keys == ["ticker", "trade_id", "created_time"]
 
 
-def test_the_labels_are_the_ones_the_downloader_writes() -> None:
-    assert schema.LABELS == ("yes", "no", "scalar", "other_settled", "unsettled")
+def test_the_label_check_is_the_one_the_migration_made() -> None:
+    checks = [c for c in schema.market.constraints if isinstance(c, sa.CheckConstraint)]
+    assert [str(c.sqltext) for c in checks] == [
+        "label IN ('yes', 'no', 'scalar', 'other_settled', 'unsettled')"
+    ]
+
+
+def test_the_market_table_has_the_shared_columns_in_order() -> None:
+    names = tuple(c.name for c in schema.market.columns if c.name != "venue")
+    assert names == MARKET_COLUMNS

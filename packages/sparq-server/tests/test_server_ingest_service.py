@@ -8,18 +8,21 @@ from types import SimpleNamespace
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from sparq_core.config import WS_URLS, Environment
+from sparq_server import names
 from sparq_server.ingest import service
 from sparq_server.ingest.service import (
-    EXIT_REFUSED,
     DiskFull,
     ServiceConfig,
     ServiceError,
     disk_guard,
     load_signer,
+    make_feed,
     parse_config,
     run_service,
     used_percent,
 )
+from sparq_server.names import EXIT_REFUSED
 
 GOOD = """
 environment = "production"
@@ -93,6 +96,12 @@ def test_the_key_is_loaded_from_the_credentials_directory(tmp_path: Path) -> Non
     signer = load_signer(tmp_path)
     headers = signer.headers("GET", "/trade-api/ws/v2")
     assert headers["KALSHI-ACCESS-KEY"] == "00000000-key-id"
+
+
+def test_the_service_records_the_production_feed(tmp_path: Path) -> None:
+    write_key(tmp_path)
+    feed = make_feed(parse_config(GOOD), load_signer(tmp_path))
+    assert feed._config.url == WS_URLS[Environment.PRODUCTION]
 
 
 def test_with_no_credentials_directory_the_service_will_not_start() -> None:
@@ -170,13 +179,11 @@ def test_missing_credentials_end_the_process_without_a_restart(
     assert service.main([str(config)]) == EXIT_REFUSED
 
 
-def test_the_exit_codes_the_unit_refuses_to_restart_on_match_the_service() -> None:
+def test_the_unit_does_not_restart_on_the_codes_the_service_stops_with() -> None:
     from sparq_server.admin import managed
 
-    assert (managed.EXIT_DISK_FULL, managed.EXIT_REFUSED) == (
-        service.EXIT_DISK_FULL,
-        service.EXIT_REFUSED,
-    )
+    assert (names.EXIT_DISK_FULL, names.EXIT_REFUSED) == (75, 78)  # EX_TEMPFAIL and EX_CONFIG
+    assert "RestartPreventExitStatus=75 78\n" in managed.render_ingest_unit()
     assert isinstance(parse_config(GOOD), ServiceConfig)
 
 

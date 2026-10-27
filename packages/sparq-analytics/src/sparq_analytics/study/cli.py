@@ -37,6 +37,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+import polars as pl
+
 from sparq_analytics.study import ladder as ladder_module
 from sparq_analytics.study import report
 from sparq_analytics.study.calibration import calibration_table
@@ -53,21 +55,6 @@ from sparq_analytics.study.session import Study
 from sparq_analytics.study.snapshot import build_snapshot, category_stats
 from sparq_analytics.study.split import SplitError
 
-COMMANDS = (
-    "snapshot",
-    "reference",
-    "explore",
-    "register",
-    "verdict",
-    "report",
-    "rules-explore",
-    "rules-register",
-    "rules-verdict",
-    "rules-scan",
-    "forward-register",
-    "forward-verdict",
-)
-
 
 class UsageError(Exception):
     """A bad or incomplete command line."""
@@ -80,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--data-dir", type=Path, default=Path(os.environ.get("SPARQ_DATA_DIR", "data"))
     )
-    parser.add_argument("command", choices=COMMANDS)
+    parser.add_argument("command", choices=list(HANDLERS))
     parser.add_argument("--window-start", help="UTC date; events opened on or after it")
     parser.add_argument("--window-end", help="UTC date; events closed before it")
     parser.add_argument("--fit-end", help="UTC date; events closing before it are the fit part")
@@ -172,11 +159,12 @@ def _segments(path: Path | None) -> tuple[Segment, ...]:
 
 def _study(
     args: argparse.Namespace, root: Path, out: Path, *, explicit: bool
-) -> tuple[Study, StudyConfig]:
+) -> tuple[Study, StudyConfig, pl.LazyFrame]:
+    """The study, its settings and its tagged trades (tagged once: the tagging reads every trade
+    to list the traded markets)."""
     config = _config(args, root, explicit=explicit)
-    return Study(
-        tag_trades(root, config, drop_unsampled=True), config, out / "prereg-ledger.json"
-    ), config
+    tagged = tag_trades(root, config, drop_unsampled=True)
+    return Study(tagged, config, out / "prereg-ledger.json"), config, tagged
 
 
 def _snapshot(args: argparse.Namespace, root: Path, out: Path) -> int:
@@ -196,8 +184,7 @@ def _reference(args: argparse.Namespace, root: Path, out: Path) -> int:
 
 
 def _explore(args: argparse.Namespace, root: Path, out: Path) -> int:
-    study, config = _study(args, root, out, explicit=False)
-    tagged = tag_trades(root, config, drop_unsampled=True)  # the counts are of the sample only
+    study, config, tagged = _study(args, root, out, explicit=False)  # counts of the sample only
     cells = cell_table(study.validate)
     out.mkdir(parents=True, exist_ok=True)
     cells.write_csv(out / "cells-validate.csv")
@@ -387,22 +374,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     root = args.data_dir / "kalshi"
     out = args.study_dir if args.study_dir is not None else args.data_dir / "study"
-    handlers = {
-        "snapshot": _snapshot,
-        "reference": _reference,
-        "explore": _explore,
-        "register": _register,
-        "verdict": _verdict,
-        "report": _report,
-        "rules-explore": _rules_explore,
-        "rules-register": _rules_register,
-        "rules-verdict": _rules_verdict,
-        "rules-scan": _rules_scan,
-        "forward-register": _forward_register,
-        "forward-verdict": _forward_verdict,
-    }
     try:
-        return handlers[args.command](args, root, out)
+        return HANDLERS[args.command](args, root, out)
     except (UsageError, StudyDataError, SplitError, PreregistrationError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+
+
+HANDLERS = {
+    "snapshot": _snapshot,
+    "reference": _reference,
+    "explore": _explore,
+    "register": _register,
+    "verdict": _verdict,
+    "report": _report,
+    "rules-explore": _rules_explore,
+    "rules-register": _rules_register,
+    "rules-verdict": _rules_verdict,
+    "rules-scan": _rules_scan,
+    "forward-register": _forward_register,
+    "forward-verdict": _forward_verdict,
+}

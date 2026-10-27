@@ -6,10 +6,9 @@ under-priced yes. The columns that cluster the intervals by event live in :mod:`
 """
 
 import polars as pl
+from sparq_core.fixedpoint import E6
 
-from sparq_analytics.study.config import StudyConfig
-
-E6 = 1_000_000
+from sparq_analytics.study.config import CENT_E6, StudyConfig
 
 
 def weight(frame: pl.LazyFrame) -> pl.Expr:
@@ -48,5 +47,5 @@ def calibration_table(frame: pl.LazyFrame, by: list[str]) -> pl.DataFrame:
 
 def band_labels(config: StudyConfig) -> list[str]:
     """Readable names of the price bands, in cents, in band-number order."""
-    edges = [e // 10_000 for e in config.price_edges_e6]
+    edges = [e // CENT_E6 for e in config.price_edges_e6]
     return [f"{lo}-{hi}c" for lo, hi in zip(edges, edges[1:], strict=False)]

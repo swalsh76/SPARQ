@@ -23,6 +23,12 @@ REST_URLS: dict[Environment, str] = {
     Environment.DEMO: "https://external-api.demo.kalshi.co/trade-api/v2",
     Environment.PRODUCTION: "https://external-api.kalshi.com/trade-api/v2",
 }
+# the demo address is from Kalshi's demo-environment page (checked 2026-10-26); production was
+# used live from K1a.5
+WS_URLS: dict[Environment, str] = {
+    Environment.DEMO: "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2",
+    Environment.PRODUCTION: "wss://external-api-ws.kalshi.com/trade-api/ws/v2",
+}
 
 # Measured live (BUILD-LOG K0.5.3c and K0.5.4): the historical trades endpoint held 10 requests a
 # second for a full minute, but the live trades endpoint and both markets listings answered 429
@@ -71,8 +77,20 @@ class KalshiConfig:
         return REST_URLS[self.environment]
 
     @property
+    def ws_url(self) -> str:
+        return WS_URLS[self.environment]
+
+    @property
     def is_production(self) -> bool:
         return self.environment is Environment.PRODUCTION
+
+    @classmethod
+    def at_rate(cls, rate: float, environment: Environment = Environment.DEMO) -> "KalshiConfig":
+        """A client paced at ``rate`` requests a second, with a second's worth of burst (at least
+        one request, so a rate below one a second is valid too)."""
+        return cls(
+            environment=environment, rate_limit_per_second=rate, burst_requests=max(rate, 1.0)
+        )
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "KalshiConfig":
@@ -94,6 +112,4 @@ class KalshiConfig:
             raise ConfigError(
                 f"SPARQ_RATE_LIMIT_PER_SECOND must be a number, got {raw_rate!r}"
             ) from None
-        return cls(
-            environment=environment, rate_limit_per_second=rate, burst_requests=max(rate, 1.0)
-        )
+        return cls.at_rate(rate, environment)

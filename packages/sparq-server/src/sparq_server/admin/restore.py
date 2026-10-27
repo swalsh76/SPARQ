@@ -18,15 +18,9 @@ from dataclasses import dataclass
 
 from sparq_server.admin import managed
 from sparq_server.admin.answers import DatabaseHost
-from sparq_server.admin.install import (
-    as_postgres,
-    clusters,
-    psql,
-    stanza_info,
-    write_if_different,
-)
+from sparq_server.admin.pg import as_postgres, clusters, psql, stanza_info
 from sparq_server.admin.preflight import Check
-from sparq_server.admin.system import CommandFailed, Host
+from sparq_server.admin.system import CommandFailed, Host, write_if_different
 from sparq_server.admin.versions import POSTGRES_MAJOR
 
 DRILL_PREFIX = "drill_"
@@ -188,11 +182,7 @@ def run_drill(
                 "--data-checksums",
             ]  # fmt: skip
         )
-        for path, text, mode in (
-            (managed.conf_path(drill), managed.render_conf(drill), 0o644),
-            (managed.hba_path(drill), managed.render_hba(drill), 0o640),
-            (managed.ident_path(drill), managed.render_ident(), 0o640),
-        ):
+        for path, text, mode in managed.cluster_files(drill):
             write_if_different(host, path, text, mode, "postgres", "postgres")
         host.run(["pg_ctlcluster", str(POSTGRES_MAJOR), drill.name, "stop"])
         host.run_checked(
