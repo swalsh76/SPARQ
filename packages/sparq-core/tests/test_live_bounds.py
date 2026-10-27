@@ -1,6 +1,6 @@
 """Opt-in live checks of what Kalshi's documentation does not say (GET only, no key).
 
-    $env:KALSHI_INTEGRATION = '1'; $env:SPARQ_LIVE_SUMMARY = "$env:TEMP\\sparq-live-summary.txt"
+    $env:SPARQ_LIVE = '1'; $env:SPARQ_LIVE_SUMMARY = "$env:TEMP\\sparq-live-summary.txt"
     python -m uv run pytest packages/sparq-core/tests/test_live_bounds.py -q
 
 * Are ``min_ts`` and ``max_ts`` inclusive on the trades endpoints? Found by fetching a wide window

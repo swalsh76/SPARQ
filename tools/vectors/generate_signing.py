@@ -38,7 +38,7 @@ ALLOWED = [  # read routes, with and without a query string
     f"{API}/exchange/schedule",
     f"{API}/historical/cutoff",
     f"{API}/historical/trades?limit=1000",
-    f"{API}/account/limits",
+    f"{API}/historical/markets/KXHIGHNY-26OCT24-T70/candlesticks",
     "/trade-api/ws/v2",
 ]
 REFUSED_PATHS = [  # a data key must never sign these, even for a GET
@@ -47,6 +47,10 @@ REFUSED_PATHS = [  # a data key must never sign these, even for a GET
     f"{API}/portfolio/positions",
     f"{API}/portfolio/fills",
     f"{API}/account",
+    f"{API}/account/limits",  # account data: refused since S2.h (IKARS's review)
+    f"{API}/historical/fills",  # the account archives under /historical
+    f"{API}/historical/orders",
+    f"{API}/historical/positions",
     f"{API}/markets/../portfolio/orders",
     f"{API}/markets/./x",
     f"{API}/marketsX",

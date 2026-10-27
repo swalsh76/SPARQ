@@ -38,6 +38,12 @@ jobs:
       - name: Types
         run: uv run mypy packages
 
+      # Known vulnerabilities in the locked dependencies (S2.h, as in IKARS); a finding fails the job.
+      # Once per run is enough: the lock is the same on both systems.
+      - name: Known vulnerabilities
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run pip-audit --skip-editable --progress-spinner off
+
       # No database here, so the tests of code that talks to PostgreSQL are skipped and their code
       # looks uncovered. The overall 90% gate is enforced in the database job, where the whole
       # suite runs; this job keeps the 95% gate on the money and fee code, which needs no database.

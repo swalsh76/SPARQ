@@ -23,11 +23,15 @@ def _blank_is_none(value: Any) -> Any:
     return None if value == "" else value
 
 
-def _fixed(convert: Any) -> Any:
+def _fixed(convert: Any, *, text_only: bool = False) -> Any:
     def parse(value: Any) -> int | None:
         value = _blank_is_none(value)
         if value is None:
             return None
+        if text_only and not isinstance(value, str):
+            # Kalshi sends every dollar price as text (all 18.8 million market records of the
+            # history download, checked 2026-10-27); a bare number could be cents read as dollars
+            raise ValueError(f"a dollar price must arrive as text, not {type(value).__name__}")
         try:
             return int(convert(value))
         except TypeError as exc:  # a bool or float: not a value we can trust to be exact
@@ -42,12 +46,17 @@ def _unix(value: Any) -> Any:
     return _blank_is_none(value)
 
 
-OptDollarsE6 = Annotated[int | None, BeforeValidator(_fixed(to_e6))]
-"""Dollars in millionths, or None when the field is absent or blank."""
+OptDollarsE6 = Annotated[int | None, BeforeValidator(_fixed(to_e6, text_only=True))]
+"""A dollar price in millionths, from text only, or None when the field is absent or blank."""
 OptCountE2 = Annotated[int | None, BeforeValidator(_fixed(to_e2))]
 """Contracts in hundredths, or None."""
-RequiredDollarsE6 = Annotated[int, BeforeValidator(_fixed(to_e6))]
-"""Dollars in millionths; the field is required."""
+RequiredDollarsE6 = Annotated[int, BeforeValidator(_fixed(to_e6, text_only=True))]
+"""A dollar price in millionths, from text only; the field is required."""
+OptAmountE6 = Annotated[int | None, BeforeValidator(_fixed(to_e6))]
+"""A number in millionths that Kalshi may send as a bare number (a fee multiplier, the ticker's
+whole-dollar volumes), or None."""
+RequiredAmountE6 = Annotated[int, BeforeValidator(_fixed(to_e6))]
+"""As ``OptAmountE6``; the field is required."""
 RequiredCountE2 = Annotated[int, BeforeValidator(_fixed(to_e2))]
 """Contracts in hundredths; the field is required."""
 Moment = Annotated[AwareDatetime | None, BeforeValidator(_blank_is_none)]
@@ -209,14 +218,14 @@ class Series(Model):
     ] = []  # null in 17% of series
     exchange_index: int | None = None
     fee_type: Text = None
-    fee_multiplier_e6: OptDollarsE6 = Field(default=None, validation_alias="fee_multiplier")
+    fee_multiplier_e6: OptAmountE6 = Field(default=None, validation_alias="fee_multiplier")
 
 
 class SeriesFeeChange(Model):
     id: str
     series_ticker: str
     fee_type: str
-    fee_multiplier_e6: RequiredDollarsE6 = Field(validation_alias="fee_multiplier")
+    fee_multiplier_e6: RequiredAmountE6 = Field(validation_alias="fee_multiplier")
     scheduled_ts: AwareDatetime
 
 

@@ -1,0 +1,12 @@
+# Weekly update pull requests for the workflow actions and the uv lock (S2.h). Dependabot only
+# opens pull requests: each is reviewed and merged by the owner like any other change.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly

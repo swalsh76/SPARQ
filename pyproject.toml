@@ -13,6 +13,7 @@ dev = [
     "sparq-durability",
     "hypothesis>=6.140",
     "mypy>=1.18",
+    "pip-audit>=2.9",
     "pytest>=8.4",
     "pytest-asyncio>=1.2",
     "pytest-cov>=7.0",
@@ -64,7 +65,7 @@ asyncio_mode = "auto"
 testpaths = ["packages"]
 addopts = "--import-mode=importlib"
 markers = [
-    "integration: hits the real Kalshi API (opt-in via KALSHI_INTEGRATION=1)",
+    "integration: hits the real Kalshi API (opt-in via SPARQ_LIVE=1)",
     "db: needs a PostgreSQL + TimescaleDB server (opt-in via SPARQ_TEST_DATABASE_URL)",
 ]
 
