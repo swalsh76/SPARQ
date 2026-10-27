@@ -238,7 +238,7 @@ The owner asked on 2026-10-26 to fix every outstanding item of the two code revi
   - Houston's rain moved from Bush Intercontinental (`CLIIAH`, to 2026-08-13) to Hobby (`CLIHOU`).
   - Chicago's rain is O'Hare, while Chicago's high is Midway.
   - The highs' rules switched from the NWS report to The Weather Company on 2026-08-15.
-- *Download.* 39 stations, 2026-08-01 to 2026-10-23: 90,297 reports, 2.2 MB, in under two minutes (plus `KDJT` on its own).
+- *Download.* 2026-08-01 to 2026-10-23: 87,990 reports from 38 stations (`KPBI` had none), then 2,307 from `KDJT`. That is 90,297 in all, 2.2 MB, in under two minutes.
 - *Check on the fit part* (2026-08-07 to 2026-09-28): 8,397 settled markets, all with a station and reports.
   - With W4's margins the bounds settle 2,243 under the standard day and 2,244 under the civil day, and **none is wrong**.
   - Without the 1 °F margin, one call is wrong under the standard day: `KXHIGHNY-26AUG27-T80`, "below 80", settled YES although an hourly report put Central Park at 80 °F or more. The civil day adds `KXHIGHTDC-26SEP22-T66`. The Weather Company's daily maximum can come in below an hourly reading, so the margin is needed.
