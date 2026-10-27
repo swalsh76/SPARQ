@@ -287,7 +287,12 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 - Live, under `SPARQ_LIVE=1`:
   - `test_live_public`: 5 passed. Of 11,000 dollar prices read raw from an open-markets page and a trades page, none was a bare number.
   - `test_live_bounds`: 4 passed; the time bounds, page sizes and cursor rules are unchanged.
-- The signed WebSocket check (`test_live_ws`) was skipped: `SPARQ_KALSHI_KEY_ID` and `SPARQ_KALSHI_PRIVATE_KEY_PATH` are not set yet (the owner's step).
+- **The signed WebSocket check (`test_live_ws`), after the owner set `SPARQ_KALSHI_KEY_ID` and `SPARQ_KALSHI_PRIVATE_KEY_PATH` (2026-10-27):** 4 passed.
+  - A signed market read returned HTTP 200, and the data key refused to sign `/account/limits`.
+  - 30 s of ticker, trade and lifecycle frames, with no parse errors, no unknown fields and no sequence gaps.
+  - Frames arrived 36 to 39 ms after `sending_ts_ms`.
+  - A forced reconnect reported no false gaps, and adding and removing markets is not a gap.
+  - *Fix found by this run:* the live test had proved the key by signing `/account/limits`, which S2.h refuses. It now checks that refusal offline and proves the key with a signed market read (follow-up PR). CI does not run live tests, so this showed only here.
 
 **Live facts carried from IKARS, for later slices.**
 - Production book messages have no `clock` yet (Kalshi's changelog dates it 2026-10-29).

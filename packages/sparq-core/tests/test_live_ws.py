@@ -24,7 +24,7 @@ from typing import Any
 
 import httpx
 import pytest
-from sparq_core.auth import AuthError, DataSigner
+from sparq_core.auth import AuthError, DataSigner, SigningRefused
 from sparq_core.config import REST_URLS, WS_URLS, Environment
 from sparq_core.ws import Data, FeedConfig, KalshiFeed, Reconnected, SequenceGap
 
@@ -61,13 +61,15 @@ def busiest_markets(count: int) -> list[str]:
 
 
 def test_the_data_key_is_accepted_for_a_read(signer: DataSigner) -> None:
-    path = "/trade-api/v2/account/limits"
+    # account data, the limits included, is never signed by the data key (S2.h); a signed market
+    # read is accepted, and the handshake tests below prove the signature on the WebSocket
+    with pytest.raises(SigningRefused):
+        signer.headers("GET", "/trade-api/v2/account/limits")
+    path = "/trade-api/v2/exchange/status"
     response = httpx.get(
         "https://external-api.kalshi.com" + path, headers=signer.headers("GET", path), timeout=30
     )
     LINES.append(f"signed GET {path}: HTTP {response.status_code}")
-    if response.status_code == 200:
-        LINES.append(f"fields in the reply: {sorted(response.json())}")
     assert response.status_code == 200
 
 
