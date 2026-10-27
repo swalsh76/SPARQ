@@ -250,3 +250,50 @@ The owner asked on 2026-10-26 to fix every outstanding item of the two code revi
 - `KPBI` returned no reports; the live feed and the archive both carry the station as `KDJT`.
 
 **Still to do in S2.1.** After the delay run ends: `delay-report` (the delays and the comparison of live reports with the archive), the W4 delay for the history, and the PLAN row; then the PR.
+
+### S2.h Core hardening from IKARS's review (2026-10-27, owner approved; done)
+
+**Why.** IKARS (the owner's sibling project) seeded its core from SPARQ's `sparq-core` at `c017add`. Its live checks and merge review (IKARS BUILD-LOG M1.2) found weaknesses that were still in SPARQ. Each was checked against SPARQ's code before the slice, and the owner added the slice ahead of S2.2.
+
+**Built.**
+1. **One table of public market-data routes** (`auth.public_route`), used by both the data signer and the public client's guard; before, there were two tables with different rules.
+   - Under `/historical`, only `cutoff`, `markets` and `trades` (and their sub-paths) are allowed. `/historical/fills`, `/orders` and `/positions` are account archives, and the old patterns allowed anything under `/historical`.
+   - `/account/limits` came off the data key, which can now sign no account read at all.
+   - The signing vectors' specification (`tools/vectors/generate_signing.py`) moves `/account/limits` to the refused cases and adds the three archives. It was regenerated from the KalshiTerm2 reference: 280 cases, 150 refused.
+2. **Market-data channels only on the WebSocket** (`ws_models.MARKET_DATA_CHANNELS`: ticker, trade, market and event lifecycle, the combo lifecycle, `orderbook_delta`). `subscribe` refuses any other channel before sending anything.
+3. **No key path in any error.** A missing, unreadable, too-open or malformed key file is "the private key file", and the `chmod` hint names `$SPARQ_KALSHI_PRIVATE_KEY_PATH`. The underlying exception is not chained, since its text carries the path.
+4. **Key-id checks.** The constructor refuses quotes and spaces, and the environment loader requires Kalshi's UUID form. The reason (`key_id_problem`) never contains the id.
+5. **SPARQ's own variables:** `SPARQ_KALSHI_ENV`, `SPARQ_LIVE` (exactly `1`), `SPARQ_KALSHI_KEY_ID` and `SPARQ_KALSHI_PRIVATE_KEY_PATH`. KAPS's `KALSHI_*` variables no longer reach SPARQ. CLAUDE.md's commands follow.
+6. **Real markers only** for the opt-in tests (`get_closest_marker`), in all four conftests.
+7. **Dollar prices take text only** (`OptDollarsE6`, `RequiredDollarsE6`). Numbers Kalshi really sends as numbers use the new `OptAmountE6` and `RequiredAmountE6`: the fee multiplier, and the ticker's whole-dollar `dollar_volume` and `dollar_open_interest`.
+8. **The rate-limit ramp test is deleted.**
+9. **CI:** a `pip-audit` step on the Ubuntu job (`pip-audit` 2.10.1, Apache-2.0, released 2026-06-10, dev only), and `.github/dependabot.yml` (weekly, GitHub Actions and the uv lock; pull requests only).
+
+**What was kept, changed and why.** Kept from IKARS: the route table, the channel set and the key-id check, nearly as written. Changed:
+- SPARQ has no account reader, so the account routes are simply refused rather than moved to a second signer.
+- The text-only rule covers dollar prices, not just account amounts as in IKARS, because the real data supports it (below).
+- Fields that legitimately arrive as numbers keep a separate type.
+
+Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its account models and its book code (none in SPARQ yet; lessons for S1.3 and S1.2b).
+
+**Verified (local).**
+- New tests: account archives and limits refused by the signer and the client; private channels refused with nothing sent; no path in four key errors; key-id reasons that never show the id; KAPS's variables ignored for the environment and the key; bare numbers refused in market and trade prices, while multipliers still accept them.
+- 14 planted bugs, all caught.
+- The full suite: 1,770 passed and 195 skipped. Ruff and mypy are clean; money and fees are at 100%.
+- `pip-audit`: no known vulnerabilities.
+
+**Verified (real data and live).**
+- All 18,847,879 market records of the history download on the analytics node send their `*_dollars` fields as text, none as a bare number.
+- Live, under `SPARQ_LIVE=1`:
+  - `test_live_public`: 5 passed. Of 11,000 dollar prices read raw from an open-markets page and a trades page, none was a bare number.
+  - `test_live_bounds`: 4 passed; the time bounds, page sizes and cursor rules are unchanged.
+- The signed WebSocket check (`test_live_ws`) was skipped: `SPARQ_KALSHI_KEY_ID` and `SPARQ_KALSHI_PRIVATE_KEY_PATH` are not set yet (the owner's step).
+
+**Live facts carried from IKARS, for later slices.**
+- Production book messages have no `clock` yet (Kalshi's changelog dates it 2026-10-29).
+- Both sides of the book are bids.
+- Book deltas run at up to 783 a second on 15-minute crypto markets.
+- Messages arrive about 46 ms after `sending_ts_ms`.
+- The Basic API tier allows reads at 200 tokens a second (burst 600) and writes at 100 (burst 100).
+
+**Problems and fixes.** The private-channel test first expected no commands at all; the fake server records commands per connection, so "nothing sent" is `[[]]`.

@@ -1,6 +1,6 @@
 """Opt-in: the real feed, all markets, into a test database through the real writer.
 
-    $env:KALSHI_INTEGRATION = '1'            # and KALSHI_KEY_ID, KALSHI_PRIVATE_KEY_PATH
+    $env:SPARQ_LIVE = '1'            # and SPARQ_KALSHI_KEY_ID, SPARQ_KALSHI_PRIVATE_KEY_PATH
     $env:SPARQ_TEST_DATABASE_URL = '...'      # a test database (the guard refuses any other)
     pytest packages/sparq-server/tests/test_live_ingest.py -q
 
@@ -51,12 +51,12 @@ async def scalar(url: str, statement: str) -> Any:
 async def test_every_market_through_the_feed_and_the_writer_into_the_database(
     migrated: str,
 ) -> None:
-    if os.environ.get("KALSHI_INTEGRATION") != "1":
-        pytest.skip("live test: set KALSHI_INTEGRATION=1 to run")
+    if os.environ.get("SPARQ_LIVE") != "1":
+        pytest.skip("live test: set SPARQ_LIVE=1 to run")
     try:
         signer = DataSigner.from_environment()
     except AuthError:
-        pytest.skip("no usable data key in KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH")
+        pytest.skip("no usable data key in SPARQ_KALSHI_KEY_ID and SPARQ_KALSHI_PRIVATE_KEY_PATH")
 
     async def connect() -> asyncpg.Connection:
         return await asyncpg.connect(dsn(migrated))

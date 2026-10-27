@@ -3,11 +3,13 @@
 Kalshi signs a request as ``timestamp + METHOD + path`` (the query string is not part of it).
 The data key lives on the server host, so what it can sign is limited here and not left to the
 caller: a data signer signs only a GET to a read route in the allow-list below, or the WebSocket
-handshake. It can never sign a POST, a DELETE, an order route or a portfolio route (balances,
-positions and orders), so even a bug elsewhere cannot make the data key place an order or read an
-account value. The trading client, when it exists (K7), is a separate class with its own key.
+handshake. It can never sign a POST, a DELETE, an order route or any account read (balances,
+positions, orders, fills, the account's limits, and their ``/historical`` archives), so even a bug
+elsewhere cannot make the data key place an order or read an account value. The trading client, when
+it exists (S1.3), is a separate class with its own key.
 
 Every key file must be readable by its owner alone on a POSIX machine, not only the trading key.
+No error names the key file's path or shows the key id (CLAUDE.md): only what is wrong with them.
 """
 
 import base64
@@ -30,10 +32,18 @@ WS_PATH = "/trade-api/ws/v2"
 
 # A path segment may not start with a dot, so ``.`` and ``..`` can never appear in a signed path.
 _SEGMENT = r"[A-Za-z0-9_\-][A-Za-z0-9_.\-]*"
-_READ_ROUTES = re.compile(
-    rf"{re.escape(API_PREFIX)}/(?:(?:markets|events|series|exchange|historical)(?:/{_SEGMENT})*"
-    r"|account/limits)"
+# The one table of public market-data reads: the data signer and the public client's guard both
+# use it. Under /historical only the cutoff, markets and trades are market data: /historical/fills,
+# /orders and /positions are account archives (found by IKARS's review of this code, 2026-10-26).
+_PUBLIC_ROUTES = re.compile(
+    rf"{re.escape(API_PREFIX)}/(?:markets|events|series|exchange"
+    rf"|historical/(?:cutoff|markets|trades))(?:/{_SEGMENT})*"
 )
+# A Kalshi API key id is a UUID; a pasted value often keeps its quotes (a 401 with no reason).
+_KEY_ID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+_QUOTES_OR_SPACE = re.compile(r"[\"'`\s]")
+KEY_ID_VARIABLE = "SPARQ_KALSHI_KEY_ID"
+KEY_PATH_VARIABLE = "SPARQ_KALSHI_PRIVATE_KEY_PATH"
 
 
 class AuthError(Exception):
@@ -44,9 +54,25 @@ class SigningRefused(AuthError):
     """The data key was asked to sign something it must never sign."""
 
 
+def public_route(path: str) -> bool:
+    """Is ``path`` (a full URL path, query string removed) a public market-data read?"""
+    return _PUBLIC_ROUTES.fullmatch(path) is not None
+
+
 def read_route(path: str) -> bool:
     """Is ``path`` (query string removed) a route the data key may sign for a GET?"""
-    return path == WS_PATH or _READ_ROUTES.fullmatch(path) is not None
+    return path == WS_PATH or public_route(path)
+
+
+def key_id_problem(key_id: str) -> str | None:
+    """What is wrong with a key id, in words that never show it; None for a Kalshi key id."""
+    if _KEY_ID.fullmatch(key_id):
+        return None
+    if _QUOTES_OR_SPACE.search(key_id):
+        return "it has quotes or spaces in it (was it pasted with its quotes?)"
+    if len(key_id) != 36:
+        return f"it is {len(key_id)} characters, not 36"
+    return "it is 36 characters but not in the 8-4-4-4-12 hexadecimal form"
 
 
 def parse_private_key(data: bytes, source: str) -> Ed25519PrivateKey:
@@ -74,12 +100,14 @@ def load_private_key(path: Path) -> Ed25519PrivateKey:
         mode = stat.S_IMODE(target.stat().st_mode)
         data = target.read_bytes()
     except OSError as exc:
-        raise AuthError(f"cannot read private key file {path}: {exc.strerror}") from exc
+        # strerror only: the exception's own text would carry the path
+        raise AuthError(f"cannot read the private key file: {exc.strerror}") from None
     if os.name == "posix" and mode & 0o077:
         raise AuthError(
-            f"{path} is readable by other users (mode {mode:03o}); run: chmod 600 {path}"
+            f"the private key file is readable by other users (mode {mode:03o}); "
+            f'run: chmod 600 "${KEY_PATH_VARIABLE}"'
         )
-    return parse_private_key(data, str(path))
+    return parse_private_key(data, "the private key file")
 
 
 def _now_ms() -> int:
@@ -103,6 +131,10 @@ class DataSigner:
     ) -> None:
         if not key_id.strip():
             raise AuthError("the key id is empty")
+        if _QUOTES_OR_SPACE.search(key_id.strip()):
+            raise AuthError(
+                "the key id has quotes or spaces in it (was it pasted with its quotes?)"
+            )
         self._key_id = key_id.strip()
         self._key = private_key
         self._now_ms = now_ms
@@ -110,11 +142,14 @@ class DataSigner:
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> "DataSigner":
-        """From ``KALSHI_KEY_ID`` and ``KALSHI_PRIVATE_KEY_PATH``."""
+        """From ``SPARQ_KALSHI_KEY_ID`` and ``SPARQ_KALSHI_PRIVATE_KEY_PATH`` (SPARQ's own names, so
+        another project's ``KALSHI_*`` variables on the same machine never reach it)."""
         env = os.environ if environ is None else environ
-        key_id, path = env.get("KALSHI_KEY_ID", ""), env.get("KALSHI_PRIVATE_KEY_PATH", "")
+        key_id, path = env.get(KEY_ID_VARIABLE, ""), env.get(KEY_PATH_VARIABLE, "")
         if not key_id or not path:
-            raise AuthError("KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH must both be set")
+            raise AuthError(f"{KEY_ID_VARIABLE} and {KEY_PATH_VARIABLE} must both be set")
+        if problem := key_id_problem(key_id.strip()):
+            raise AuthError(f"{KEY_ID_VARIABLE} is not a Kalshi key id: {problem}")
         return cls(key_id, load_private_key(Path(path)))
 
     def headers(self, method: str, path: str, *, timestamp_ms: int | None = None) -> dict[str, str]:

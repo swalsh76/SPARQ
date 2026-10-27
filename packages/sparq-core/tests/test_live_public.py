@@ -1,6 +1,6 @@
 """Opt-in checks against the real Kalshi public API (GET only, no key, about 15 requests).
 
-    $env:KALSHI_INTEGRATION = '1'
+    $env:SPARQ_LIVE = '1'
     python -m uv run pytest packages/sparq-core/tests/test_live_public.py -q
 
 They ask whether the models accept what Kalshi really sends, which a fixture cannot show. They
@@ -11,6 +11,7 @@ counts, never any market data, is written to the file named by ``SPARQ_LIVE_SUMM
 import os
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from sparq_core.config import Environment, KalshiConfig
@@ -106,6 +107,30 @@ async def test_historical_markets_trades_and_candles(data: MarketData) -> None:
     )
     LINES.append(f"historical candles (60 min) for one settled market: {len(candles)} parsed")
     assert isinstance(candles, list)
+
+
+def _dollar_values(node: Any) -> Iterator[Any]:
+    """Every value under a key ending in ``_dollars``, anywhere in a JSON answer."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key.endswith("_dollars"):
+                yield value
+            yield from _dollar_values(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _dollar_values(item)
+
+
+async def test_every_dollar_price_arrives_as_text() -> None:
+    # the models refuse a bare number in a dollar price (S2.h); this reads the raw answers
+    async with KalshiPublicClient(KalshiConfig(environment=Environment.PRODUCTION)) as client:
+        markets = await client.get_json("/markets", {"status": "open", "limit": 1000})
+        trades = await client.get_json("/markets/trades", {"limit": 1000})
+    values = list(_dollar_values(markets)) + list(_dollar_values(trades))
+    not_text = [v for v in values if v is not None and not isinstance(v, str)]
+    LINES.append(f"dollar prices read raw: {len(values)}; not text: {len(not_text)}")
+    assert len(values) > 1000
+    assert not_text == []
 
 
 async def test_live_markets_trades_events_and_candles(data: MarketData) -> None:

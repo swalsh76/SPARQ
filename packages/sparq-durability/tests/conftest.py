@@ -12,7 +12,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         return
     skip = pytest.mark.skip(reason=f"database test: set {DATABASE_VARIABLE} to a test database")
     for item in items:
-        if "db" in item.keywords:
+        # a real marker only: item.keywords would also match folder, module and test names
+        if item.get_closest_marker("db") is not None:
             item.add_marker(skip)
 
 
