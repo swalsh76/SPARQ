@@ -11,11 +11,11 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ## Status
 
-**S0 is done; S1 is closed** (PLAN D14, 2026-10-28: S1.1 NO-GO, S1.1b dropped unopened, S1.2b and S1.2c closed unbuilt, S1.3 and S1.4 not run). **S2, weather against station observations, is closed** (PLAN §6.2: S2.1 done; S2.2 done with no rules, W9; S2.3 and S2.4 not run). **S3, three measurements of where the money is, is approved** (PLAN §6.3, 2026-10-28; **its PR #19 is unmerged**): S3.1 starts only once PR #19 is merged and its slice plan is approved. **No real order is sent without the owner's go-ahead.**
+**S0 is done; S1 is closed** (PLAN D14, 2026-10-28: S1.1 NO-GO, S1.1b dropped unopened, S1.2b and S1.2c closed unbuilt, S1.3 and S1.4 not run). **S2, weather against station observations, is closed** (PLAN §6.2: S2.1 done; S2.2 done with no rules, W9; S2.3 and S2.4 not run). **S3, three measurements of where the money is, is the active strand** (PLAN §6.3, approved 2026-10-28, merged as PR #19): **S3.1 is in progress.** **No real order is sent without the owner's go-ahead.**
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-28 UTC (S2.c merged; the S3 proposal's PR awaits the owner). Dates here are UTC.*
+*Last updated 2026-10-28 UTC (S3 proposal merged; S3.1 started, its slice plan with the owner). Dates here are UTC.*
 
 - **Where the work happens:** open Claude Code in this repository's folder on the workstation (`%USERPROFILE%\dev\SPARQ`), not in KAPS's. This project's assistant memory (real host names, the analytics node's paths and account, the owner's preferences) is in the memory folder Claude Code keeps for this folder.
 - **Now (2026-10-28 UTC):**
@@ -25,8 +25,8 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
   - **PR #16, S2.2**: merged (`3ba4cde`).
   - **PR #17, S1.c (S1's close-out)**: merged (`98ece15`). D14 closes S1; S1.2r, the order-book recorder, D7 with D6's trading key, and D8 are parked in PLAN §9.
   - **PR #18, S2.c (S2's close-out)**: merged (`af280ec`). S1 and S2 are closed. The weather data stays on the node (owner).
-  - **S3 proposed and approved (2026-10-28, as recommended; PLAN §6.3, M1 to M7):** three measurements in turn from data already held, with bars set before reading. **PR #19 awaits the owner's merge.**
-  - **Next: S3.1, the certainty dump and the 99-cent queue**, on branch `s3/1-dump`, once the proposal is merged (announce the slice first; its slice plan goes to the owner before code). Outcome readings stop at 2026-10-10 (M3). The new machine is not part of S3 (M6): its proposal comes when it is online.
+  - **PR #19, the S3 proposal**: merged (`136c502`; PLAN §6.3, M1 to M7): three measurements in turn from data already held, with bars set before reading.
+  - **S3.1, the certainty dump and the 99-cent queue: in progress** on branch `s3/1-dump`; **its slice plan is with the owner, no code yet.** Facts read for the plan (2026-10-28): all 17.5 M binary markets closing on or before the cut (2026-10-10) carry a `settlement_ts`; settlement follows close by a median of 3 minutes (p90 32), and some markets settle before their scheduled close, so the market's end is the earlier of the two. The module is `sparq_analytics.survey`. Outcome readings take only markets closing on or before 2026-10-10 (M3). The new machine is not part of S3 (M6): its proposal comes when it is online.
   - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28, the delay run's files and `explore-fit|validate.json` with their trades files. The check clone there is on `main`.
 - **Standing rules from the owner:**
   - Announce each slice before anything else, and narrate each step (each tool call) in one plain line first.
