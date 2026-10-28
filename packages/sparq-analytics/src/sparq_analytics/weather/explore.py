@@ -184,6 +184,7 @@ def priced_trades(kalshi: Path, called: pl.DataFrame, first: date, last: date) -
         .filter(pl.col("ticker").is_in(tickers))
         .select(
             pl.col("ticker"),
+            pl.col("trade_id"),
             pl.col("created_time").alias("t"),
             pl.col("yes_price_e6").cast(pl.Int64).alias("p"),
             pl.col("count_e2").alias("c"),
@@ -221,7 +222,9 @@ def priced_trades(kalshi: Path, called: pl.DataFrame, first: date, last: date) -
             profit_e6=(payoff - pl.col("price_e6")) * pl.col("c") // 100 - pl.col("fee_e6"),
             takeable=(E6 - pl.col("price_e6")) * pl.col("c") // 100 - pl.col("fee_e6") > 0,
         )
-        .sort("t_ms", "ticker")
+        # trades of one market in one millisecond are common: the id breaks the tie, so "the first
+        # trade" is the same on every run (which of them came first is not recorded)
+        .sort("t_ms", "ticker", "trade_id")
     )
 
 
