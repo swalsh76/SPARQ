@@ -1,6 +1,6 @@
 # Lessons kept from KalTerm3
 
-> **Carried from KAPS on 2026-10-25.** The sections up to "Running unattended" are KalTerm3's lessons as KAPS kept them; the last section adds what KAPS itself measured before it was frozen.
+> **Carried from KAPS on 2026-10-25.** The sections up to "Running unattended" are KalTerm3's lessons as KAPS kept them; "What KAPS measured" adds what KAPS itself measured before it was frozen, and the last section, "What SPARQ measured", what SPARQ has measured since.
 
 KalTerm3 (.NET 10, SQL Server 2025, WPF) was built through its milestones M0 to M7 in this repository and then retired by the owner on 2026-10-21. Its code is not used by KAPS. These are the measured facts and hard-won rules worth keeping.
 
@@ -74,3 +74,8 @@ The whole tree is at the git tag **`kalterm3-final`**. A citation such as `BUILD
 - **History:** at 18 GB on disk for 77 trade days (773.5 million non-combo trades; 113 million combo trades skipped), a full join of the trades to the market table costs about 71 GB of temporary spill. Polars spills to the system temp directory, which once filled the analytics node's internal disk: big runs set `TMPDIR` on the external drive and cap the spill.
 - **Studies:** about 1.1% of every day's trades are in markets still open, so the study window rule is "the baseline share plus half a point", not a fixed share. A uniform small sample makes cells of a few dozen events look spectacular; a stratified sample with about 300 events per segment showed them to be noise. Every lead chosen on the validate part fell back to noise on the held-out part.
 - **Listings:** Kalshi's market listing is dominated by combo markets, so a full scan goes through the event listing with nested markets (about 80 requests for all open events), not the market listing.
+
+## What SPARQ measured (from 2026-10-25)
+
+- **The middle tier does not pay a resting maker (S1.1, pre-registered, NO-GO).** Four rules were chosen on the validate part and tested once on the held-out part, each over at least 300 events. The middle-activity maker (R1) made -0.09 cents a contract (lower bound -2.00). The human-paced maker (R2) made +2.71 (-3.66). The same below the busiest series (R4) made +2.51 (-1.30). The first-trade taker (R5) made -1.29 (-3.98). The validate-part leads of ASSESSMENT §7.4 did not survive, as KAPS's had not.
+- **An order that joins after a trade is adversely selected (S1.2a, the live book).** Among the forward rule's trades, only 11.1% of the 43,742 levels takers cleared were refilled within 1 s, so bots do not requote after every trade. But an order joining 1 s after a trade fills about a third of the time. Its fills lose 0.32 cents by 60 s and 2.91 cents by 10 minutes, before fees, and they lose at 60 s and 10 minutes in every activity tier. A late joiner is filled mostly when the price is about to move against it, so plain spread capture is closed to SPARQ. An edge needs a fair value better than the book's.

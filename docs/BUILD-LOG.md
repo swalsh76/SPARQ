@@ -202,6 +202,57 @@ The owner asked on 2026-10-26 to fix every outstanding item of the two code revi
 - The first plan from the steps lacked the words two tests look for ("data_checksums on at initdb", "alerts"); the wording was kept.
 - The polars standard-error test first gave both expressions the same column name; they are aliased.
 
+### S1.c Close-out (2026-10-28 UTC, done)
+
+**Built (documents only).**
+- PLAN: **D14** closes S1. S1.2b and S1.2c close unbuilt, with their plans kept as a record; S1.3 and S1.4 are not run under S1; the S1 row, the status line and the slice table say so.
+- Parked in §9: S1.2r, S1.2b's order-book recorder, and the write path (D7) with the pilot (D8).
+- LESSONS.md gains "What SPARQ measured", with S1.1's and S1.2a's results. ASSESSMENT §7.4's leads get their tested outcome.
+- The CLAUDE.md status and resume point.
+
+**Gate evidence.**
+
+| Slice | Outcome | PR |
+|---|---|---|
+| Proposal (D1 to D9) | approved 2026-10-25 | #2 |
+| S1.1 the pre-registered middle-tier test | **NO-GO** (D3): no rule's lower bound above zero (BUILD-LOG S1.1) | #3 |
+| S1.1b R4 refined, forward test registered | registered, then **dropped unopened** (D13) | #4 (registration), #8 (D13) |
+| S1.2a what the live book shows | **done, go on** (11.1% of 43,742 cleared levels refilled within 1 s), but a joining order is adversely selected (2.9 cents lost by 10 minutes before fees) | #5 |
+| S1.2p shared definitions | done, behaviour unchanged | #6 |
+| S1.2q review clean-up | done, behaviour unchanged | #7 |
+| S1.2b the order-book recorder | **closed unbuilt** (D14) | |
+| S1.2c the shadow quoter's simulator | **closed unbuilt** (D14) | |
+| S1.2r analysis efficiency | **moved to §9** (D14), not started | |
+| S1.3 the write path on demo, S1.4 the pilot | **not run under S1** (D14; D7 and D8 parked) | |
+
+No real order was sent in S1. Every key stayed where D6 puts it.
+
+**What stays.**
+- The code S1 built stays on `main`, tested:
+  - the rules harness and stratified bootstrap (S1.1);
+  - the live-book reader (S1.2a);
+  - the shared definitions (S1.2p).
+- On the analytics node: S1.1's study outputs and rules ledger, S1.1b's registration files, S1.2a's live copies and results, and the read-only key (D6). Nothing was deleted or changed on any machine.
+
+**Verified.** Documents only: no code changed, so no test was run for this slice. CI runs on the PR.
+
+**Review (PLAN Q8).** Each figure was checked against the BUILD-LOG entries of S1.1 and S1.2a and against D13. The merge review, at medium effort over the branch against `main`, found 8 documentation issues and no runtime bugs, all fixed:
+1. The resume point's S1.2a line still gave the node's check clone as `8d82def`. **Fixed:** removed; the clone's state is in the "Now" lines.
+2. The S1.2q row still said its two leftovers waited in S1.2a's code. **Fixed:** they moved with S1.2r to §9.
+3. The entry first said the documents-only diff needed no review, against Q8. **Fixed:** this review is the record.
+4. The entry lacked the "Problems and fixes" heading. **Fixed.**
+5. LESSONS.md's intro, PLAN's status line and CLAUDE.md described the file as the predecessors' measurements only. **Fixed.**
+6. ASSESSMENT §7.4's heading still called the section validate-only. **Fixed:** it names the tested outcome.
+7. CLAUDE.md's status still read "S1.2 on hold". **Fixed:** it states D14's outcome per slice.
+8. D14 parked D7 and D8 but left D6's trading key and its custody design without a home. **Fixed:** they go with D7, in D14 and in §9.
+
+**Problems and fixes.** Only the review's findings above.
+
+**Decisions (owner, 2026-10-28, as recommended).**
+- S1.2r goes to §9.
+- The read-only key stays on the analytics node.
+- S1.c goes first, then S2.c, as separate PRs.
+
 ## S2. Weather against station observations (approved 2026-10-27)
 
 ### S2.1 Sources, terms and the observation history (2026-10-27 to 2026-10-28, done)

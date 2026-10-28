@@ -197,7 +197,7 @@ Written at the end of KAPS, after its K0.5 study returned a NO-GO, when the owne
 - **Kalshi's Liquidity Incentive Program** (terms in Kalshi's CFTC filing of 2026-07-15; `GET /incentive_programs`): 6,560 markets carried rewards totalling about $293,000 a day on 2026-10-25 (median $14 a day a market). It ends on 2027-01-01 at the latest, Kalshi may end it at any time, Market Maker Agreement holders are excluded, and Kalshi ended its Volume Incentive Program early (no earlier than 2026-10-13). The owner chose not to rely on it (PLAN Q4).
 - **Perpetual funding** (`GET /margin/funding_rates/historical`, 6,535 records): BTC funding was positive in 51.6% of 8-hour intervals since 2026-06-03, about 9% a year on average and 14.5% over the last 30 days; ETH about zero. Perps now include metals, oil, the S&P 500 and the Nasdaq 100. As a carry trade, a modest yield; as a hedge for binary positions in the same account, potentially useful.
 
-### 7.4 The middle tier (exploratory: the validate part only, about 25 slices looked at)
+### 7.4 The middle tier (exploratory: the validate part only, about 25 slices looked at; tested in SPARQ S1.1: NO-GO)
 
 From the K0.5 trade tape, with K0.5's fees, sample weights and strict fill rule, and intervals by event:
 
@@ -213,6 +213,8 @@ From the K0.5 trade tape, with K0.5's fees, sample weights and strict fill rule,
 A live snapshot of 148,971 open non-combo markets: the 209 busiest (over 100,000 contracts in 24 hours) carry 64.6% of the volume at a median spread of 1 cent; spreads widen below them; takers pay about $1.65 M a day in half-spreads across all markets (an upper bound before adverse selection), $0.92 M of it in markets trading 1,000 to 100,000 contracts a day.
 
 **Reading:** a gap exists between human-paced traders and the professional firms, in second-tier markets and in stale quotes; a seconds-scale maker could live in it. These are leads for a pre-registered test, not results: two of the three key intervals cross zero, and KAPS's validate leads all failed on its test part.
+
+**Tested (SPARQ S1.1, 2026-10-25): NO-GO.** The four rules built from these leads, tested once on the held-out part, all had lower bounds below zero: the middle-activity maker -0.09 cents a contract (lower -2.00), the human-paced maker +2.71 (-3.66), the same below the busiest series +2.51 (-1.30), and the first-trade taker -1.29 (-3.98). S1.2a then found that an order joining after a trade is adversely selected, losing 2.9 cents by 10 minutes before fees (SPARQ's LESSONS.md, PLAN D13 and D14).
 
 ### 7.5 Venues (US-accessible, October 2026)
 
