@@ -221,7 +221,8 @@ def test_the_summary_by_kind(tmp_path: Path) -> None:
     }
     assert thresholds["moved_within"] == {"1s": 0.0, "10s": 0.2, "1m": 0.2, "10m": 0.4, "1h": 1.0}
     assert thresholds["agreement"] == 1.0
-    assert (thresholds["through_with_share"], thresholds["through_with_e2_a_day"]) == (0.6, 15_600)
+    # the 01:12 trade sat in two events' windows but in one stale quote's: counted once
+    assert (thresholds["through_with_share"], thresholds["through_with_e2_a_day"]) == (0.6, 9_600)
     assert (thresholds["through_against_share"], thresholds["through_against_e2_a_day"]) == (
         0.2,
         1_200,
@@ -232,9 +233,23 @@ def test_the_summary_by_kind(tmp_path: Path) -> None:
         "fee_e6_a_day": 1_138_476,
         "net_e6_a_day": -274_476,
         "quotes_a_day": 48,  # four stale quotes in two hours: the fifth event shares one
+        "reachable_gross_e6_a_day": 864_000,  # every one of them stood over a second
+        "reachable_fee_e6_a_day": 1_138_476,
+        "reachable_net_e6_a_day": -274_476,
+        "reachable_quotes_a_day": 48,
         "fee_unknown": 0,
         "clears": False,
+        "clears_reachable": False,
     }
+    assert thresholds["stale_quotes_a_day"] == 48
+    # BBB answered AAA within half a second: that quote was never there to hit
+    outcomes = kinds["outcomes"]["capacity"]
+    assert (outcomes["reachable_net_e6_a_day"], outcomes["reachable_quotes_a_day"]) == (
+        -37_704, 12,
+    )  # fmt: skip
+    assert (kinds["brackets"]["stale_quotes_a_day"], kinds["weather"]["stale_quotes_a_day"]) == (
+        48, 36,
+    )  # fmt: skip
     assert kinds["outcomes"]["capacity"]["net_e6_a_day"] == 821_688
     assert kinds["outcomes"]["response_cents"]["1s"] == 2.0
     assert (kinds["game"]["agreement"], kinds["game"]["capacity"]["quotes_a_day"]) == (None, 36)
@@ -250,11 +265,13 @@ def test_the_summary_by_kind(tmp_path: Path) -> None:
     )
     assert kinds["brackets"]["response_cents"]["1h"] is None  # every hour overlapped the gap
     assert kinds["weather"]["response_cents"]["10m"] == 2.0 and kinds["weather"]["agreement"] == 1.0
-    assert summary["cleared"] == []
+    assert summary["cleared"] == [] and summary["cleared_reachable"] == []
     interval = thresholds["intervals"]["net_e6_a_day"]
     assert (interval["point"], interval["clusters"]) == (-274_476.0, 2)
     assert thresholds["intervals"]["response_10m_cents"]["point"] == 1.0
     assert "net_e6_a_day" not in kinds["brackets"]["intervals"]
+    assert thresholds["intervals"]["reachable_net_e6_a_day"]["point"] == -274_476.0
+    assert kinds["outcomes"]["intervals"]["reachable_net_e6_a_day"]["point"] == -37_704.0
 
 
 def test_the_summary_by_tier_category_and_the_slow_spots(tmp_path: Path) -> None:
@@ -264,8 +281,18 @@ def test_the_summary_by_tier_category_and_the_slow_spots(tmp_path: Path) -> None
     assert tiers["thresholds | under 100"]["events"] == 2
     assert tiers["thresholds | 100 to 1,000"]["capacity"]["quotes_a_day"] == 24  # two spells of T2
     assert summary["by_category"]["outcomes | Sports"]["capacity"]["net_e6_a_day"] == 821_688
+    moves = summary["by_move"]
+    assert {k: v["events"] for k, v in moves.items() if k.startswith("thresholds")} == {
+        "thresholds | 2 to 3": 3,  # T2's and T3's two-cent moves
+        "thresholds | 3 to 5": 1,  # T1's four cents at 00:20
+        "thresholds | 5 to 10": 1,  # T1's six cents at 01:00
+    }
+    assert moves["game | 10 and more"]["events"] == 1  # AAA6's ten cents
+    # the spots rank by the reachable capacity: BBB's half-second answer drops the outcomes pair
     spots = {(s["kind"], s["series_a"], s["series_b"]): s for s in summary["slow_spots"]}
-    assert list(spots)[:2] == [("outcomes", "KXG", "KXG"), ("game", "KXS", "KXG")]
+    assert list(spots)[:2] == [("game", "KXS", "KXG"), ("outcomes", "KXG", "KXG")]
+    assert spots[("outcomes", "KXG", "KXG")]["capacity"]["reachable_net_e6_a_day"] == -37_704
+    assert spots[("game", "KXS", "KXG")]["through_against_share"] == 0.0
     assert spots[("outcomes", "KXG", "KXG")]["capacity"]["net_e6_a_day"] == 821_688
     assert spots[("game", "KXS", "KXG")]["capacity"]["net_e6_a_day"] == -19_356  # AAA6 to AAA
     assert spots[("thresholds", "KXT", "KXT")]["capacity"]["net_e6_a_day"] == -274_476

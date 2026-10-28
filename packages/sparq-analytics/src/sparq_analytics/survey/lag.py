@@ -21,11 +21,16 @@ pure widening is not a move). For each pair valid at that moment, the watched ma
 * for a signed kind, the **capacity** of the stale quote: the size shown on the side a taker would
   hit, times the 10-minute response, less the taker fee on that size at that price from the
   series' terms. Each stale quote is counted once, at the first move that left it stale (the same
-  ``b``, expected side and first move).
+  ``b``, expected side and first move); the trades through it are counted once the same way. The
+  capacity is given for every stale quote, as M4 words it, and for the **reachable** ones, which
+  stood at least a second before ``b`` moved (SPARQ's scale), since a quote that moved in the
+  same second as ``a`` was never there to hit.
 
 Events whose first ten minutes overlap a logged outage are excluded. The figures a day scale the
-span's sums by its hours. Money is integer millionths of a dollar; sizes are hundredths of a
-contract; responses are millionths per contract (10,000 to a cent) and shown in cents.
+span's sums by its hours; they are also broken down by ``b``'s activity tier (contracts a day in
+the span), by ``b``'s category and by the size of ``a``'s move. Money is integer millionths of a
+dollar; sizes are hundredths of a contract; responses are millionths per contract (10,000 to a
+cent) and shown in cents.
 """
 
 from collections.abc import Callable
@@ -57,6 +62,13 @@ TIERS: tuple[tuple[int | None, str], ...] = (
     (None, "10,000 and more"),
 )
 BAR_E6 = 25 * E6  # M4: $25 a day for a relation type
+REACH_MS = 1_000  # a quote that stood this long before b moved could have been hit
+MOVE_BUCKETS: tuple[tuple[int | None, str], ...] = (  # a's move, in millionths
+    (30_000, "2 to 3"),
+    (50_000, "3 to 5"),
+    (100_000, "5 to 10"),
+    (None, "10 and more"),
+)
 CENTS_E6 = 10_000
 MS_PER_DAY = 24 * MS_PER_HOUR
 RESAMPLES, TAIL, SEED = 2_000, 0.025, 32
@@ -325,10 +337,17 @@ def tiers_of(live: Path, start: datetime, end: datetime) -> pl.DataFrame:
         .agg((pl.col("count_e2").sum() * 24 // (hours * 100)).alias("contracts_a_day"))
         .collect()
     )
-    tier = pl.lit(TIERS[-1][1])
-    for bound, name in reversed(TIERS[:-1]):
-        tier = pl.when(pl.col("contracts_a_day") < bound).then(pl.lit(name)).otherwise(tier)
-    return traded.with_columns(tier=tier).select("ticker", "tier")
+    return traded.with_columns(tier=_bucket(pl.col("contracts_a_day"), TIERS)).select(
+        "ticker", "tier"
+    )
+
+
+def _bucket(value: pl.Expr, buckets: tuple[tuple[int | None, str], ...]) -> pl.Expr:
+    """The name of the first bucket whose bound ``value`` is under; the last bucket has none."""
+    name = pl.lit(buckets[-1][1])
+    for bound, label in reversed(buckets[:-1]):
+        name = pl.when(value < bound).then(pl.lit(label)).otherwise(name)
+    return name
 
 
 def market_info(markets: pl.DataFrame, tiers: pl.DataFrame, fees: pl.DataFrame) -> pl.DataFrame:
@@ -454,9 +473,17 @@ def run(
     return start, end, total
 
 
+def _a_day(value: int, hours: int) -> int:
+    """A span's sum scaled to a day."""
+    return int(value * 24 // hours)
+
+
 def _cells(frame: pl.LazyFrame, keys: list[str], hours: int) -> list[dict[str, Any]]:
-    """The figures of each cell of ``keys``: events, pairs, responses, first moves, trades through
-    and the counted quotes' capacity."""
+    """The figures of each cell of ``keys``: events, pairs, responses, first moves, the trades
+    through each stale quote, and the counted quotes' capacity, for every quote and for the
+    reachable ones."""
+    counted = pl.col("counted")
+    reachable = counted & pl.col("reachable")
     aggs = [
         pl.len().alias("events"),
         pl.struct("a", "b").n_unique().alias("pairs"),
@@ -466,23 +493,27 @@ def _cells(frame: pl.LazyFrame, keys: list[str], hours: int) -> list[dict[str, A
         pl.col("lag_ms").is_not_null().sum().alias("moved"),
         (pl.col("agreement") == 1).sum().alias("agreeing"),
         (pl.col("with_n") > 0).sum().alias("through_with_events"),
-        pl.col("with_e2").sum().alias("through_with_e2"),
         (pl.col("against_n") > 0).sum().alias("through_against_events"),
-        pl.col("against_e2").sum().alias("through_against_e2"),
+        pl.col("with_e2").filter(counted).sum().alias("through_with_e2"),
+        pl.col("against_e2").filter(counted).sum().alias("through_against_e2"),
         pl.col("stale_size_e2").median().alias("stale_size_median_e2"),
-        pl.col("gross_e6").filter(pl.col("counted")).sum().alias("gross_e6"),
-        pl.col("fee_e6").filter(pl.col("counted")).sum().alias("fee_e6"),
-        pl.col("net_e6").filter(pl.col("counted")).sum().alias("net_e6"),
-        pl.col("counted").sum().alias("quotes"),
-        (pl.col("counted") & pl.col("fee_e6").is_null()).sum().alias("fee_unknown"),
+        (counted & pl.col("fee_e6").is_null()).sum().alias("fee_unknown"),
     ]
+    for prefix, flag in (("", counted), ("reachable_", reachable)):
+        for money in ("gross_e6", "fee_e6", "net_e6"):
+            aggs.append(pl.col(money).filter(flag).sum().alias(f"{prefix}{money}"))
+        aggs.append(flag.sum().alias(f"{prefix}quotes"))
     for name, delta in HORIZONS_MS.items():
         aggs.append(pl.col(f"r_{name}").mean().alias(f"response_e6_{name}"))
         aggs.append((pl.col("lag_ms") <= delta).sum().alias(f"moved_within_{name}"))
     rows = frame.group_by(keys).agg(aggs).sort(keys).collect().to_dicts()
+    temporary = ["agreeing", "moved", "through_with_events", "through_against_events",
+                 "through_with_e2", "through_against_e2", "fee_unknown"]  # fmt: skip
+    for prefix in ("", "reachable_"):
+        temporary += [f"{prefix}{k}" for k in ("gross_e6", "fee_e6", "net_e6", "quotes")]
     for row in rows:
         events = row["events"]
-        row["events_a_day"] = events * 24 // hours
+        row["events_a_day"] = _a_day(row["events"], hours)
         responses = {name: row[f"response_e6_{name}"] for name in HORIZONS_MS}
         row["response_cents"] = {
             name: None if r is None else r / CENTS_E6 for name, r in responses.items()
@@ -491,24 +522,28 @@ def _cells(frame: pl.LazyFrame, keys: list[str], hours: int) -> list[dict[str, A
         row["agreement"] = None if row["moved"] == 0 else row["agreeing"] / row["moved"]
         row["through_with_share"] = row["through_with_events"] / events
         row["through_against_share"] = row["through_against_events"] / events
-        row["through_with_e2_a_day"] = row["through_with_e2"] * 24 // hours
-        row["through_against_e2_a_day"] = row["through_against_e2"] * 24 // hours
+        row["through_with_e2_a_day"] = _a_day(row["through_with_e2"], hours)
+        row["through_against_e2_a_day"] = _a_day(row["through_against_e2"], hours)
+        row["stale_quotes_a_day"] = _a_day(row["quotes"], hours)
         if row["signed"]:
             row["capacity"] = {
-                "gross_e6_a_day": row["gross_e6"] * 24 // hours,
-                "fee_e6_a_day": row["fee_e6"] * 24 // hours,
-                "net_e6_a_day": row["net_e6"] * 24 // hours,
-                "quotes_a_day": row["quotes"] * 24 // hours,
+                "gross_e6_a_day": _a_day(row["gross_e6"], hours),
+                "fee_e6_a_day": _a_day(row["fee_e6"], hours),
+                "net_e6_a_day": _a_day(row["net_e6"], hours),
+                "quotes_a_day": _a_day(row["quotes"], hours),
+                "reachable_gross_e6_a_day": _a_day(row["reachable_gross_e6"], hours),
+                "reachable_fee_e6_a_day": _a_day(row["reachable_fee_e6"], hours),
+                "reachable_net_e6_a_day": _a_day(row["reachable_net_e6"], hours),
+                "reachable_quotes_a_day": _a_day(row["reachable_quotes"], hours),
                 "fee_unknown": row["fee_unknown"],
-                "clears": row["net_e6"] * 24 // hours >= BAR_E6,
+                "clears": _a_day(row["net_e6"], hours) >= BAR_E6,
+                "clears_reachable": _a_day(row["reachable_net_e6"], hours) >= BAR_E6,
             }
         else:
             row["capacity"] = None
         for name in HORIZONS_MS:
             del row[f"response_e6_{name}"], row[f"moved_within_{name}"]
-        for key in ("gross_e6", "fee_e6", "net_e6", "quotes", "fee_unknown", "agreeing", "moved",
-                    "through_with_events", "through_against_events", "through_with_e2",
-                    "through_against_e2"):  # fmt: skip
+        for key in temporary:
             del row[key]
     return rows
 
@@ -524,7 +559,8 @@ def _interval(estimate: Estimate, scale: float) -> dict[str, float | int]:
 
 def _intervals(usable: pl.LazyFrame, hours: int, start_ms: int) -> dict[str, dict[str, Any]]:
     """Per kind: the 10-minute response's interval over (group, hour) clusters, in cents, and the
-    counted capacity's interval over the span's hours, in millionths a day."""
+    counted capacity's interval (every quote, and the reachable ones) over the span's hours, in
+    millionths a day."""
     headline = pl.col(f"r_{HEADLINE}")
     by_cluster = (
         usable.filter(headline.is_not_null())
@@ -535,12 +571,16 @@ def _intervals(usable: pl.LazyFrame, hours: int, start_ms: int) -> dict[str, dic
         )
         .collect()
     )
+    nets = usable.filter(pl.col("counted") & pl.col("net_e6").is_not_null())
     by_hour = (
-        usable.filter(pl.col("counted") & pl.col("net_e6").is_not_null())
-        .group_by("kind", "hour")
-        .agg(pl.col("net_e6").sum().cast(pl.Float64).alias("num"))
+        nets.group_by("kind", "hour")
+        .agg(
+            pl.col("net_e6").sum().cast(pl.Float64).alias("num"),
+            pl.col("net_e6").filter(pl.col("reachable")).sum().cast(pl.Float64).alias("reach"),
+        )
         .collect()
     )
+    first_hour = start_ms // MS_PER_HOUR  # the span starts on an hour (its hour files)
     out: dict[str, dict[str, Any]] = {}
     for kind in sorted(set(by_cluster["kind"].to_list()) | set(by_hour["kind"].to_list())):
         cells = by_cluster.filter(pl.col("kind") == kind)
@@ -552,25 +592,25 @@ def _intervals(usable: pl.LazyFrame, hours: int, start_ms: int) -> dict[str, dic
             seed=SEED,
         )
         entry: dict[str, Any] = {"response_10m_cents": _interval(response, 1 / CENTS_E6)}
-        nets = by_hour.filter(pl.col("kind") == kind)
-        if nets.height:
-            per_hour = np.zeros(hours, dtype=np.float64)
-            first_hour = start_ms // MS_PER_HOUR  # the span starts on an hour (its hour files)
-            for row in nets.to_dicts():
-                index = int(row["hour"]) - first_hour
-                if 0 <= index < hours:  # pragma: no branch - events lie inside the span
-                    per_hour[index] += row["num"]
-            capacity = cluster_bootstrap(
-                per_hour, np.ones(hours), tail=TAIL, resamples=RESAMPLES, seed=SEED
-            )
-            entry["net_e6_a_day"] = _interval(capacity, 24)
+        hourly = by_hour.filter(pl.col("kind") == kind)
+        if hourly.height:
+            for column, name in (("num", "net_e6_a_day"), ("reach", "reachable_net_e6_a_day")):
+                per_hour = np.zeros(hours, dtype=np.float64)
+                for row in hourly.to_dicts():
+                    index = int(row["hour"]) - first_hour
+                    if 0 <= index < hours:  # pragma: no branch - events lie inside the span
+                        per_hour[index] += row[column]
+                capacity = cluster_bootstrap(
+                    per_hour, np.ones(hours), tail=TAIL, resamples=RESAMPLES, seed=SEED
+                )
+                entry[name] = _interval(capacity, 24)
         out[kind] = entry
     return out
 
 
 def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> dict[str, Any]:
     """S3.2's figures from the written events: by kind, by kind and tier, by kind and category,
-    the slow spots, and M4's bar."""
+    by kind and the size of a's move, the slow spots, and M4's bar."""
     hours = int((end - start) / timedelta(hours=1))
     if hours < 1:
         raise SurveyDataError("the span holds no whole hour")
@@ -587,18 +627,20 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
         pl.struct("a", "t").n_unique().alias("moves_with_partner"),
     ).collect().to_dicts()[0]  # fmt: skip
     usable = events.filter((pl.col("state") == "ok") & ~pl.col("in_gap"))
+    # a stale quote's spell: the same watched market, side and first move; its first event counts
     spells = ["kind", "b", "expected", "first_ms"]
-    firsts = (
-        usable.filter(pl.col("signed")).group_by(spells).agg(pl.col("t").min().alias("t_first"))
-    )
+    firsts = usable.group_by(spells).agg(pl.col("t").min().alias("t_first"))
     usable = usable.join(firsts, on=spells, how="left", nulls_equal=True).with_columns(
-        counted=(pl.col("signed") & (pl.col("t") == pl.col("t_first"))).fill_null(False)
-    )  # fmt: skip
+        counted=(pl.col("t") == pl.col("t_first")).fill_null(False),
+        reachable=pl.col("lag_ms").is_null() | (pl.col("lag_ms") >= REACH_MS),
+        move=_bucket(pl.col("a_move_e6"), MOVE_BUCKETS),
+    )
     by_kind = {row["kind"]: row for row in _cells(usable, ["kind"], hours)}
     for row in by_kind.values():
         del row["kind"]
     by_tier = _cells(usable, ["kind", "tier_b"], hours)
     by_category = _cells(usable, ["kind", "category_b"], hours)
+    by_move = _cells(usable, ["kind", "move"], hours)
     spots = sorted(
         (
             r
@@ -607,13 +649,20 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
             )
             if r["capacity"] is not None
         ),
-        key=lambda r: -r["capacity"]["net_e6_a_day"],
+        key=lambda r: -r["capacity"]["reachable_net_e6_a_day"],
     )[:SPOTS]
     intervals = _intervals(usable, hours, int(start.timestamp() * 1000))
     for kind, entry in intervals.items():
         by_kind[kind]["intervals"] = entry
     keep = ("events", "events_a_day", "pairs", "response_cents", "moved_within", "agreement",
-            "through_with_share", "capacity")  # fmt: skip
+            "through_with_share", "through_against_share", "stale_quotes_a_day",
+            "capacity")  # fmt: skip
+
+    def cleared(key: str) -> list[str]:
+        return sorted(
+            kind for kind, row in by_kind.items() if row["capacity"] and row["capacity"][key]
+        )
+
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
@@ -626,6 +675,7 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
         "by_category": {
             f"{r['kind']} | {r['category_b']}": {k: r[k] for k in keep} for r in by_category
         },
+        "by_move": {f"{r['kind']} | {r['move']}": {k: r[k] for k in keep} for r in by_move},
         "slow_spots": [
             {
                 "kind": r["kind"],
@@ -635,7 +685,6 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
             }
             for r in spots
         ],  # fmt: skip
-        "cleared": sorted(
-            kind for kind, row in by_kind.items() if row["capacity"] and row["capacity"]["clears"]
-        ),
+        "cleared": cleared("clears"),
+        "cleared_reachable": cleared("clears_reachable"),
     }

@@ -102,7 +102,8 @@ def _lag(args: argparse.Namespace) -> int:
     result = lag.summarize(out, start, end, found)
     result["coverage"] = coverage
     _write(out, "lag.json", result)
-    print(json.dumps({"by_kind": result["by_kind"], "cleared": result["cleared"]}, indent=2))
+    shown = {k: result[k] for k in ("by_kind", "cleared", "cleared_reachable")}
+    print(json.dumps(shown, indent=2))
     return 0
 
 
