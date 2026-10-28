@@ -11,7 +11,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ## Status
 
-**S0 is done; S1 is closed** (PLAN D14, 2026-10-28: S1.1 NO-GO, S1.1b dropped unopened, S1.2b and S1.2c closed unbuilt, S1.3 and S1.4 not run). **S2, weather against station observations, is closed** (PLAN §6.2: S2.1 done; S2.2 done with no rules, W9; S2.3 and S2.4 not run). **S3, three measurements of where the money is, is the active strand** (PLAN §6.3, approved 2026-10-28): S3.1 is next. **No real order is sent without the owner's go-ahead.**
+**S0 is done; S1 is closed** (PLAN D14, 2026-10-28: S1.1 NO-GO, S1.1b dropped unopened, S1.2b and S1.2c closed unbuilt, S1.3 and S1.4 not run). **S2, weather against station observations, is closed** (PLAN §6.2: S2.1 done; S2.2 done with no rules, W9; S2.3 and S2.4 not run). **S3, three measurements of where the money is, is approved** (PLAN §6.3, 2026-10-28; **its PR #19 is unmerged**): S3.1 starts only once PR #19 is merged and its slice plan is approved. **No real order is sent without the owner's go-ahead.**
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 

@@ -483,3 +483,21 @@ The owner chose to keep them (2026-10-28).
 - Keep the weather data on the analytics node.
 - S1's close-out is its own slice (S1.c, merged first).
 - A close-out records and does not propose the next direction.
+
+## S3. Three measurements of where the money is (approved 2026-10-28)
+
+### S3 proposal (PR #19, 2026-10-28 UTC)
+
+**Built (documents only).** PLAN §6.3 (M1 to M7, S3.1 to S3.c), the S3 row in §6, the status line, the model node parked in §9, and the CLAUDE.md status and resume point.
+
+**Review (PLAN Q8).** The merge review, at medium effort over the branch against `main`, found 8 documentation issues and no runtime bugs, all fixed:
+1. S3.1's "bid that knew an hour earlier" would have read weather outcomes on live-frame days inside the held-out part. **Fixed:** the implied dollars combine structural live-frame measures (no outcome) with the history's payout rate to the cut; the knowledge case uses S2.2's call times on the fit and validate parts only.
+2. The new module was named `scan`, which `study.scan` (S1.1b's grid scan) already uses. **Fixed:** `sparq_analytics.survey`, commands `survey dump|lag|tail`.
+3. Fees were said to come from `study.dataset`; the expressions live in `study.feecalc`. **Fixed.**
+4. The §9 99-cent entry said only recorded order books show the queue, while S3.1 reads it from ticker frames. **Fixed:** the best-bid size is named as the proxy, with what it misses.
+5. M3's cut was loose about trades near the boundary. **Fixed:** the cut is on the market's close time, so every trade read precedes 2026-10-11.
+6. M4's S3.1 bar did not say whether $25 a day is summed over categories. **Fixed:** within one category; the total is reported only.
+7. The model node entry stated Strata's capabilities as fact. **Fixed:** marked as the project's own description, unchecked until the machine is online.
+8. The CLAUDE.md status line called S3 active with S3.1 next while the proposal was unmerged. **Fixed:** approved, PR unmerged, S3.1 starts after the merge and its slice plan.
+
+**Problems and fixes.** Only the review's findings above.
