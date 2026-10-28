@@ -204,7 +204,7 @@ The owner asked on 2026-10-26 to fix every outstanding item of the two code revi
 
 ## S2. Weather against station observations (approved 2026-10-27)
 
-### S2.1 Sources, terms and the observation history (2026-10-27, in progress: the 24-hour delay run ends 2026-10-28 about 02:12 UTC)
+### S2.1 Sources, terms and the observation history (2026-10-27 to 2026-10-28, done)
 
 **Built.** The package `sparq_analytics.weather`, run as `python -m sparq_analytics.weather stations|download|check|delay|delay-report`:
 - `stations.py`: the map from climate site to station and zone (39 sites). Each market's site is read from its own rules (by code, or by station id). Markets naming no site take the one code their series and city use. Also the climate day (local standard time) with the civil day as a variant, and the scope: an explicit list of 24 daily-high series plus `KXRAIN`.
@@ -244,12 +244,29 @@ The owner asked on 2026-10-26 to fix every outstanding item of the two code revi
   - Without the 1 °F margin, one call is wrong under the standard day: `KXHIGHNY-26AUG27-T80`, "below 80", settled YES although an hourly report put Central Park at 80 °F or more. The civil day adds `KXHIGHTDC-26SEP22-T66`. The Weather Company's daily maximum can come in below an hourly reading, so the margin is needed.
   - Rain is the same under both day definitions: 913 NO with no rain reported, 271 YES with rain reported, and 7 YES the hourly reports did not count (misses, not wrong calls).
   - Coverage: 85 days per station. Most stations are short of 24 routine reports on 2 to 7 days, largely the partial first and last days of the download. Boston is short on 20 days and Providence on 11.
+- *Publication delay* (`delay`, 2026-10-27 02:12 UTC to 2026-10-28 02:12 UTC, detached under `caffeinate` from the check clone; then `download` for 2026-10-26 to 2026-10-28 and `delay-report`):
+  - 1,143 reports from 38 stations: 76 in the first poll (the baseline) and 1,067 that arrived during the run. About 1,440 polls a minute apart; 8 failed with an HTTP error and were retried the next minute.
+  - Seconds after the observation time:
+
+    | | median | p95 | max |
+    |---|---|---|---|
+    | First seen by the poll | 195 | 312 | 1,866 |
+    | Received by the service (its own time) | 188 | 265 | 1,865 |
+    | First seen, routine reports (998) | 195 | 312 | 1,866 |
+    | First seen, special reports (69) | 193 | 260 | 313 |
+
+  - First seen later than 5, 6, 7, 10 and 15 minutes: 90, 24, 12, 7 and 4 of the 1,067. The slowest were routine reports: Providence 31 minutes, Chicago O'Hare 29, New Orleans 16, Tampa 15.
+  - Against the archive: all 1,143 found; 1,109 with the same text and 1,142 with the same readings. The one exception, College Station at 10:53 UTC on 2026-10-27, is archived without its remarks, so the archive reads the body's lower edge (16.5 °C) instead of the tenths (17.2 °C): the archive can only understate, never overstate, a bound.
+
+**Decisions.**
+- **W4's history delay is 10 minutes after the observation time** (owner, 2026-10-28, as recommended). The p95 rounded up (6 minutes) would leave 2.2% of reports counted before they were public, each one a chance to overstate the edge; 10 minutes leaves 0.7%.
+- **Added to S2.2** (owner, 2026-10-28): measure, from the data already held, how often and by how much the settled high is above the highest hourly report available at the time, and how many hours later the reports show it. It sizes the follow-up below.
+- **Parked in PLAN §9** (owner, 2026-10-28; named as scope creep): the station's own 5-minute readings for earlier certainty, checked only if S2.2 finds an edge limited by when the outcome is known; and other weather networks for the direction and speed of temperature change, a forecasting strategy, low priority.
 
 **Problems and fixes.**
 - The first `stations` run stopped at `KXHIGHINFLATION-26DEC`: the prefix scope was replaced by the explicit list.
 - `KPBI` returned no reports; the live feed and the archive both carry the station as `KDJT`.
-
-**Still to do in S2.1.** After the delay run ends: `delay-report` (the delays and the comparison of live reports with the archive), the W4 delay for the history, and the PLAN row; then the PR.
+- The delay run was started before the `KDJT` fix, so it polled `KPBI` and has no West Palm Beach reports. The 38 other stations agree closely, so the delay was not re-measured.
 
 ### S2.h Core hardening from IKARS's review (2026-10-27, owner approved; done)
 
