@@ -437,3 +437,42 @@ The fix commits (`f5f4219`, `3df6de3`, `ff195cc`) were reviewed together at low 
 **Decisions.**
 - **W9: no rules (owner, 2026-10-28, as recommended).** No rule could reach W7's 100 signalled city-days or its $25 floor, so S2.3 and S2.4 are not run and the test part stays unopened (its first two days' trade files were opened only for the validate markets' last trades). `docs/research/weather-rules.json` holds the empty list; the write-up is `docs/research/weather-explore.md`.
 - **Parked in PLAN §9** (named as scope creep): resting bids at 99 cents for an already-certain side. All 25 series in scope are plain `quadratic`, with no maker fee and no recorded fee change (read on the node, 2026-10-28). The 5-minute readings entry gains S2.2's gap figures.
+
+### S2.c Close-out (2026-10-28 UTC, done)
+
+**Built (documents only).**
+- PLAN §6.2: an S2.c row and S2's verdict. The S2 row in §6, the status line and the §9 entry say S2 is closed.
+- LESSONS.md's "What SPARQ measured" gains S2.2's lesson. ASSESSMENT §7.2 ("Checked and closed") gains a line for taking stale weather quotes.
+- The CLAUDE.md status and resume point.
+
+**Gate evidence.**
+
+| Slice | Outcome | PR |
+|---|---|---|
+| Proposal (W1 to W8) | approved 2026-10-27 | #9 |
+| S2.1 sources, terms and the observation history | **done:** the map covers every market in scope; 0 wrong calls of 2,243 on 8,397 fit-part markets; the delay measured and W4's history delay set to 10 minutes | #10 |
+| S2.h core hardening from IKARS's review | **done:** no result changed; every guard refuses in a test | #11, #14 |
+| The mini code review rule (Q8), S2.2's plan | approved | #15 |
+| S2.2 exploration on the fit and validate parts | **done, no rules** (W9): $0.65 a day at the lower bound on the fit part and $0 on validate; the book leads the reports by a median 4.6 hours (highs) and 40 minutes (rain) | #16 |
+| S2.3 the pre-registered test | **not run** (W9); the test part stays unopened | |
+| S2.4 the live shadow run | **not run** (W9) | |
+
+No order was sent in S2, and the trading key was never needed. Every code slice passed format, lint, types, tests and the coverage gate in CI, and the weather package is 100% covered.
+
+**What stays.** On `main`: the tested `sparq_analytics.weather` package (`stations`, `download`, `check`, `delay`, `delay-report`, `explore`). On the analytics node:
+- the station reports (39 stations, 2026-08-01 to 2026-10-28);
+- `check.json` and the delay run's files;
+- the `explore` outputs of both parts.
+
+The owner chose to keep them (2026-10-28).
+
+**Verified.** Documents only, so no test was run for this slice; CI runs on the PR. On the analytics node, the check clone was moved from `s2/2-explore` back to `main` with nothing running from it.
+
+**Review (PLAN Q8).** Each figure was checked against BUILD-LOG S2.1 and S2.2 and against W9. The merge review's findings are listed below.
+
+**Problems and fixes.** Only the review's findings.
+
+**Decisions (owner, 2026-10-28, as recommended).**
+- Keep the weather data on the analytics node.
+- S1's close-out is its own slice (S1.c, merged first).
+- A close-out records and does not propose the next direction.
