@@ -15,7 +15,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-28 UTC (S3.1 plan approved; code and the live extract under way). Dates here are UTC.*
+*Last updated 2026-10-28 UTC (S3.1 done; its PR awaits the merge review and the owner's choice under M1). Dates here are UTC.*
 
 - **Where the work happens:** open Claude Code in this repository's folder on the workstation (`%USERPROFILE%\dev\SPARQ`), not in KAPS's. This project's assistant memory (real host names, the analytics node's paths and account, the owner's preferences) is in the memory folder Claude Code keeps for this folder.
 - **Now (2026-10-28 UTC):**
@@ -26,7 +26,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
   - **PR #17, S1.c (S1's close-out)**: merged (`98ece15`). D14 closes S1; S1.2r, the order-book recorder, D7 with D6's trading key, and D8 are parked in PLAN §9.
   - **PR #18, S2.c (S2's close-out)**: merged (`af280ec`). S1 and S2 are closed. The weather data stays on the node (owner).
   - **PR #19, the S3 proposal**: merged (`136c502`; PLAN §6.3, M1 to M7): three measurements in turn from data already held, with bars set before reading.
-  - **S3.1, the certainty dump and the 99-cent queue: in progress** on branch `s3/1-dump`; **slice plan approved 2026-10-28, as recommended** (PLAN S3.1 row). The live extract from 2026-10-18 runs detached on the analytics node from the check clone (on `main`; do not switch it while it runs; log `extract.log` in the live folder). Facts read for the plan (2026-10-28): all 17.5 M binary markets closing on or before the cut (2026-10-10) carry a `settlement_ts`; settlement follows close by a median of 3 minutes (p90 32), and some markets settle before their scheduled close, so the market's end is the earlier of the two. The module is `sparq_analytics.survey`. Outcome readings take only markets closing on or before 2026-10-10 (M3). The new machine is not part of S3 (M6): its proposal comes when it is online.
+  - **S3.1, the certainty dump and the 99-cent queue: done** on branch `s3/1-dump` (BUILD-LOG S3.1, `docs/research/certainty-dump.md`); **its PR awaits the owner.** A 100-contract bid joining when the price reaches 99 loses in every category but Mentions (+$45 a day, thin: 28 reversals in 65 days, 3.3 days of frames); Sports and Crypto about −$13,000 a day; the whole 99-cent queue nets about $240,000 a day, 85% to crypto bots. **The owner's choice under M1 is open:** go on to S3.2 (the default; my recommendation, with Mentions re-read once more live days accrue) or hear a strand proposal. The live frames on the analytics node span 2026-10-24 21:00 to 2026-10-28 05:00 (the ingest holds nothing earlier); the survey's outputs are in the node's `survey` folder; the check clone there is on `s3/1-dump`. The new machine is not part of S3 (M6): its proposal comes when it is online.
   - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28, the delay run's files and `explore-fit|validate.json` with their trades files. The check clone there is on `main`.
 - **Standing rules from the owner:**
   - Announce each slice before anything else, and narrate each step (each tool call) in one plain line first.
