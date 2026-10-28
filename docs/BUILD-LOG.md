@@ -453,7 +453,7 @@ The fix commits (`f5f4219`, `3df6de3`, `ff195cc`) were reviewed together at low 
 | S2.1 sources, terms and the observation history | **done:** the map covers every market in scope; 0 wrong calls of 2,243 on 8,397 fit-part markets; the delay measured and W4's history delay set to 10 minutes | #10 |
 | S2.h core hardening from IKARS's review | **done:** no result changed; every guard refuses in a test | #11, #14 |
 | The mini code review rule (Q8), S2.2's plan | approved | #15 |
-| S2.2 exploration on the fit and validate parts | **done, no rules** (W9): $0.65 a day at the lower bound on the fit part and $0 on validate; the book leads the reports by a median 4.6 hours (highs) and 40 minutes (rain) | #16 |
+| S2.2 exploration on the fit and validate parts | **done, no rules** (W9): $0.65 a day at the lower bound on the fit part and $0 on validate; the book leads the reports by a median 4.6 hours (highs) and 41 minutes (rain) on the fit part, 5.4 hours and 40 minutes on validate | #16 |
 | S2.3 the pre-registered test | **not run** (W9); the test part stays unopened | |
 | S2.4 the live shadow run | **not run** (W9) | |
 
@@ -468,9 +468,16 @@ The owner chose to keep them (2026-10-28).
 
 **Verified.** Documents only, so no test was run for this slice; CI runs on the PR. On the analytics node, the check clone was moved from `s2/2-explore` back to `main` with nothing running from it.
 
-**Review (PLAN Q8).** Each figure was checked against BUILD-LOG S2.1 and S2.2 and against W9. The merge review's findings are listed below.
+**Review (PLAN Q8).** Each figure was checked against BUILD-LOG S2.1 and S2.2. The merge review, at medium effort over the branch against `main`, found 9 documentation issues and no runtime bugs, all fixed:
+1. This section pointed to a list of findings that was not there. **Fixed:** this list.
+2. to 4. The rain lead of 40 minutes (the validate figure) was paired with the fit part's 4.6 hours, in the new lesson, this entry's gate table and ASSESSMENT §7.2. W9, the rules file and the resume point had the same mix. **Fixed:** the fit part's 41 minutes, with the part named, everywhere.
+5. The resume point and §9 gave 8.8 M contracts for the 99-cent bids. That is every ruled-out contract; the 99-cent subset is 8.7 M. **Fixed** in the resume point, §9 and the write-up.
+6. The resume point did not name S2.c's PR. **Fixed.**
+7. The lesson said the reports "settle" a market. They make its outcome certain, and the climate value settles it. **Fixed.**
+8. The lesson called every post-call trade a holder selling at 99 cents. 38,381 of 40,159 were at 99 cents, and some may be takers buying the dead side. **Fixed.**
+9. The verdict sat before §6.2's planning paragraphs, which read as if S2 were still to be built. **Fixed:** the verdict closes §6.2, and the planning paragraphs are marked as the plan of 2026-10-27.
 
-**Problems and fixes.** Only the review's findings.
+**Problems and fixes.** Only the review's findings above. They also corrected W9 and the S2.2 write-up, both already merged.
 
 **Decisions (owner, 2026-10-28, as recommended).**
 - Keep the weather data on the analytics node.
