@@ -558,7 +558,7 @@ def _intervals(usable: pl.LazyFrame, hours: int, start_ms: int) -> dict[str, dic
             first_hour = start_ms // MS_PER_HOUR  # the span starts on an hour (its hour files)
             for row in nets.to_dicts():
                 index = int(row["hour"]) - first_hour
-                if 0 <= index < hours:
+                if 0 <= index < hours:  # pragma: no branch - events lie inside the span
                     per_hour[index] += row["num"]
             capacity = cluster_bootstrap(
                 per_hour, np.ones(hours), tail=TAIL, resamples=RESAMPLES, seed=SEED
