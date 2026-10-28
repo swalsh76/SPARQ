@@ -333,3 +333,37 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 - The Basic API tier allows reads at 200 tokens a second (burst 600) and writes at 100 (burst 100).
 
 **Problems and fixes.** The private-channel test first expected no commands at all; the fake server records commands per connection, so "nothing sent" is `[[]]`.
+
+### S2.2 Exploration on the fit and validate parts (2026-10-28 UTC, in progress: results read, awaiting the owner's decision on the rules)
+
+**Built.** `python -m sparq_analytics.weather explore --part fit|validate` (`weather/explore.py`). It refuses the test part by name and writes `explore-PART.json` and `explore-PART-trades.parquet` (the trades after each call) to the weather folder.
+- *Timeline.* A report counts 10 minutes after its observation time (W4). A bound counts only where **both** kinds of climate day allow it: the lower of the standard and the civil day's running bound, and rain once both have it. A report near midnight can then never settle the wrong day. *Chosen in building (not in the slice plan):* S2.1 found no wrong call under either day, and this is the conservative way to use both.
+- *The call:* the first counted moment the bound reaches the market's threshold (`check.threshold`, split out of `implied` so S2.1's and S2.2's calls cannot drift apart).
+- *Ours:* a trade after the call whose taker bought the certain side, as approved. It is priced one cent worse (W5) with the taker fee rounded up to a cent, each trade one order, and paid on Kalshi's result (W2).
+- *Capacity:* an upper bound (every such trade) and a lower bound (the first per market), each with the profit per contract and a studentized bootstrap clustered by city-day. Chicago's O'Hare and Midway count as one city, and so do Houston's two stations. The dollars a day are over the part's calendar days.
+- *W8:* the minutes from the call to the first trade of ours and to the last profitable one; the trades on the ruled-out side after the call; the calls Kalshi's result contradicted.
+- *The gap* (owner, 2026-10-28): per city-day of highs, the settled high (at least the winning bracket's lowest degree) against the highest hourly temperature, and the hours from the hourly peak until the bound (with the six-hour maximum) reached it.
+- `study.dataset.with_fees` made public (it was `_with_fees`; one caller and one test).
+
+**Verified (local).** 19 new tests on one hand-worked Central Park day (five markets, nine trades; prices, fees, profits, timings and the gap computed by hand). 12 planted bugs: 11 were caught on the first run. Rain counted on only one kind of day survived, so the timeline test gained rain on the clock's day only, and all 12 are caught. The weather package is 100% covered; the full suite has 1,862 passed and 196 skipped; ruff and mypy are clean.
+
+**Verified (analytics node, real data; 3 s a part).**
+
+| | fit (53 days) | validate (12 days) |
+|---|---|---|
+| Settled markets in scope | 8,397 | 2,088 |
+| Called (highs / rain) | 2,240 (1,972 / 268) | 532 (461 / 71) |
+| Wrong calls | 0 | 0 |
+| Trades after the call | 41,731 | 9,653 |
+| Ours: trades, markets, city-days | 1,572, 19, 19 | 1, 1, 1 |
+| Upper bound: profit, a day | $2,173.60, $41.01 | $0.00 |
+| Upper bound: cents a contract (lower 2.5%) | 2.03 (0.71) | 0 |
+| Lower bound (first per market): profit, a day | $12.02, $0.23 | $0.00 |
+| Ruled-out side after the call: trades, contracts | 40,159, 8.8 M | 9,652, 2.1 M |
+
+- *Where ours were.* 16 of the 19 markets are rain. The three highs rank 13th, 15th and 18th by profit; the five most profitable markets are rain (Atlanta 5 Sep, Houston 17 Sep, San Francisco 15 Aug, Boston 21 Sep, Washington 27 Aug).
+- *The book is ahead of the reports.* In the called markets, the certain side last traded below 95 cents a median **276 minutes before the call** for the highs (10% of markets under 70) and **41 minutes before** for rain (10% under 10). The validate part gives 325 and 40. Traders price the bound from forecasts, radar and the trend, hours before an hourly report proves it.
+- *The ruled-out side.* 38,381 of the fit part's 40,159 trades were at 99 cents for the certain side: holders sold a certain win at 99 cents (or a taker bought the dead side at 1 cent), and the maker bought it.
+- *The gap.* The settled high was above the highest hourly report on 679 of 1,086 city-days in the fit part (440 by 1 °F, 202 by 2, 32 by 3, 5 by 4 or more) and 137 of 253 in validate. On 426 of the 679 the six-hour maximum later reached it, a median of 4 hours after the hourly peak (p90 6); on 253 it never did.
+
+**Review (PLAN Q8).** `3e45c8b` (resume point; docs only, no code). `a28ec77` reviewed at low effort: no findings.
