@@ -1,10 +1,11 @@
-"""Command line for S2.1, the weather sources (PLAN §6.2).
+"""Command line for S2.1, the weather sources, and S2.2, the exploration (PLAN §6.2).
 
     python -m sparq_analytics.weather stations --kalshi DIR
     python -m sparq_analytics.weather download --data DIR --start DAY --end DAY
     python -m sparq_analytics.weather check    --data DIR --kalshi DIR [--first DAY] [--last DAY]
     python -m sparq_analytics.weather delay    --data DIR --hours H
     python -m sparq_analytics.weather delay-report --data DIR
+    python -m sparq_analytics.weather explore  --data DIR --kalshi DIR --part fit|validate
 
 Run it on the analytics node. ``--kalshi`` is the history download's ``kalshi`` folder, ``--data``
 the weather folder. ``stations`` lists the climate site and station of every market in scope (from
@@ -12,7 +13,9 @@ the history's start to the end of the validate part) and fails if one names a si
 ``download`` fetches the archived reports of every mapped station; ``check`` compares each day's
 bound with Kalshi's results, on the fit part by default and never on the test part, writing
 ``check.json``; ``delay`` records the live reports for ``H`` hours into ``live/delay.csv`` and
-``delay-report`` summarises it against the archive. Exit codes: 0 fine, 1 bad command line or
+``delay-report`` summarises it against the archive; ``explore`` measures S2.2's stale trades on
+the fit or the validate part (never the test part), writing ``explore-PART.json`` and the trades
+after each call to ``explore-PART-trades.parquet``. Exit codes: 0 fine, 1 bad command line or
 data, 2 the check found a wrong call or an unmapped site.
 """
 
@@ -30,6 +33,7 @@ from sparq_analytics.study.dataset import StudyDataError
 from sparq_analytics.weather import archive, live
 from sparq_analytics.weather.bounds import daily_bounds, report_bounds
 from sparq_analytics.weather.check import check, coverage, scope_markets
+from sparq_analytics.weather.explore import explore, part_days
 from sparq_analytics.weather.stations import FIT_END, SITES, TEST_START, WeatherDataError
 
 HISTORY_START = date(2026, 8, 7)
@@ -45,7 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m sparq_analytics.weather", description=__doc__.split("\n")[0]
     )
     parser.add_argument(
-        "command", choices=("stations", "download", "check", "delay", "delay-report")
+        "command",
+        choices=("stations", "download", "check", "delay", "delay-report", "explore"),
     )
     parser.add_argument("--data", type=Path, help="the weather folder")
     parser.add_argument("--kalshi", type=Path, help="the history download's kalshi folder")
@@ -54,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--first", type=date.fromisoformat, default=HISTORY_START)
     parser.add_argument("--last", type=date.fromisoformat, default=FIT_END)
     parser.add_argument("--hours", type=float, default=24.0)
+    parser.add_argument("--part", help="explore: fit or validate")
     return parser
 
 
@@ -138,12 +144,32 @@ def _delay_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _explore(args: argparse.Namespace) -> int:
+    data = _need(args.data, "--data")
+    kalshi = _need(args.kalshi, "--kalshi")
+    if args.part is None:
+        raise UsageError("--part is required")
+    first, last = part_days(args.part)
+    markets = scope_markets(kalshi, first, last)
+    bounds = report_bounds(archive.load_reports(data))
+    summary, after = explore(kalshi, markets, bounds, first, last)
+    print(
+        json.dumps(
+            {k: v for k, v in summary.items() if k not in ("by_hour", "by_series")}, indent=2
+        )
+    )
+    (data / f"explore-{args.part}.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    after.write_parquet(data / f"explore-{args.part}-trades.parquet")
+    return 0
+
+
 HANDLERS = {
     "stations": _stations,
     "download": _download,
     "check": _check,
     "delay": _delay,
     "delay-report": _delay_report,
+    "explore": _explore,
 }
 
 

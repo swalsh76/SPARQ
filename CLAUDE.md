@@ -11,18 +11,19 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ## Status
 
-**S0 is done; S1 stopped** (S1.1 NO-GO, S1.1b dropped, S1.2 on hold: PLAN D13). **S2, weather against station observations, is the active strand** (PLAN §6.2): S2.1 is done, S2.2 is next. **No real order is sent without the owner's go-ahead.**
+**S0 is done; S1 stopped** (S1.1 NO-GO, S1.1b dropped, S1.2 on hold: PLAN D13). **S2, weather against station observations** (PLAN §6.2): S2.1 is done; **S2.2 is done with no rules (W9)**, so S2.3 and S2.4 are not run. The next direction is the owner's call. **No real order is sent without the owner's go-ahead.**
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-28 (S2.1 done, awaiting the owner's merge; work moves to sessions opened in this repository's own folder).*
+*Last updated 2026-10-28 UTC (S2.2 done: no rules; its PR awaits the owner). Dates here are UTC.*
 
 - **Where the work happens:** open Claude Code in this repository's folder on the workstation (`%USERPROFILE%\dev\SPARQ`), not in KAPS's. This project's assistant memory (real host names, the analytics node's paths and account, the owner's preferences) is in the memory folder Claude Code keeps for this folder.
-- **Now (2026-10-28):**
-  - **PR #10, S2.1** (branch `s2/1-sources`): done (BUILD-LOG S2.1), **awaiting the owner's merge**. W4's history delay is **10 minutes** after the observation time (owner, 2026-10-28).
-  - **PR #15** (branch `docs/mini-review`): the mini code review rule (PLAN Q8, "Workflow" below), the PR checklist, and S2.2's approved plan in its PLAN row, **awaiting the owner's merge**.
-  - **Next: S2.2, exploration on the fit and validate parts**, on branch `s2/2-explore`, once PR #10 is merged (announce the slice first). Its plan is approved (2026-10-27, PLAN S2.2 row): an `explore --part fit|validate` command that refuses the test part; a timeline where a report counts 10 minutes after its observation time; stale trades counted only where the taker bought the already-certain side; profit after the taker fee; a bootstrap clustered by city-day; the repricing speed (W8); capacity as an upper bound (every stale trade) and a lower bound (the first per market), with W7's $25 floor judged on the lower; **plus (owner, 2026-10-28) how often and by how much the settled high is above the highest hourly report available at the time**; at most 4 proposed rules in `docs/research/weather-rules.json` for the owner's approval.
-  - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28 and the delay run's files. The check clone there is on `s2/1-sources`.
+- **Now (2026-10-28 UTC):**
+  - **PR #10, S2.1**: merged (`abe14da`). W4's history delay is **10 minutes** after the observation time (owner, 2026-10-28).
+  - **PR #15**: merged (`c58b2ab`): the mini code review rule (PLAN Q8, "Workflow" below), the PR checklist, and S2.2's approved plan in its PLAN row.
+  - **S2.2, exploration on the fit and validate parts: done, no rules (W9, owner, 2026-10-28)** on branch `s2/2-explore` (BUILD-LOG S2.2, `docs/research/weather-explore.md`). Takers could have taken stale quotes in 19 of 2,240 called fit-part markets ($0.65 a day at the lower bound) and in 1 on validate ($0): the book priced the bound a median 4.6 hours (highs) and 40 minutes (rain) before the call. S2.3 and S2.4 are not run and **the test part (2026-10-11 to 2026-10-22) stays unopened**. Parked in PLAN §9: resting bids at 99 cents for a certain side (8.8 M contracts on the fit part, no maker fee); the 5-minute readings entry gained S2.2's gap figures.
+  - **Next:** **PR #16** (S2.2) awaits the owner's merge; the merge review is done (10 findings, 9 fixed, BUILD-LOG S2.2). After it, the direction is the owner's call: S2 has no further slice, and the milestone's close-out slice is not yet planned.
+  - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28, the delay run's files and `explore-fit|validate.json` with their trades files. The check clone there is on `s2/2-explore`.
 - **Standing rules from the owner:**
   - Announce each slice before anything else, and narrate each step (each tool call) in one plain line first.
   - Plan before code; one branch per slice. **Merge a PR only when the owner explicitly approves that PR.**
@@ -43,7 +44,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 - **S1.1b dropped, unopened (owner, 2026-10-27; PLAN D13):** the registered forward test (digest `0af9ea44be7f…`) is never opened and its forward days are not downloaded. Do not run the S1.1b run script's `verdict` step. D11's guard lapses with it.
 
-- **S1.1 done, NO-GO (branch `s1/1-middle-tier`, PR open):** the four approved rules on the test part (digest `95eec43a8d2d…`, opened once 2026-10-25 20:49 UTC): R1 -0.09 cents (lower -2.00), R2 +2.71 (-3.66), R4 +2.51 (-1.30), R5 -1.29 (-3.98). Write-up `docs/research/middle-tier.md`. Under D3 S1 stopped; the rethink led to S1.1b (then dropped, D13) and to S2. The rules ledger on the analytics node locks this test part.
+- **S1.1 done, NO-GO (PR #3, merged 2026-10-25):** the four approved rules on the test part (digest `95eec43a8d2d…`, opened once 2026-10-25 20:49 UTC): R1 -0.09 cents (lower -2.00), R2 +2.71 (-3.66), R4 +2.51 (-1.30), R5 -1.29 (-3.98). Write-up `docs/research/middle-tier.md`. Under D3 S1 stopped; the rethink led to S1.1b (then dropped, D13) and to S2. The rules ledger on the analytics node locks this test part.
 
 - **S1.2p, shared definitions (PR #6, merged 2026-10-26; BUILD-LOG S1.2p):** done: `sparq_core.markets`, the WebSocket address per environment (demo default), and `sparq_server.names`. Behaviour is unchanged and nothing is deployed.
 

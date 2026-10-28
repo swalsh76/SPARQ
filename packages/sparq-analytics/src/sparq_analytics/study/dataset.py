@@ -91,7 +91,7 @@ def _reference_expr(config: StudyConfig, categories: list[str]) -> pl.Expr:
     return expr
 
 
-def _with_fees(trades: pl.LazyFrame, root: Path) -> pl.LazyFrame:
+def with_fees(trades: pl.LazyFrame, root: Path) -> pl.LazyFrame:
     """Add ``fee_type`` and ``multiplier_e6`` as in force at each trade (null when unknown).
 
     A series' own fee applies, except that a series with scheduled fee changes takes the fee of
@@ -222,7 +222,7 @@ def tag_trades(root: Path, config: StudyConfig, *, drop_unsampled: bool = False)
         # every trade); a run that will use only the sample need not do it for the rest. The
         # unsampled trades are then absent rather than counted as ``not_sampled``.
         frame = frame.filter(pl.col("event_ticker").is_in(chosen))
-    frame = _with_fees(frame, root)
+    frame = with_fees(frame, root)
     nominal = pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
     conservative = (
         pl.when(nominal > 0)

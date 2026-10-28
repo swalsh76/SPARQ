@@ -50,6 +50,41 @@ MARKET_COLUMNS = [
 ]
 
 
+def threshold(
+    series: str,
+    strike_type: str | None,
+    floor: float | None,
+    cap: float | None,
+    margin_f: int = MARGIN_F,
+) -> tuple[str, int | None] | None:
+    """What a market's bound can settle: the result ("yes" or "no") and the lowest bound in whole
+    °F that settles it (None for rain, settled by any rain), or None when nothing can."""
+    if series == RAIN_SERIES:
+        # rain settles only "more than 0 inches", the one strike the history holds; any other
+        # threshold is left uncalled rather than settled by 0.01 inch
+        return ("yes", None) if strike_type == "greater" and floor == 0 else None
+    if strike_type == "greater" and floor is not None:
+        return "yes", math.floor(floor) + 1 + margin_f
+    if strike_type == "less" and cap is not None:
+        return "no", math.ceil(cap) + margin_f
+    if strike_type == "between" and cap is not None:
+        return "no", math.floor(cap) + 1 + margin_f
+    return None
+
+
+def settled_low(strike_type: str | None, floor: float | None) -> int | None:
+    """The lowest whole degree F a winning market allows the day's high to be (the counterpart of
+    :func:`threshold`): ``between`` A and B from A, ``greater`` X from ``floor(X) + 1``; ``less``
+    has no lower edge."""
+    if floor is None:
+        return None
+    if strike_type == "between":
+        return math.ceil(floor)
+    if strike_type == "greater":
+        return math.floor(floor) + 1
+    return None
+
+
 def implied(
     series: str,
     strike_type: str | None,
@@ -60,22 +95,16 @@ def implied(
     margin_f: int = MARGIN_F,
 ) -> str | None:
     """The result a day's bound settles ("yes" or "no"), or None while it settles nothing."""
-    if series == RAIN_SERIES:
-        # rain settles only "more than 0 inches", the one strike the history holds; any other
-        # threshold is left uncalled rather than settled by 0.01 inch
-        return "yes" if rain and strike_type == "greater" and floor == 0 else None
-    if bound_f is None:
+    settles = threshold(series, strike_type, floor, cap, margin_f)
+    if settles is None:
         return None
-    if strike_type == "greater" and floor is not None:
-        return "yes" if bound_f >= math.floor(floor) + 1 + margin_f else None
-    if strike_type == "less" and cap is not None:
-        return "no" if bound_f >= math.ceil(cap) + margin_f else None
-    if strike_type == "between" and cap is not None:
-        return "no" if bound_f >= math.floor(cap) + 1 + margin_f else None
-    return None
+    call, lowest = settles
+    if lowest is None:
+        return call if rain else None
+    return call if bound_f is not None and bound_f >= lowest else None
 
 
-def _strike(value: Any) -> float | None:
+def strike_value(value: Any) -> float | None:
     return None if value is None or value == "" else float(value)
 
 
@@ -133,7 +162,7 @@ def check(markets: pl.DataFrame, daily: pl.DataFrame) -> tuple[pl.DataFrame, pl.
         days = daily.filter(pl.col("mode") == mode).drop("mode")
         joined = markets.join(days, on=["station", "day"], how="left")
         for row in joined.iter_rows(named=True):
-            floor, cap = _strike(row["floor_strike"]), _strike(row["cap_strike"])
+            floor, cap = strike_value(row["floor_strike"]), strike_value(row["cap_strike"])
             has_data = row["reports"] is not None
             call = implied(
                 row["series_ticker"],
