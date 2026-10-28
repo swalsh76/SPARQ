@@ -230,14 +230,13 @@ def _reversal_fills(
     frame: pl.DataFrame, queue: str, dumps: dict[str, list[int]], size_e2: int
 ) -> pl.Series:
     """Per episode, the expected fill a reversal would give the bid behind its queue, from the
-    history's dumps of its category (null where the queue is unknown)."""
+    history's dumps of its category (null where the queue is unknown, or where the history
+    never saw the category; an empty list is a category that never reversed)."""
     categories = frame["category"].to_list()
     queues = frame[queue].to_list()
     out: list[int | None] = [None] * frame.height
-    for category in set(categories):
+    for category in set(categories) & set(dumps):
         rows = [i for i, c in enumerate(categories) if c == category and queues[i] is not None]
-        if not rows:
-            continue
         fills = expected_fill(
             np.asarray([queues[i] for i in rows], dtype=np.int64),
             np.asarray(dumps.get(category, []), dtype=np.int64),
@@ -322,10 +321,11 @@ def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, 
             )
             aggs.append((pl.col(f"fee_{name}").sum() * 24 // hours).alias(f"fee_a_day_e6_{name}"))
             if f"rev_fill_{name}" in known.columns:
-                aggs.append(
-                    (pl.col(f"rev_fill_{name}").sum() * 24 // hours).alias(
-                        f"rev_fills_a_day_e2_{name}"
-                    )
+                known_fill = pl.col(f"rev_fill_{name}")
+                aggs.append(  # null, not 0, where no episode's reversal fill is known
+                    pl.when(known_fill.is_not_null().any())
+                    .then(known_fill.sum() * 24 // hours)
+                    .alias(f"rev_fills_a_day_e2_{name}")
                 )
     by_category = known.group_by("category").agg(aggs)
     rate = closed.group_by("category").agg(

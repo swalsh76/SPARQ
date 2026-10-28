@@ -21,8 +21,8 @@ from surveyhelpers import BASE_TIME, lm, write_history, write_live
 
 END = datetime(2026, 10, 25, 4, tzinfo=UTC)
 # the history world's Sports reversals (C's no side, D) and false regime (D)
-REVERSAL_DUMPS = {"Sports": [1_500, 2_500]}
-FALSE_DUMPS = {"Sports": [2_500]}
+REVERSAL_DUMPS = {"Sports": [1_500, 2_500], "Climate and Weather": []}
+FALSE_DUMPS = {"Sports": [2_500]}  # the history never saw a Weather false regime here
 
 
 def found_episodes(live: Path) -> pl.DataFrame:
@@ -132,7 +132,8 @@ def test_fills_are_first_in_first_out_behind_the_queue_with_the_maker_fee(tmp_pa
     # a reversal's dump (15 or 25 contracts in the Sports history) behind each queue
     assert (first["rev_fill_onset_10000"], second["rev_fill_onset_10000"]) == (1_000, 1_800)
     assert l4["rev_fill_onset_10000"] == 1_900
-    assert rows[("L2", lm(1, 40))]["rev_fill_onset_10000"] == 0  # no reversal in Weather
+    assert rows[("L2", lm(1, 40))]["rev_fill_onset_10000"] == 0  # Weather never reversed
+    assert rows[("L2", lm(1, 40))]["rev_fill_hour_before_10000"] is None  # not measured
     # a false regime's dump (25 contracts) behind the hour-before queue
     assert (first["rev_fill_hour_before_10000"], second["rev_fill_hour_before_10000"]) == (2_500, 0)
     assert l4["rev_fill_hour_before_10000"] is None  # the queue then is unknown
@@ -173,6 +174,9 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     assert sports["fee_a_day_e6_onset_10000"] == 42_624
     assert sports["rev_fills_a_day_e2_onset_10000"] == 28_200  # 4,700 in 4 hours
     assert sports["rev_fills_a_day_e2_hour_before_10000"] == 15_000
+    weather = summary["by_category"]["Climate and Weather"]
+    assert weather["rev_fills_a_day_e2_onset_10000"] == 0
+    assert weather["rev_fills_a_day_e2_hour_before_10000"] is None
     assert (sports["dump_e2_a_regime_hour"], sports["closed_hours_median"]) == (2_500.0, 1.0)
     weather = summary["by_category"]["Climate and Weather"]
     assert (weather["episodes"], weather["censored"], weather["dump_e2"]) == (1, 1, 15_000)
