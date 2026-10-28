@@ -381,6 +381,8 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 
 The behaviour fixes (1, 3, 4, 6, and the lead's "before the call") were undone one at a time: the tests caught all five. Rerunning the real data also showed the results were not repeatable: the bootstrap's clusters came in no fixed order, and trades of one market in one millisecond (common) had no fixed order, so "the first trade" changed between runs (the lower bound's point moved from 21.7 to 6.1 cents a contract). **Fixed:** the clusters are sorted and the trade id breaks ties (which of such trades came first is not recorded). Weather tests: 97 passed, the package 100% covered; the full suite 1,865 passed and 196 skipped; ruff and mypy clean.
 
+The fix commits (`f5f4219`, `3df6de3`, `ff195cc`) were reviewed together at low effort: one finding, that `lead` would count markets never called. **No change needed:** `priced_trades` keeps only called markets (the lead test's uncalled T85, with a trade at 50 cents, is not counted).
+
 **Decisions.**
 - **W9: no rules (owner, 2026-10-28, as recommended).** No rule could reach W7's 100 signalled city-days or its $25 floor, so S2.3 and S2.4 are not run and the test part stays unopened (its first two days' trade files were opened only for the validate markets' last trades). `docs/research/weather-rules.json` holds the empty list; the write-up is `docs/research/weather-explore.md`.
 - **Parked in PLAN §9** (named as scope creep): resting bids at 99 cents for an already-certain side. All 25 series in scope are plain `quadratic`, with no maker fee and no recorded fee change (read on the node, 2026-10-28). The 5-minute readings entry gains S2.2's gap figures.
