@@ -3,10 +3,9 @@
 Kalshi's daily-high and rain markets name an NWS climate site in their rules (``CLINYC``,
 ``CLIMDW``, ...); the site's reports come from one airport or city station, listed here by hand
 and proved by ``check`` (a wrong station shows up as bounds on the wrong side of the results). The
-code is read
-from each market's own rules, not per series, because a series can move: Houston's rain market
-named ``CLIHOU`` and later ``CLIIAH``. The first week of the history names only a city; those
-markets take their series' one code.
+code is read from each market's own rules, not per series, because a series can move: Houston's
+rain market named ``CLIIAH`` (Bush Intercontinental) until 2026-08-13 and ``CLIHOU`` (Hobby)
+after. The first week of the history names only a city; those markets take their series' one code.
 
 An NWS climate day runs from midnight to midnight local *standard* time all year, so in summer it
 is 01:00 to 01:00 on the clock; the "civil" day (the clock's midnight to midnight) is kept as a
@@ -120,11 +119,6 @@ EVENT_DAY = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})$")
 
 class WeatherDataError(Exception):
     """The station map, the reports or the markets are missing or inconsistent."""
-
-
-def in_scope(series: str) -> bool:
-    """W1: the daily highs and the daily rain markets."""
-    return series in SCOPE
 
 
 def code_in(rules: str | None) -> str | None:

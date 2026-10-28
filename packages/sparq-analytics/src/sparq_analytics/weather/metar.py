@@ -1,8 +1,8 @@
 """The parts of a station report (METAR or SPECI) that bound a day's high and say it rained.
 
 * **Temperature:** the remark ``TsTTTsTTT`` gives it in tenths of a degree Celsius; without it, the
-  body's ``TT/DD`` gives whole degrees (``M`` for minus), so the true value is at least half a
-  degree lower than written.
+  body's ``TT/DD`` gives whole degrees (``M`` for minus), so the true value can be up to half a
+  degree lower than written, and the parser takes that lower edge.
 * **Six-hour maximum:** the remark ``1sTTT`` (tenths of a degree Celsius), sent with the reports
   near 00, 06, 12 and 18 UTC, is the highest temperature of the six hours before the report.
 * **Precipitation:** the remark ``Prrrr`` is the rain since the last routine report in hundredths

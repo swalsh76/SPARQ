@@ -23,6 +23,7 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from pathlib import Path
 
+import httpx
 import polars as pl
 
 from sparq_analytics.study.dataset import StudyDataError
@@ -150,6 +151,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return HANDLERS[args.command](args)
-    except (UsageError, WeatherDataError, StudyDataError, ValueError, OSError) as error:
+    except (
+        UsageError,
+        WeatherDataError,
+        StudyDataError,
+        ValueError,
+        OSError,
+        httpx.HTTPError,
+        pl.exceptions.PolarsError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

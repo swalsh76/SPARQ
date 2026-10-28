@@ -4,13 +4,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from sparq_analytics.weather.stations import (
     BY_STATION,
+    SCOPE,
     SITES,
     WeatherDataError,
     city_of,
     climate_day,
     code_in,
     day_bounds,
-    in_scope,
     market_day,
 )
 
@@ -47,13 +47,8 @@ def test_an_event_ticker_without_a_day_is_refused(ticker: str) -> None:
 
 
 def test_the_scope_is_the_daily_highs_and_rain() -> None:
-    assert in_scope("KXRAIN") and in_scope("KXHIGHTSEA")
-    assert (
-        not in_scope("KXHIGHINFLATION")
-        and not in_scope("KXTEMPNYCH")
-        and not in_scope("KXLOWTAUS")
-        and not in_scope("KXRAINNYCM")
-    )
+    assert {"KXRAIN", "KXHIGHTSEA"} <= SCOPE
+    assert not {"KXHIGHINFLATION", "KXTEMPNYCH", "KXLOWTAUS", "KXRAINNYCM"} & SCOPE
 
 
 def test_in_summer_the_standard_day_starts_at_one_on_the_clock() -> None:

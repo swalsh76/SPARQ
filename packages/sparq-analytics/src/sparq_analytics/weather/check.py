@@ -61,7 +61,9 @@ def implied(
 ) -> str | None:
     """The result a day's bound settles ("yes" or "no"), or None while it settles nothing."""
     if series == RAIN_SERIES:
-        return "yes" if rain else None
+        # rain settles only "more than 0 inches", the one strike the history holds; any other
+        # threshold is left uncalled rather than settled by 0.01 inch
+        return "yes" if rain and strike_type == "greater" and floor == 0 else None
     if bound_f is None:
         return None
     if strike_type == "greater" and floor is not None:
@@ -86,7 +88,7 @@ def scope_markets(kalshi_root: Path, first: date, last: date) -> pl.DataFrame:
         )
     markets = (
         scan_markets(kalshi_root, MARKET_COLUMNS)
-        .filter(pl.col("series_ticker").is_in(sorted(SCOPE)))  # stations.in_scope, in polars
+        .filter(pl.col("series_ticker").is_in(sorted(SCOPE)))  # W1's scope
         .filter(pl.col("result").is_in(["yes", "no"]))
         .collect()
     )
@@ -172,6 +174,8 @@ def check(markets: pl.DataFrame, daily: pl.DataFrame) -> tuple[pl.DataFrame, pl.
                     "wrong0": call0 is not None and call0 != row["result"],
                 }
             )
+    if not rows:
+        raise WeatherDataError("no settled market in scope in that window")
     detail = pl.DataFrame(rows, infer_schema_length=None)
     summary = (
         detail.group_by("mode", "series", "city")

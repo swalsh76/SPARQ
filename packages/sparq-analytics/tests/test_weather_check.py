@@ -93,6 +93,8 @@ def daily(rows: list[tuple[str, str, date, int | None, bool]]) -> pl.DataFrame:
         ("KXRAIN", "greater", 0.0, None, None, True, 1, "yes"),
         ("KXRAIN", "greater", 0.0, None, None, False, 1, None),
         ("KXRAIN", "greater", 0.0, None, None, None, 1, None),
+        ("KXRAIN", "greater", 0.5, None, None, True, 1, None),  # only "more than 0" is settled
+        ("KXRAIN", "between", 0.0, 0.5, None, True, 1, None),
     ],
 )
 def test_what_a_bound_settles(
@@ -163,6 +165,12 @@ def test_the_check_counts_calls_and_finds_the_wrong_one(tmp_path: Path) -> None:
     assert wrong.filter(pl.col("mode") == "standard")["ticker"].to_list() == [
         "KXHIGHNY-26SEP15-T73"
     ]
+
+
+def test_a_window_with_no_settled_market_is_refused(tmp_path: Path) -> None:
+    markets = scope_markets(write_history(tmp_path, MARKETS), date(2026, 8, 1), date(2026, 8, 5))
+    with pytest.raises(WeatherDataError, match="no settled market"):
+        check(markets, daily([("KNYC", "standard", SEP15, 74, True)]))
 
 
 def test_coverage_counts_short_days() -> None:

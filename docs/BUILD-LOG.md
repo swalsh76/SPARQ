@@ -258,6 +258,20 @@ The owner asked on 2026-10-26 to fix every outstanding item of the two code revi
   - First seen later than 5, 6, 7, 10 and 15 minutes: 90, 24, 12, 7 and 4 of the 1,067. The slowest were routine reports: Providence 31 minutes, Chicago O'Hare 29, New Orleans 16, Tampa 15.
   - Against the archive: all 1,143 found; 1,109 with the same text and 1,142 with the same readings. The one exception, College Station at 10:53 UTC on 2026-10-27, is archived without its remarks, so the archive reads the body's lower edge (16.5 °C) instead of the tenths (17.2 °C): the archive can only understate, never overstate, a bound.
 
+**Review (PLAN Q8).** Each commit from 2026-10-28 was reviewed at low effort, with no findings. The merge review, at medium effort over the branch against `main`, found 10 issues:
+1. `check` crashed on a window with no settled market (polars error on an empty frame). **Fixed:** it is refused with a message; test added.
+2. Network errors (`httpx`) and polars errors escaped the command line's "exit 1 with one error line". **Fixed;** test added.
+3. A rain market was called YES on any rain, whatever its strike. All 2,357 `KXRAIN` markets in the history are "more than 0", so no past call changes. **Fixed:** only that strike is called; tests added.
+4. A restarted delay recorder wrote the last two hours' reports again. The run measured had no restart. **Fixed:** it reads what the file holds first; test added.
+5. The archive comparison could count one live report twice where the archive holds two reports in the same minute. The run measured found 1,143 of 1,143, so it was not affected. **Fixed:** each live report is matched once, against any of them; test added.
+6. The `stations` docstring had Houston's rain codes in the wrong order. **Fixed.**
+7. The PLAN said W4 counts from the "time of issue" while the decision is the observation time; S2.2's row lacks the added measure. **Fixed:** W4 reworded; the S2.2 row is updated in PR #15, which already changes that row.
+8. The archive fetch waited up to a minute after its last failed try. **Fixed;** test asserts 5 waits for 6 tries.
+9. `in_scope` duplicated the scope filter and was used only by a test. **Fixed:** removed, and the test reads `SCOPE`. `day_bounds` is also unused by the code, but kept: S2.2's timeline needs it.
+10. The parser's docstring said whole degrees are "at least" half a degree high; it is "up to", and the code takes the lower edge. **Fixed.**
+
+The six code fixes were undone one at a time: the tests caught all six. Weather tests: 75 passed, the package 100% covered; ruff and mypy clean.
+
 **Decisions.**
 - **W4's history delay is 10 minutes after the observation time** (owner, 2026-10-28, as recommended). The p95 rounded up (6 minutes) would leave 2.2% of reports counted before they were public, each one a chance to overstate the edge; 10 minutes leaves 0.7%.
 - **Added to S2.2** (owner, 2026-10-28): measure, from the data already held, how often and by how much the settled high is above the highest hourly report available at the time, and how many hours later the reports show it. It sizes the follow-up below.

@@ -71,7 +71,8 @@ def fetch(
             if response.status_code not in RETRY_STATUS:
                 response.raise_for_status()
                 return response.text
-        sleep(backoff(attempt, 2.0, 60.0))
+        if attempt < RETRIES - 1:
+            sleep(backoff(attempt, 2.0, 60.0))
     raise WeatherDataError(f"the archive kept refusing after {RETRIES} tries")
 
 

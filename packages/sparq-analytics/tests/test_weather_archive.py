@@ -63,8 +63,10 @@ def test_fetch_retries_a_dropped_connection_and_gives_up_in_the_end() -> None:
     with pytest.raises(httpx.ConnectError):
         fetch(client_for(httpx.MockTransport(broken)), {}, sleep=lambda s: None)
     always = httpx.MockTransport(lambda r: httpx.Response(503))
+    waits: list[float] = []
     with pytest.raises(WeatherDataError, match="6 tries"):
-        fetch(client_for(always), {}, sleep=lambda s: None)
+        fetch(client_for(always), {}, sleep=waits.append)
+    assert len(waits) == 5  # no wait after the last try
     missing = httpx.MockTransport(lambda r: httpx.Response(404))
     with pytest.raises(httpx.HTTPStatusError):
         fetch(client_for(missing), {}, sleep=lambda s: None)

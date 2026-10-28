@@ -95,6 +95,11 @@ def test_record_marks_the_first_answer_as_baseline_and_keeps_new_reports(tmp_pat
     client = httpx.Client(transport=httpx.MockTransport(lambda r: next(again)))
     record(path, ["KNYC"], 1 / 60, client=client, clock=clock, sleep=clock.sleep, log=lines.append)
     assert pl.read_csv(path).height == 2
+    # a restart does not write the reports it already holds again
+    repeat = iter([httpx.Response(200, json=[item("KNYC", OBS, RAW)])])
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: next(repeat)))
+    record(path, ["KNYC"], 1 / 60, client=client, clock=clock, sleep=clock.sleep, log=lines.append)
+    assert pl.read_csv(path).height == 2
 
 
 def test_record_opens_its_own_client_with_the_agent(
@@ -171,6 +176,34 @@ def test_summarize_gives_the_delays_and_the_archive_match(tmp_path: Path) -> Non
     # the 01:51 report is identical; the 02:51 one differs in its tenths; 03:51 is not archived
     assert out["archive"] == {"found": 2, "same_text": 1, "same_reading": 1}
     json.dumps(out)
+
+
+def test_summarize_matches_each_live_report_once_when_the_archive_has_two_in_a_minute(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "delay.csv"
+    write_live(
+        path,
+        [
+            {
+                "station": "KNYC",
+                "kind": "METAR",
+                "obs_ms": OBS * 1000,
+                "report_ms": None,
+                "receipt_ms": None,
+                "first_seen_ms": OBS * 1000 + 200_000,
+                "baseline": 0,
+                "raw": RAW,
+            }
+        ],
+    )
+    archived = pl.concat(
+        [
+            parse_csv(f"station,valid,metar\nNYC,2026-10-27 01:51,{ARCHIVED_0151}\n", "KNYC", "r"),
+            parse_csv(f"station,valid,metar\nNYC,2026-10-27 01:51,{ARCHIVED_0251}\n", "KNYC", "s"),
+        ]
+    )
+    assert summarize(path, archived)["archive"] == {"found": 1, "same_text": 1, "same_reading": 1}
 
 
 def test_summarize_with_nothing_timed_and_no_archive(tmp_path: Path) -> None:

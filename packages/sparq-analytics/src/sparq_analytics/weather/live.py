@@ -80,6 +80,10 @@ def record(
     path.parent.mkdir(parents=True, exist_ok=True)
     fresh = not path.exists()
     seen: set[tuple[str, int, str]] = set()
+    if not fresh:
+        # a restart appends: the reports already written are not written again
+        with path.open(newline="", encoding="utf-8") as existing:
+            seen = {(r["station"], int(r["obs_ms"]), r["raw"]) for r in csv.DictReader(existing)}
     written, first = 0, True
     end = clock() + hours * 3600
     try:
@@ -147,8 +151,10 @@ def summarize(path: Path, archive: pl.DataFrame | None = None) -> dict[str, Any]
         "receipt_after_obs_s": _quantiles(receipt_s),
     }
     if archive is not None:
-        archived = archive.select(
-            "station", pl.col("valid_ms").alias("obs_ms"), pl.col("metar").alias("archived")
+        # the archive can hold two reports in one minute (routine and special), so each live
+        # report is matched once, against any of them
+        archived = archive.group_by("station", pl.col("valid_ms").alias("obs_ms")).agg(
+            pl.col("metar").alias("archived")
         )
         joined = live.join(archived, on=["station", "obs_ms"], how="left")
         same_text = same_reading = found = 0
@@ -156,7 +162,7 @@ def summarize(path: Path, archive: pl.DataFrame | None = None) -> dict[str, Any]
             if row["archived"] is None:
                 continue
             found += 1
-            same_text += _norm(row["raw"]) == _norm(row["archived"])
-            same_reading += parse(row["raw"]) == parse(row["archived"])
+            same_text += any(_norm(row["raw"]) == _norm(text) for text in row["archived"])
+            same_reading += any(parse(row["raw"]) == parse(text) for text in row["archived"])
         out["archive"] = {"found": found, "same_text": same_text, "same_reading": same_reading}
     return out

@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import httpx
 import polars as pl
 import pytest
 from sparq_analytics.weather import archive, live
@@ -36,6 +37,25 @@ def test_stations_lists_the_sites_and_flags_an_unmapped_one(
     assert "1 markets name no mapped site" in err
     mapped = write_history(tmp_path / "ok", [m for m in MARKETS if "SEA" not in str(m["ticker"])])
     assert main(["stations", "--kalshi", str(mapped)]) == 0
+
+
+def test_a_network_or_data_failure_is_one_error_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def down(*args: Any, **kwargs: Any) -> None:
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(archive, "download", down)
+    argv = ["download", "--data", str(tmp_path), "--start", "2026-10-01", "--end", "2026-10-02"]
+    assert main(argv) == 1
+    assert capsys.readouterr().err == "error: down\n"
+    folder = tmp_path / "weather" / "archive"
+    folder.mkdir(parents=True)
+    (folder / "KNYC-20260801-20261024.parquet").write_bytes(b"not parquet")
+    (tmp_path / "weather" / "live").mkdir()
+    (tmp_path / "weather" / "live" / "delay.csv").write_text(",".join(live.FIELDS) + "\n")
+    assert main(["delay-report", "--data", str(tmp_path / "weather")]) == 1
+    assert capsys.readouterr().err.startswith("error: ")
 
 
 def test_check_writes_its_summary_and_fails_on_a_wrong_call(
