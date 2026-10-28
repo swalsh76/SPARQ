@@ -15,7 +15,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-28 UTC (S3.1 merged; S3.2 begun on `s3/2-lag`, its slice plan awaiting the owner). Dates here are UTC.*
+*Last updated 2026-10-28 UTC (S3.2's slice plan approved; its code is being built on `s3/2-lag`). Dates here are UTC.*
 
 - **Where the work happens:** open Claude Code in this repository's folder on the workstation (`%USERPROFILE%\dev\SPARQ`), not in KAPS's. This project's assistant memory (real host names, the analytics node's paths and account, the owner's preferences) is in the memory folder Claude Code keeps for this folder.
 - **Now (2026-10-28 UTC):**
@@ -27,7 +27,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
   - **PR #18, S2.c (S2's close-out)**: merged (`af280ec`). S1 and S2 are closed. The weather data stays on the node (owner).
   - **PR #19, the S3 proposal**: merged (`136c502`; PLAN §6.3, M1 to M7): three measurements in turn from data already held, with bars set before reading.
   - **S3.1, the certainty dump and the 99-cent queue: done, merged as PR #20** (`54178e0`; BUILD-LOG S3.1, `docs/research/certainty-dump.md`). A 100-contract bid joining when the price reaches 99 loses in every category but Mentions (+$39 a day, thin: 28 reversals in 65 days, 3.3 days of frames); Sports and Crypto about −$12,800 a day; the whole 99-cent queue nets about $240,000 a day, 85% to crypto bots. Mentions is a thin lead to re-read once more live days accrue. **The owner chose S3.2 (M1, 2026-10-28, as recommended).**
-  - **S3.2, where the book is slow: begun** on branch `s3/2-lag`; **its slice plan awaits the owner's approval; no code yet.** The live frames on the analytics node span 2026-10-24 21:00 to 2026-10-28 05:00 and the ingest keeps recording (the ingest holds nothing earlier); the survey's outputs are in the node's `survey` folder; the check clone there is on `main`. The new machine is not part of S3 (M6): its proposal comes when it is online.
+  - **S3.2, where the book is slow: in progress** on branch `s3/2-lag`; **slice plan approved 2026-10-28 (PLAN §6.3, S3.2 row); the code is being built, nothing has run on the node yet.** The live frames on the analytics node span 2026-10-24 21:00 to 2026-10-28 05:00 and the ingest keeps recording (the ingest holds nothing earlier); the survey's outputs are in the node's `survey` folder; the check clone there is on `main`. The new machine is not part of S3 (M6): its proposal comes when it is online.
   - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28, the delay run's files and `explore-fit|validate.json` with their trades files (the check clone's branch is in the S3.1 line above).
 - **Standing rules from the owner:**
   - Announce each slice before anything else, and narrate each step (each tool call) in one plain line first.
