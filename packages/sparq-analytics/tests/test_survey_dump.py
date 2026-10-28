@@ -109,6 +109,8 @@ def test_the_summary_has_the_payout_the_dump_and_the_reversals_per_category(
     assert sports["false_dump_e2"] == 2_500
     assert (sports["reversal_markets"], sports["reversal_e2"]) == (2, 4_000)
     assert (sports["winning_99_markets"], sports["reactive_payout"]) == (3, 0.6)
+    assert sports["reversal_dumps_e2"] == [1_500, 2_500]  # C and D, per market
+    assert sports["false_regime_dumps_e2"] == [2_500]  # D
     assert (sports["hours_to_end_median"], sports["settle_ms_median"]) == (6.0, 21_900_000)
     assert sports["makers_gain_a_day_e6"] == 520_000  # 52 contracts at a cent, over one day
     weather = summary["by_category"]["Climate and Weather"]
@@ -118,6 +120,7 @@ def test_the_summary_has_the_payout_the_dump_and_the_reversals_per_category(
     culture = summary["by_category"]["Culture"]
     assert (culture["markets"], culture["true_regimes"], culture["dump_e2"]) == (1, 0, 0)
     assert culture["payout"] is None and culture["reactive_payout"] is None  # never 0/0
+    assert (culture["reversal_dumps_e2"], culture["false_regime_dumps_e2"]) == ([], [])
     levels = {
         (r["category"], r["cents"], r["taker_bought_dead"], r["in_regime"]): r["contracts_e2"]
         for r in summary["levels"]

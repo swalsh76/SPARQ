@@ -7,9 +7,11 @@ Two bidders, each resting a bid of ``S`` contracts in every episode the live fra
 * **the knowing one** joins an hour before, which only knowledge of the outcome allows. Its risk
   is the false regimes: a side that stayed at 99 to the end and still lost.
 
-Each gains 1 cent on the contracts the queue lets it fill, first in, first out. Each loses 99
-cents on its **whole bid** in a reversed market: the panic there runs through the entire queue, so
-the loss is not rationed as the gains are. Both rates come from the history, by market. The fee is
+Each gains 1 cent on the contracts the queue lets it fill, first in, first out, in the markets
+that pay. Each loses 99 cents, in the markets that reverse, on the contracts the reversal's dump
+would have filled behind the same queue (the history's reversal dumps, paired with the live
+queues): a panic usually runs through the whole queue, a deep queue sometimes shields the bid.
+Both rates come from the history, by market. The fee is
 the maker fee where the series charges one. The capital tied is the fills' cost for the median
 hours to settlement, and the collateral the resting bids hold at any moment, for the median length
 of a closed episode. The bar is $25 a day within one category (M4).
@@ -57,16 +59,17 @@ def combine(history: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
                 wins, total = bases[position]
                 name = f"{position}_{size_e2}"
                 fills = frames[f"fills_a_day_e2_{name}"]
+                reversal_fills = frames.get(f"rev_fills_a_day_e2_{name}")
                 fee = frames[f"fee_a_day_e6_{name}"]
-                if fills is None or not total:
+                if fills is None or reversal_fills is None or not total:
                     for key in ("gain", "loss", "dollars_a_day", "capital", "collateral"):
                         row[f"{key}_e6_{name}"] = None
                     row[f"clears_{name}"] = False
                     continue
-                # a cent on the fills in the markets that paid; 99 cents on the whole bid in the
-                # markets that reversed; both exactly, in integers
+                # a cent on the fills in the markets that paid; 99 cents on the reversal's fills
+                # in the markets that reversed; both exactly, in integers
                 gain = fills * CENTS * wins // (total * 100)
-                loss = episodes * (total - wins) * size_e2 * (E6 - CENTS) // (total * 100)
+                loss = reversal_fills * (total - wins) * (E6 - CENTS) // (total * 100)
                 dollars = gain - loss - fee
                 settle = past.get("settle_ms_median")
                 row[f"gain_e6_{name}"] = gain

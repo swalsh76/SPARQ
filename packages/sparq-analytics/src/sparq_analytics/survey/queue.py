@@ -23,7 +23,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import polars as pl
+from numpy.typing import NDArray
 from sparq_core.fees import MAKER_SHARE_E2
 
 from sparq_analytics.live.source import HOUR, hour_files, hour_name, last_hour_end
@@ -207,9 +209,56 @@ def dump_trades(live: Path, found: pl.DataFrame, start: datetime, end: datetime)
     )
 
 
-def with_fills(found: pl.DataFrame, markets: pl.DataFrame, fees: pl.DataFrame) -> pl.DataFrame:
+def expected_fill(
+    queues: NDArray[np.int64], dumps: NDArray[np.int64], size_e2: int
+) -> NDArray[np.int64]:
+    """For each queue, the mean over ``dumps`` of what a bid of ``size_e2`` behind it would
+    fill, first in, first out (``clamp(dump - queue, 0, size)``), in whole hundredths; zero
+    when there is no dump to draw from."""
+    if dumps.size == 0:
+        return np.zeros(queues.shape, dtype=np.int64)
+    ordered = np.sort(dumps)
+    sums = np.concatenate([[0], np.cumsum(ordered)])
+    low = np.searchsorted(ordered, queues, side="right")  # dumps at or below the queue: 0
+    high = np.searchsorted(ordered, queues + size_e2, side="left")  # from here on: the bid
+    partial = (sums[high] - sums[low]) - queues * (high - low)
+    full = (ordered.size - high) * size_e2
+    return np.asarray((partial + full) // ordered.size, dtype=np.int64)
+
+
+def _reversal_fills(
+    frame: pl.DataFrame, queue: str, dumps: dict[str, list[int]], size_e2: int
+) -> pl.Series:
+    """Per episode, the expected fill a reversal would give the bid behind its queue, from the
+    history's dumps of its category (null where the queue is unknown)."""
+    categories = frame["category"].to_list()
+    queues = frame[queue].to_list()
+    out: list[int | None] = [None] * frame.height
+    for category in set(categories):
+        rows = [i for i, c in enumerate(categories) if c == category and queues[i] is not None]
+        if not rows:
+            continue
+        fills = expected_fill(
+            np.asarray([queues[i] for i in rows], dtype=np.int64),
+            np.asarray(dumps.get(category, []), dtype=np.int64),
+            size_e2,
+        )
+        for i, fill in zip(rows, fills.tolist(), strict=True):
+            out[i] = fill
+    return pl.Series(out, dtype=pl.Int64)
+
+
+def with_fills(
+    found: pl.DataFrame,
+    markets: pl.DataFrame,
+    fees: pl.DataFrame,
+    reversal_dumps: dict[str, list[int]] | None = None,
+    false_dumps: dict[str, list[int]] | None = None,
+) -> pl.DataFrame:
     """Each episode with its category and fee terms and, for each bid size, the fills of a bid
-    joining at the onset and an hour before, with the maker fee on them."""
+    joining at the onset and an hour before, with the maker fee on them; and, given the
+    history's reversal dumps (for the onset) and false-regime dumps (for the hour before), the
+    fill a reversal would have given each."""
     share = pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=0, return_dtype=pl.Int64)
     frame = (
         found.join(markets.select("ticker", "series_ticker", "category"), on="ticker", how="left")
@@ -231,7 +280,19 @@ def with_fills(found: pl.DataFrame, markets: pl.DataFrame, fees: pl.DataFrame) -
                     pl.col("multiplier_e6"), pl.col("share"), fill, pl.lit(CERTAIN_E6)
                 ).alias(f"fee_{position}_{size_e2}")
             )
-    return frame.with_columns(columns)
+    frame = frame.with_columns(columns)
+    for size_e2 in BID_SIZES_E2:
+        for position, queue, dumps in (
+            ("onset", "onset_size_e2", reversal_dumps),
+            ("hour_before", "hour_before_size_e2", false_dumps),
+        ):
+            if dumps is not None:
+                frame = frame.with_columns(
+                    _reversal_fills(frame, queue, dumps, size_e2).alias(
+                        f"rev_fill_{position}_{size_e2}"
+                    )
+                )
+    return frame
 
 
 def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, Any]:
@@ -260,6 +321,12 @@ def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, 
                 (pl.col(f"fill_{name}").sum() * 24 // hours).alias(f"fills_a_day_e2_{name}")
             )
             aggs.append((pl.col(f"fee_{name}").sum() * 24 // hours).alias(f"fee_a_day_e6_{name}"))
+            if f"rev_fill_{name}" in known.columns:
+                aggs.append(
+                    (pl.col(f"rev_fill_{name}").sum() * 24 // hours).alias(
+                        f"rev_fills_a_day_e2_{name}"
+                    )
+                )
     by_category = known.group_by("category").agg(aggs)
     rate = closed.group_by("category").agg(
         pl.col("dump_e2").sum().alias("closed_dump_e2"),
@@ -281,8 +348,11 @@ def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, 
     }
 
 
-def live_reading(live: Path, fees: pl.DataFrame) -> tuple[dict[str, Any], pl.DataFrame]:
-    """The whole live reading: the summary and the episodes."""
+def live_reading(
+    live: Path, fees: pl.DataFrame, history: dict[str, Any] | None = None
+) -> tuple[dict[str, Any], pl.DataFrame]:
+    """The whole live reading: the summary and the episodes; with the history's summary, the
+    fills a reversal would give too."""
     start, end = span(live)
     reduced = pl.concat([_reduce(path) for path in hour_files(live, "ticker", start, end)])
     found = episodes(reduced, start, end)
@@ -290,7 +360,14 @@ def live_reading(live: Path, fees: pl.DataFrame) -> tuple[dict[str, Any], pl.Dat
     markets = pl.read_parquet(
         live / "markets.parquet", columns=["ticker", "series_ticker", "category"]
     )
-    found = with_fills(found, markets, fees)
+    past = (history or {}).get("by_category")
+    found = with_fills(
+        found,
+        markets,
+        fees,
+        None if past is None else {c: r["reversal_dumps_e2"] for c, r in past.items()},
+        None if past is None else {c: r["false_regime_dumps_e2"] for c, r in past.items()},
+    )
     return summarize(found, start, end), found
 
 

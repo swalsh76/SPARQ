@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 from sparq_analytics.live.source import hour_files
@@ -9,6 +10,7 @@ from sparq_analytics.survey.queue import (
     _reduce,
     dump_trades,
     episodes,
+    expected_fill,
     fee_terms,
     hour_before,
     span,
@@ -18,6 +20,9 @@ from sparq_analytics.survey.queue import (
 from surveyhelpers import BASE_TIME, lm, write_history, write_live
 
 END = datetime(2026, 10, 25, 4, tzinfo=UTC)
+# the history world's Sports reversals (C's no side, D) and false regime (D)
+REVERSAL_DUMPS = {"Sports": [1_500, 2_500]}
+FALSE_DUMPS = {"Sports": [2_500]}
 
 
 def found_episodes(live: Path) -> pl.DataFrame:
@@ -102,7 +107,13 @@ def test_fills_are_first_in_first_out_behind_the_queue_with_the_maker_fee(tmp_pa
     live = write_live(tmp_path)
     kalshi = write_history(tmp_path)
     found = dump_trades(live, hour_before(live, found_episodes(live)), *span(live))
-    found = with_fills(found, pl.read_parquet(live / "markets.parquet"), fee_terms(kalshi))
+    found = with_fills(
+        found,
+        pl.read_parquet(live / "markets.parquet"),
+        fee_terms(kalshi),
+        REVERSAL_DUMPS,
+        FALSE_DUMPS,
+    )
     rows = {(r["ticker"], r["start_ms"]): r for r in found.to_dicts()}
     first = rows[("L1", lm(1, 30))]
     assert (first["fill_onset_10000"], first["fill_hour_before_10000"]) == (1_500, 2_500)
@@ -118,6 +129,21 @@ def test_fills_are_first_in_first_out_behind_the_queue_with_the_maker_fee(tmp_pa
     assert first["fill_onset_100000"] == 1_500  # a bigger bid fills no more than the dump allows
     assert rows[("L2", lm(1, 40))]["fill_onset_100000"] == 14_100
     assert (first["category"], l4["share"]) == ("Sports", 25)
+    # a reversal's dump (15 or 25 contracts in the Sports history) behind each queue
+    assert (first["rev_fill_onset_10000"], second["rev_fill_onset_10000"]) == (1_000, 1_800)
+    assert l4["rev_fill_onset_10000"] == 1_900
+    assert rows[("L2", lm(1, 40))]["rev_fill_onset_10000"] == 0  # no reversal in Weather
+    # a false regime's dump (25 contracts) behind the hour-before queue
+    assert (first["rev_fill_hour_before_10000"], second["rev_fill_hour_before_10000"]) == (2_500, 0)
+    assert l4["rev_fill_hour_before_10000"] is None  # the queue then is unknown
+
+
+def test_the_expected_fill_of_a_reversal_is_first_in_first_out_behind_the_queue() -> None:
+    queues = np.asarray([0, 1_000, 5_000], dtype=np.int64)
+    dumps = np.asarray([1_500, 2_500], dtype=np.int64)
+    assert expected_fill(queues, dumps, 10_000).tolist() == [2_000, 1_000, 0]
+    assert expected_fill(queues, dumps, 1_000).tolist() == [1_000, 750, 0]  # capped
+    assert expected_fill(queues, np.asarray([], dtype=np.int64), 1_000).tolist() == [0, 0, 0]
 
 
 def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
@@ -127,7 +153,13 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     kalshi = write_history(tmp_path)
     start, end = span(live)
     found = dump_trades(live, hour_before(live, found_episodes(live)), start, end)
-    found = with_fills(found, pl.read_parquet(live / "markets.parquet"), fee_terms(kalshi))
+    found = with_fills(
+        found,
+        pl.read_parquet(live / "markets.parquet"),
+        fee_terms(kalshi),
+        REVERSAL_DUMPS,
+        FALSE_DUMPS,
+    )
     summary = summarize(found, start, end)
     assert (summary["hours"], summary["episodes"], summary["left_censored"]) == (4, 5, 1)
     sports = summary["by_category"]["Sports"]
@@ -139,6 +171,8 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     assert sports["fills_a_day_e2_onset_10000"] == 39_600  # 6,600 in 4 hours
     assert sports["fills_a_day_e2_hour_before_10000"] == 15_000
     assert sports["fee_a_day_e6_onset_10000"] == 42_624
+    assert sports["rev_fills_a_day_e2_onset_10000"] == 28_200  # 4,700 in 4 hours
+    assert sports["rev_fills_a_day_e2_hour_before_10000"] == 15_000
     assert (sports["dump_e2_a_regime_hour"], sports["closed_hours_median"]) == (2_500.0, 1.0)
     weather = summary["by_category"]["Climate and Weather"]
     assert (weather["episodes"], weather["censored"], weather["dump_e2"]) == (1, 1, 15_000)

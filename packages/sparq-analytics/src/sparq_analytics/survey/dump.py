@@ -280,6 +280,28 @@ def summarize(
         )
         .sort("category")
     )
+    # what a reversal dumps into the losing side's 99-cent bids, per market; and what a false
+    # regime dumps: the loss side's counterparts of the live fills
+    reversal_dumps = (
+        near.filter((pl.col("cents") >= 99) & ~pl.col("won") & dead)
+        .group_by("category", "ticker")
+        .agg(pl.col("count_e2").sum().alias("e2"))
+        .group_by("category")
+        .agg(pl.col("e2").sort().alias("reversal_dumps_e2"))
+    )
+    false_dumps = (
+        regs.filter(~true)
+        .group_by("category")
+        .agg(pl.col("dump_e2").sort().alias("false_regime_dumps_e2"))
+    )
+    rows = _rows(
+        categories.join(reversal_dumps, on="category", how="left").join(
+            false_dumps, on="category", how="left"
+        )
+    )
+    for row in rows:
+        for key in ("reversal_dumps_e2", "false_regime_dumps_e2"):
+            row[key] = row[key] or []
     levels = (
         near.filter(pl.col("won") & dead.is_not_null())
         .join(regs.select("ticker", "side", "start_ms"), on=["ticker", "side"], how="left")
@@ -314,7 +336,7 @@ def summarize(
         "trades_near_certain": near.height,
         "side_unknown_trades": near.filter(dead.is_null()).height,
         "regimes": regs.height,
-        "by_category": {row["category"]: row for row in _rows(categories)},
+        "by_category": {row["category"]: row for row in rows},
         "levels": _rows(levels),
         "top_series": _rows(top),
     }

@@ -21,19 +21,19 @@ def test_dump_writes_both_readings_and_prints_the_implied_dollars(
     sports = implied["by_category"]["Sports"]
     assert (sports["reactive_payout"], sports["knowing_payout"]) == (0.6, 0.75)
     assert sports["episodes_a_day"] == 18
-    # reactive: a cent on 396 contracts a day in 3 of 5 markets; 99 cents on the whole bid of
-    # 100 in 2 of 5 of the 18 episodes a day; the fee
+    # reactive: a cent on 396 contracts a day in 3 of 5 markets; 99 cents on the 282 contracts
+    # a day a reversal's dump would fill behind the queues, in 2 of 5; the fee
     assert (sports["gain_e6_onset_10000"], sports["loss_e6_onset_10000"]) == (
         2_376_000,
-        712_800_000,
+        111_672_000,
     )
-    assert sports["dollars_a_day_e6_onset_10000"] == -710_466_624
-    # knowing: 150 contracts a day in 3 of 4; the whole bid in 1 of 4 episodes
+    assert sports["dollars_a_day_e6_onset_10000"] == -109_338_624
+    # knowing: 150 contracts a day in 3 of 4; a false regime's 150 a day in 1 of 4
     assert (sports["gain_e6_hour_before_10000"], sports["loss_e6_hour_before_10000"]) == (
         1_125_000,
-        445_500_000,
+        37_125_000,
     )
-    assert sports["dollars_a_day_e6_hour_before_10000"] == -444_375_000
+    assert sports["dollars_a_day_e6_hour_before_10000"] == -36_000_000
     assert sports["capital_e6_onset_10000"] == 99_371_250
     assert sports["collateral_e6_onset_10000"] == 74_250_000  # 18 bids of $99 for an hour each
     weather = implied["by_category"]["Climate and Weather"]
@@ -56,7 +56,10 @@ def test_dump_can_do_one_reading(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert json.loads(capsys.readouterr().out)["regimes"] == 5
     assert not (out / "dump.json").exists()
     assert main([*base, "--live", str(live), "--only", "live"]) == 0
-    assert json.loads(capsys.readouterr().out)["episodes"] == 5
+    alone = json.loads(capsys.readouterr().out)
+    assert alone["episodes"] == 5
+    # without the history there is no reversal fill to report
+    assert "rev_fills_a_day_e2_onset_10000" not in alone["by_category"]["Sports"]
 
 
 @pytest.mark.parametrize(
@@ -80,17 +83,18 @@ def test_a_bad_command_line_or_a_held_out_cut_exits_one(
 def test_a_category_without_a_history_regime_has_no_dollars() -> None:
     frames = {
         f"{kind}_a_day_{unit}_{p}_{s}": 1_000
-        for kind, unit in (("fills", "e2"), ("fee", "e6"))
+        for kind, unit in (("fills", "e2"), ("fee", "e6"), ("rev_fills", "e2"))
         for p in ("onset", "hour_before")
         for s in (10_000, 100_000)
     }
-    live = {"by_category": {"Culture": frames | {"episodes_a_day": 4, "closed_hours_median": 0.5}}}
+    span = {"episodes_a_day": 4, "closed_hours_median": 0.5}
+    live = {"by_category": {"Culture": frames | span}}
     out = combine({"by_category": {}}, live)
     culture = out["by_category"]["Culture"]
     assert (culture["reactive_payout"], culture["knowing_payout"]) == (None, None)
     assert culture["dollars_a_day_e6_onset_10000"] is None
     assert not culture["clears_onset_10000"] and out["cleared"] == []
-    # only reversals: every episode loses the whole bid, and the capital tied is unknown
+    # only reversals: every reversal fill loses, and the capital tied is unknown
     past = {
         "winning_99_markets": 0,
         "reversal_markets": 2,
@@ -101,11 +105,16 @@ def test_a_category_without_a_history_regime_has_no_dollars() -> None:
     lost = combine({"by_category": {"Culture": past}}, live)["by_category"]["Culture"]
     assert (lost["reactive_payout"], lost["knowing_payout"]) == (0.0, None)
     assert lost["gain_e6_onset_10000"] == 0
-    assert lost["loss_e6_onset_10000"] == 396_000_000  # 4 bids of 100 at 99 cents
-    assert lost["dollars_a_day_e6_onset_10000"] == -396_001_000  # and the fee
+    assert lost["loss_e6_onset_10000"] == 9_900_000  # 10 contracts a day at 99 cents
+    assert lost["dollars_a_day_e6_onset_10000"] == -9_901_000  # and the fee
     assert lost["capital_e6_onset_10000"] is None
     assert lost["collateral_e6_onset_10000"] == 8_250_000  # 4 bids of $99 for half an hour
     assert lost["dollars_a_day_e6_hour_before_10000"] is None
+    # a live-only reading has no reversal fills, so the loss and the dollars are unknown
+    bare = {k: v for k, v in frames.items() if not k.startswith("rev_fills")} | span
+    alone = combine({"by_category": {"Culture": past}}, {"by_category": {"Culture": bare}})
+    assert alone["by_category"]["Culture"]["loss_e6_onset_10000"] is None
+    assert alone["by_category"]["Culture"]["dollars_a_day_e6_onset_10000"] is None
 
 
 def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPatch) -> None:

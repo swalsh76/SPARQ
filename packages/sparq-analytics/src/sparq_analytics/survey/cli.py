@@ -66,7 +66,7 @@ def _dump(args: argparse.Namespace) -> int:
         _write(out, "dump-history.json", past)
         regimes.write_parquet(out / "dump-regimes.parquet")
     if args.only != "history":
-        frames, episodes = live_reading(_need(args.live, "--live"), fee_terms(kalshi))
+        frames, episodes = live_reading(_need(args.live, "--live"), fee_terms(kalshi), past)
         _write(out, "dump-live.json", frames)
         episodes.write_parquet(out / "dump-episodes.parquet")
     if past is not None and frames is not None:
