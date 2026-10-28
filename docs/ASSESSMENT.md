@@ -214,6 +214,8 @@ A live snapshot of 148,971 open non-combo markets: the 209 busiest (over 100,000
 
 **Reading:** a gap exists between human-paced traders and the professional firms, in second-tier markets and in stale quotes; a seconds-scale maker could live in it. These are leads for a pre-registered test, not results: two of the three key intervals cross zero, and KAPS's validate leads all failed on its test part.
 
+**Tested (SPARQ S1.1, 2026-10-25): NO-GO.** The four rules built from these leads, tested once on the held-out part, all had lower bounds below zero: the middle-activity maker -0.09 cents a contract (lower -2.00), the human-paced maker +2.71 (-3.66), the same below the busiest series +2.51 (-1.30), and the first-trade taker -1.29 (-3.98). S1.2a then found that an order joining after a trade is adversely selected, losing 2.9 cents by 10 minutes before fees (SPARQ's LESSONS.md, PLAN D13 and D14).
+
 ### 7.5 Venues (US-accessible, October 2026)
 
 | Venue | Automated trading | Fees | Fit |
