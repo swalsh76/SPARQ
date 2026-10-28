@@ -34,8 +34,9 @@ MS_PER_HOUR = 3_600_000
 
 
 def hours(ms: pl.Expr) -> pl.Expr:
-    """Whole seconds over 3,600: exact where a plain division by the millisecond count is
-    not (polars multiplies by the reciprocal)."""
+    """Whole seconds over 3,600. Polars divides a column by a literal through the reciprocal, so
+    the millisecond count over 3,600,000 gave 1.9999999999999998 for two hours; whole seconds
+    over 3,600 give whole hours exactly, and fractions to a second."""
     return (ms // 1000) / 3600
 
 
@@ -118,11 +119,13 @@ def _scan(files: list[Path]) -> pl.LazyFrame:
 
 
 def side_extremes(files: list[Path], markets: pl.DataFrame) -> pl.DataFrame:
-    """Per market: the last moment each side printed below 97 cents (null when it never did)."""
+    """Per market: the last moment each side printed below 97 cents before the market's end
+    (null when it never did)."""
     yes = pl.col("yes_price_e6")
     return (
         _scan(files)
-        .join(markets.select("ticker").lazy(), on="ticker", how="semi")
+        .join(markets.select("ticker", "end_ms").lazy(), on="ticker")
+        .filter(pl.col("t_ms") <= pl.col("end_ms"))
         .group_by("ticker")
         .agg(
             pl.col("t_ms").filter(yes < NEAR_E6).max().alias("last_yes_below_ms"),
@@ -134,7 +137,8 @@ def side_extremes(files: list[Path], markets: pl.DataFrame) -> pl.DataFrame:
 
 
 def near_certain_trades(files: list[Path], markets: pl.DataFrame) -> pl.DataFrame:
-    """Every trade at 97 cents or more for either side of a cut market, priced on that side."""
+    """Every trade at 97 cents or more for either side of a cut market, before its end, priced on
+    that side."""
     yes = pl.col("yes_price_e6")
     side_price = pl.when(pl.col("side") == "yes").then(yes).otherwise(E6 - yes)
     return (
@@ -146,6 +150,7 @@ def near_certain_trades(files: list[Path], markets: pl.DataFrame) -> pl.DataFram
             ).lazy(),
             on="ticker",
         )
+        .filter(pl.col("t_ms") <= pl.col("end_ms"))
         .with_columns(side=pl.when(yes >= NEAR_E6).then(pl.lit("yes")).otherwise(pl.lit("no")))
         .with_columns(side_price_e6=side_price)
         .with_columns(
@@ -214,11 +219,15 @@ def _rows(frame: pl.DataFrame) -> list[dict[str, Any]]:
 
 
 def summarize(
-    markets: pl.DataFrame, near: pl.DataFrame, regs: pl.DataFrame, first: date, cut: date
+    markets: pl.DataFrame,
+    near: pl.DataFrame,
+    regs: pl.DataFrame,
+    first: date,
+    cut: date,
+    trade_days: int,
 ) -> dict[str, Any]:
     """S3.1's history figures: per category the regimes, the payout rate, the dump and the
     reversals; the winning side's trades by level; the series with the biggest dump."""
-    days = (cut - first).days + 1
     true = pl.col("won")
     by_category = (
         regs.group_by("category")
@@ -235,8 +244,8 @@ def summarize(
         )
         .with_columns(
             payout=pl.col("true_regimes") / (pl.col("true_regimes") + pl.col("false_regimes")),
-            # one cent a contract to every maker in the queue, over the part's days
-            makers_gain_a_day_e6=pl.col("dump_e2") * 100 // days,
+            # one cent a contract to every maker in the queue, over the days of trades read
+            makers_gain_a_day_e6=pl.col("dump_e2") * 100 // trade_days,
         )
     )
     dead = pl.col("taker_bought_dead")
@@ -248,7 +257,8 @@ def summarize(
             pl.col("count_e2").sum().alias("reversal_e2"),
         )
     )
-    # the reactive bidder's base: every market whose winning side printed 99 to a resting bid
+    # the reactive bidder's base: every winning side that printed 99 to a resting bid (a market
+    # whose both sides did counts once on each side, as the bidder would have bid on both)
     winners = (
         near.filter((pl.col("cents") >= 99) & pl.col("won") & dead)
         .group_by("category")
@@ -331,7 +341,8 @@ def summarize(
     return {
         "first": str(first),
         "cut": str(cut),
-        "days": days,
+        "days": (cut - first).days + 1,
+        "trade_days": trade_days,
         "markets": markets.height,
         "trades_near_certain": near.height,
         "side_unknown_trades": near.filter(dead.is_null()).height,
@@ -351,4 +362,4 @@ def history(
     extremes = side_extremes(files, markets)
     near = near_certain_trades(files, markets)
     regs = regimes(near, extremes)
-    return summarize(markets, near, regs, first, cut), regs
+    return summarize(markets, near, regs, first, cut, len(files)), regs

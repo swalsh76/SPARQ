@@ -21,7 +21,7 @@ def test_dump_writes_both_readings_and_prints_the_implied_dollars(
     sports = implied["by_category"]["Sports"]
     assert (sports["reactive_payout"], sports["knowing_payout"]) == (0.6, 0.75)
     assert sports["episodes_a_day"] == 18
-    # reactive: a cent on 396 contracts a day in 3 of 5 markets; 99 cents on the 282 contracts
+    # reactive: a cent on 396 contracts a day in 3 of 5 sides; 99 cents on the 282 contracts
     # a day a reversal's dump would fill behind the queues, in 2 of 5; the fee
     assert (sports["gain_e6_onset_10000"], sports["loss_e6_onset_10000"]) == (
         2_376_000,

@@ -59,7 +59,8 @@ def test_each_side_remembers_when_it_last_printed_below_97(tmp_path: Path) -> No
 
 def test_near_certain_trades_are_priced_on_their_side_with_who_took(tmp_path: Path) -> None:
     _, _, near, _ = world(tmp_path)
-    assert near.height == 13
+    assert near.height == 13  # B's trade after its end is not among them
+    assert near.filter(pl.col("ticker") == "B")["t_ms"].max() == ms(12)
     a = near.filter(pl.col("ticker") == "A").sort("t_ms")
     assert a["cents"].to_list() == [97, 99, 99, 99, 98, 99]
     assert a["taker_bought_dead"].to_list() == [True, True, True, False, True, None]
@@ -99,7 +100,7 @@ def test_the_summary_has_the_payout_the_dump_and_the_reversals_per_category(
     tmp_path: Path,
 ) -> None:
     markets, _, near, regs = world(tmp_path)
-    summary = summarize(markets, near, regs, SEP15, SEP15)
+    summary = summarize(markets, near, regs, SEP15, SEP15, 1)
     assert (summary["markets"], summary["trades_near_certain"], summary["regimes"]) == (6, 13, 5)
     assert summary["side_unknown_trades"] == 1
     sports = summary["by_category"]["Sports"]
@@ -113,6 +114,7 @@ def test_the_summary_has_the_payout_the_dump_and_the_reversals_per_category(
     assert sports["false_regime_dumps_e2"] == [2_500]  # D
     assert (sports["hours_to_end_median"], sports["settle_ms_median"]) == (6.0, 21_900_000)
     assert sports["makers_gain_a_day_e6"] == 520_000  # 52 contracts at a cent, over one day
+    assert (summary["days"], summary["trade_days"]) == (1, 1)
     weather = summary["by_category"]["Climate and Weather"]
     assert (weather["true_regimes"], weather["false_regimes"], weather["payout"]) == (1, 0, 1.0)
     assert (weather["dump_e2"], weather["reversal_markets"]) == (4_000, 0)

@@ -123,20 +123,28 @@ def hour_before(live: Path, found: pl.DataFrame) -> pl.DataFrame:
     targets = found.select("ticker", "side", "start_ms").with_columns(
         target_ms=pl.col("start_ms") - MS_PER_HOUR
     )
-    hours = (
+    target_hours = (
         targets.select((pl.col("target_ms") // MS_PER_HOUR * MS_PER_HOUR).alias("hour_ms"))
         .unique()
         .sort("hour_ms")["hour_ms"]
         .to_list()
     )
     pieces = []
-    for hour_ms in hours:
+    loaded: dict[datetime, pl.DataFrame | None] = {}  # this hour and the one before
+    for hour_ms in target_hours:
         hour = datetime.fromtimestamp(hour_ms / 1000, tz=UTC)
         frames = []
         for when in (hour - HOUR, hour):
-            path = live / "ticker" / f"{hour_name(when)}.parquet"
-            if path.exists():
-                frames.append(pl.read_parquet(path, columns=FRAME_COLUMNS))
+            if when not in loaded:
+                path = live / "ticker" / f"{hour_name(when)}.parquet"
+                loaded[when] = (
+                    pl.read_parquet(path, columns=FRAME_COLUMNS) if path.exists() else None
+                )
+            frame = loaded[when]
+            if frame is not None:
+                frames.append(frame)
+        for when in [w for w in loaded if w < hour - HOUR]:
+            del loaded[when]
         mine = targets.filter(pl.col("target_ms") // MS_PER_HOUR * MS_PER_HOUR == hour_ms)
         if not frames:
             pieces.append(
@@ -170,6 +178,40 @@ def hour_before(live: Path, found: pl.DataFrame) -> pl.DataFrame:
             ).select("ticker", "side", "start_ms", "hour_before_size_e2")
         )
     return found.join(pl.concat(pieces), on=["ticker", "side", "start_ms"], how="left")
+
+
+def mark_gaps(found: pl.DataFrame, live: Path, end: datetime) -> pl.DataFrame:
+    """Each episode with ``in_gap``: whether an outage of the ticker feed (the ingest's gap log)
+    overlaps it, in which case its frames may miss an end or a re-entry and its trades were
+    backfilled; such episodes take no part in the figures."""
+    path = live / "gaps.parquet"
+    span_end_ms = int(end.timestamp() * 1000)
+    if not path.exists():
+        return found.with_columns(in_gap=pl.lit(False))
+    gaps = (
+        pl.read_parquet(path)
+        .filter(pl.col("kind").is_in(["ticker", "all"]))
+        .select(
+            pl.col("start_ms").alias("gap_start_ms"),
+            pl.col("end_ms").fill_null(span_end_ms).alias("gap_end_ms"),
+        )
+    )
+    if gaps.is_empty():
+        return found.with_columns(in_gap=pl.lit(False))
+    overlapping = (
+        found.select("ticker", "side", "start_ms", "end_ms")
+        .join(gaps, how="cross")
+        .filter(
+            (pl.col("gap_start_ms") < pl.col("end_ms").fill_null(span_end_ms))
+            & (pl.col("gap_end_ms") > pl.col("start_ms"))
+        )
+        .select("ticker", "side", "start_ms")
+        .unique()
+        .with_columns(in_gap=pl.lit(True))
+    )
+    return found.join(overlapping, on=["ticker", "side", "start_ms"], how="left").with_columns(
+        pl.col("in_gap").fill_null(False)
+    )
 
 
 def dump_trades(live: Path, found: pl.DataFrame, start: datetime, end: datetime) -> pl.DataFrame:
@@ -239,7 +281,7 @@ def _reversal_fills(
         rows = [i for i, c in enumerate(categories) if c == category and queues[i] is not None]
         fills = expected_fill(
             np.asarray([queues[i] for i in rows], dtype=np.int64),
-            np.asarray(dumps.get(category, []), dtype=np.int64),
+            np.asarray(dumps[category], dtype=np.int64),
             size_e2,
         )
         for i, fill in zip(rows, fills.tolist(), strict=True):
@@ -258,15 +300,13 @@ def with_fills(
     joining at the onset and an hour before, with the maker fee on them; and, given the
     history's reversal dumps (for the onset) and false-regime dumps (for the hour before), the
     fill a reversal would have given each."""
-    share = pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=0, return_dtype=pl.Int64)
+    # the series' current terms: the live span is days old, so they are the terms in force; a
+    # fee type outside the quadratic family, or a series without terms, leaves the fee unknown
+    share = pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
     frame = (
         found.join(markets.select("ticker", "series_ticker", "category"), on="ticker", how="left")
         .join(fees, on="series_ticker", how="left")
-        .with_columns(
-            pl.col("category").fill_null("unknown"),
-            pl.col("multiplier_e6").fill_null(0),
-            share=share,
-        )
+        .with_columns(pl.col("category").fill_null("unknown"), share=share)
     )
     columns = []
     for size_e2 in BID_SIZES_E2:
@@ -296,15 +336,16 @@ def with_fills(
 
 def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, Any]:
     """S3.1's live figures per category: the episodes, the queue, the dump rate and the fills a
-    day, left-censored episodes excluded from the queue and the fills."""
-    hours = int((end - start) / timedelta(hours=1))
-    if hours < 1:
+    day; left-censored episodes and those overlapping a ticker gap take no part in the queue
+    and the fills."""
+    span_hours = int((end - start) / timedelta(hours=1))
+    if span_hours < 1:
         raise SurveyDataError("the span holds no whole hour")
-    known = found.filter(~pl.col("left_censored"))
+    known = found.filter(~pl.col("left_censored") & ~pl.col("in_gap"))
     closed = known.filter(~pl.col("censored"))
     aggs = [
         pl.len().alias("episodes"),
-        (pl.len() * 24 // hours).alias("episodes_a_day"),
+        (pl.len() * 24 // span_hours).alias("episodes_a_day"),
         pl.col("censored").sum().alias("censored"),
         pl.col("ticker").n_unique().alias("markets"),
         pl.col("onset_size_e2").median().alias("onset_size_median_e2"),
@@ -312,19 +353,22 @@ def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, 
         pl.col("hour_before_size_e2").is_null().sum().alias("hour_before_unknown"),
         pl.col("dump_e2").sum().alias("dump_e2"),
         pl.col("lifted_e2").sum().alias("lifted_e2"),
+        pl.col("share").is_null().sum().alias("fee_unknown_episodes"),
     ]
     for size_e2 in BID_SIZES_E2:
         for position in ("onset", "hour_before"):
             name = f"{position}_{size_e2}"
             aggs.append(
-                (pl.col(f"fill_{name}").sum() * 24 // hours).alias(f"fills_a_day_e2_{name}")
+                (pl.col(f"fill_{name}").sum() * 24 // span_hours).alias(f"fills_a_day_e2_{name}")
             )
-            aggs.append((pl.col(f"fee_{name}").sum() * 24 // hours).alias(f"fee_a_day_e6_{name}"))
+            aggs.append(
+                (pl.col(f"fee_{name}").sum() * 24 // span_hours).alias(f"fee_a_day_e6_{name}")
+            )
             if f"rev_fill_{name}" in known.columns:
                 known_fill = pl.col(f"rev_fill_{name}")
                 aggs.append(  # null, not 0, where no episode's reversal fill is known
                     pl.when(known_fill.is_not_null().any())
-                    .then(known_fill.sum() * 24 // hours)
+                    .then(known_fill.sum() * 24 // span_hours)
                     .alias(f"rev_fills_a_day_e2_{name}")
                 )
     by_category = known.group_by("category").agg(aggs)
@@ -335,15 +379,20 @@ def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, 
     )
     by_category = (
         by_category.join(rate, on="category", how="left")
-        .with_columns(dump_e2_a_regime_hour=pl.col("closed_dump_e2") / pl.col("closed_hours"))
+        .with_columns(  # null, not infinity, where the closed episodes lasted under a second
+            dump_e2_a_regime_hour=pl.when(pl.col("closed_hours") > 0).then(
+                pl.col("closed_dump_e2") / pl.col("closed_hours")
+            )
+        )
         .sort("category")
     )
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
-        "hours": hours,
+        "hours": span_hours,
         "episodes": found.height,
         "left_censored": int(found["left_censored"].sum()),
+        "gap_episodes": int(found["in_gap"].sum()),
         "by_category": {row["category"]: row for row in by_category.to_dicts()},
     }
 
@@ -355,7 +404,7 @@ def live_reading(
     fills a reversal would give too."""
     start, end = span(live)
     reduced = pl.concat([_reduce(path) for path in hour_files(live, "ticker", start, end)])
-    found = episodes(reduced, start, end)
+    found = mark_gaps(episodes(reduced, start, end), live, end)
     found = dump_trades(live, hour_before(live, found), start, end)
     markets = pl.read_parquet(
         live / "markets.parquet", columns=["ticker", "series_ticker", "category"]

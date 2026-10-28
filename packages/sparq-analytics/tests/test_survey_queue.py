@@ -1,10 +1,10 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 import pytest
-from sparq_analytics.live.source import hour_files
+from sparq_analytics.live.source import GAP_SCHEMA, hour_files
 from sparq_analytics.survey.dump import SurveyDataError
 from sparq_analytics.survey.queue import (
     _reduce,
@@ -13,11 +13,17 @@ from sparq_analytics.survey.queue import (
     expected_fill,
     fee_terms,
     hour_before,
+    mark_gaps,
     span,
     summarize,
     with_fills,
 )
 from surveyhelpers import BASE_TIME, lm, write_history, write_live
+
+
+def lm_time(hour: int) -> datetime:
+    return BASE_TIME + timedelta(hours=hour)
+
 
 END = datetime(2026, 10, 25, 4, tzinfo=UTC)
 # the history world's Sports reversals (C's no side, D) and false regime (D)
@@ -28,7 +34,7 @@ FALSE_DUMPS = {"Sports": [2_500]}  # the history never saw a Weather false regim
 def found_episodes(live: Path) -> pl.DataFrame:
     start, end = span(live)
     reduced = pl.concat([_reduce(p) for p in hour_files(live, "ticker", start, end)])
-    return episodes(reduced, start, end)
+    return mark_gaps(episodes(reduced, start, end), live, end)
 
 
 def test_the_span_starts_at_the_first_hour_with_frames(tmp_path: Path) -> None:
@@ -78,6 +84,9 @@ def test_episodes_run_from_the_onset_to_the_first_frame_out(tmp_path: Path) -> N
     assert (no["onset_size_e2"], no["frames"], no["censored"]) == (900, 2, True)
     assert not first["left_censored"] and not rows[("L4", "yes", lm(1, 0))]["left_censored"]
     assert rows[("L5", "yes", lm(0, 30))]["left_censored"]
+    # the ticker gap at 00:40 overlaps L5's episode only
+    assert [k for k, r in rows.items() if r["in_gap"]] == [("L5", "yes", lm(0, 30))]
+    assert not mark_gaps(found.drop("in_gap"), tmp_path / "nowhere", END)["in_gap"].any()
 
 
 def test_the_queue_an_hour_before_is_the_size_at_99_then_or_none_or_unknown(
@@ -139,6 +148,28 @@ def test_fills_are_first_in_first_out_behind_the_queue_with_the_maker_fee(tmp_pa
     assert l4["rev_fill_hour_before_10000"] is None  # the queue then is unknown
 
 
+def test_an_episode_overlapping_a_ticker_gap_is_marked(tmp_path: Path) -> None:
+    found = pl.DataFrame(
+        {
+            "ticker": ["A", "B", "C", "D"],
+            "side": ["yes"] * 4,
+            "start_ms": [lm(10), lm(12), lm(12, 30), lm(9)],
+            "end_ms": [lm(11), lm(13), None, lm(9, 30)],  # C is open at the span's end
+        }
+    )
+    gaps = [
+        {"kind": "ticker", "start_ms": lm(10, 30), "end_ms": lm(10, 40), "reason": "lost"},
+        {"kind": "all", "start_ms": lm(12, 45), "end_ms": None, "reason": "open"},
+        {"kind": "trade", "start_ms": lm(9, 10), "end_ms": lm(9, 20), "reason": "not a frame gap"},
+    ]
+    (tmp_path / "gaps.parquet").write_bytes(b"")
+    pl.DataFrame(gaps, schema=GAP_SCHEMA).write_parquet(tmp_path / "gaps.parquet")
+    marked = mark_gaps(found, tmp_path, lm_time(14))
+    assert marked["in_gap"].to_list() == [True, True, True, False]
+    pl.DataFrame(gaps[2:], schema=GAP_SCHEMA).write_parquet(tmp_path / "gaps.parquet")
+    assert not mark_gaps(found, tmp_path, lm_time(14))["in_gap"].any()  # no frame gap at all
+
+
 def test_the_expected_fill_of_a_reversal_is_first_in_first_out_behind_the_queue() -> None:
     queues = np.asarray([0, 1_000, 5_000], dtype=np.int64)
     dumps = np.asarray([1_500, 2_500], dtype=np.int64)
@@ -153,9 +184,9 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     live = write_live(tmp_path)
     kalshi = write_history(tmp_path)
     start, end = span(live)
-    found = dump_trades(live, hour_before(live, found_episodes(live)), start, end)
+    raw = dump_trades(live, hour_before(live, found_episodes(live)), start, end)
     found = with_fills(
-        found,
+        raw,
         pl.read_parquet(live / "markets.parquet"),
         fee_terms(kalshi),
         REVERSAL_DUMPS,
@@ -163,6 +194,7 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     )
     summary = summarize(found, start, end)
     assert (summary["hours"], summary["episodes"], summary["left_censored"]) == (4, 5, 1)
+    assert summary["gap_episodes"] == 1  # L5, which is left-censored as well
     sports = summary["by_category"]["Sports"]
     assert (sports["episodes"], sports["censored"], sports["markets"]) == (3, 2, 2)
     assert sports["episodes_a_day"] == 18
@@ -172,6 +204,7 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     assert sports["fills_a_day_e2_onset_10000"] == 39_600  # 6,600 in 4 hours
     assert sports["fills_a_day_e2_hour_before_10000"] == 15_000
     assert sports["fee_a_day_e6_onset_10000"] == 42_624
+    assert sports["fee_unknown_episodes"] == 0
     assert sports["rev_fills_a_day_e2_onset_10000"] == 28_200  # 4,700 in 4 hours
     assert sports["rev_fills_a_day_e2_hour_before_10000"] == 15_000
     weather = summary["by_category"]["Climate and Weather"]
@@ -185,3 +218,13 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     assert weather["dump_e2_a_regime_hour"] is None  # no closed episode
     with pytest.raises(SurveyDataError, match="no whole hour"):
         summarize(found, start, start)
+    # a fee type outside the quadratic family leaves the fee unknown, not free
+    odd = fee_terms(kalshi).with_columns(
+        pl.when(pl.col("series_ticker") == "KXRAIN").then(pl.lit("flat")).otherwise("fee_type")
+    )
+    unknown = with_fills(raw, pl.read_parquet(live / "markets.parquet"), odd)
+    assert unknown.filter(pl.col("ticker") == "L2")["fee_onset_10000"].to_list() == [None]
+    assert (
+        summarize(unknown, start, end)["by_category"]["Climate and Weather"]["fee_unknown_episodes"]
+        == 1
+    )

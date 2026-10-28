@@ -8,8 +8,8 @@
   regime starts at 14:00, the first 99 after the last print below 97 (13:00): 6 hours to the end,
   6 h 05 min to settlement; 30 contracts dumped inside it, 5 lifted.
 * ``B`` (Weather, no wins; closes 23:00 but settles 22:00, so it ends 22:00): the no side at 97
-  (10 dumped), at 99 (40 dumped), at 99 lifted by a no taker (8). The no regime starts 11:00: 11
-  hours to the end and to settlement.
+  (10 dumped), at 99 (40 dumped), at 99 lifted by a no taker (8), and at 99 again after the
+  end, which does not count. The no regime starts 11:00: 11 hours to the end and to settlement.
 * ``C`` (Sports, yes wins; closes 20:00, settles 20:30): the no side at 99 (a 99-cent bid for no
   bought 15 and lost: an any-time reversal, not a false regime, since no then printed at 50), then
   50c, then the yes side at 99 (12 dumped): the yes regime from 18:00, 2 hours to the end.
@@ -33,7 +33,8 @@ day before):
 * ``L3`` (Sports): a plain book at 50c, one trade: no episode.
 * ``L4`` (Sports, maker fees): **bid 99 from 01:00** (100 shown; 150 at 02:00, open); 01:30 a no
   taker dumps 42. No frame in the two hours before 00:00: its queue an hour earlier is unknown.
-* ``L5`` (Sports): bid 99 at 00:30, in the span's first hour: left-censored, excluded.
+* ``L5`` (Sports): bid 99 at 00:30, in the span's first hour: left-censored, excluded. **A ticker
+  gap from 00:40 to 00:45** overlaps its episode and no other (every later one begins after it).
 """
 
 from datetime import UTC, datetime, timedelta
@@ -41,7 +42,13 @@ from pathlib import Path
 from typing import Any
 
 import polars as pl
-from sparq_analytics.live.source import MARKET_SCHEMA, TICKER_SCHEMA, TRADE_SCHEMA, hour_name
+from sparq_analytics.live.source import (
+    GAP_SCHEMA,
+    MARKET_SCHEMA,
+    TICKER_SCHEMA,
+    TRADE_SCHEMA,
+    hour_name,
+)
 
 DAY = datetime(2026, 9, 15, tzinfo=UTC)
 BASE_TIME = datetime(2026, 10, 25, tzinfo=UTC)
@@ -105,6 +112,7 @@ TRADES: list[tuple[str, datetime, str | None, int, int]] = [
     ("B", at(10), "yes", 30_000, 1_000),
     ("B", at(11), "yes", 10_000, 4_000),
     ("B", at(12), "no", 10_000, 800),
+    ("B", at(22, 30), "yes", 10_000, 5_000),
     ("C", at(10), "yes", 10_000, 1_500),
     ("C", at(12), "yes", 500_000, 100),
     ("C", at(18), "no", 990_000, 1_200),
@@ -233,4 +241,8 @@ def write_live(root: Path) -> Path:
         ],
         schema=MARKET_SCHEMA,
     ).write_parquet(live / "markets.parquet")
+    pl.DataFrame(
+        [{"kind": "ticker", "start_ms": lm(0, 40), "end_ms": lm(0, 45), "reason": "lost"}],
+        schema=GAP_SCHEMA,
+    ).write_parquet(live / "gaps.parquet")
     return live

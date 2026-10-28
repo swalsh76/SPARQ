@@ -11,7 +11,8 @@ Each gains 1 cent on the contracts the queue lets it fill, first in, first out, 
 that pay. Each loses 99 cents, in the markets that reverse, on the contracts the reversal's dump
 would have filled behind the same queue (the history's reversal dumps, paired with the live
 queues): a panic usually runs through the whole queue, a deep queue sometimes shields the bid.
-Both rates come from the history, by market. The fee is
+Both rates come from the history, by side (a market whose both sides printed 99 counts once on
+each, as the bidder would have bid on both). The fee is
 the maker fee where the series charges one. The capital tied is the fills' cost for the median
 hours to settlement, and the collateral the resting bids hold at any moment, for the median length
 of a closed episode. The bar is $25 a day within one category (M4).
