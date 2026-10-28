@@ -236,7 +236,17 @@ No real order was sent in S1. Every key stayed where D6 puts it.
 
 **Verified.** Documents only: no code changed, so no test was run for this slice. CI runs on the PR.
 
-**Review (PLAN Q8).** Documents only; there was no code diff to review. Each figure was checked against the BUILD-LOG entries of S1.1 and S1.2a and against D13.
+**Review (PLAN Q8).** Each figure was checked against the BUILD-LOG entries of S1.1 and S1.2a and against D13. The merge review, at medium effort over the branch against `main`, found 8 documentation issues and no runtime bugs, all fixed:
+1. The resume point's S1.2a line still gave the node's check clone as `8d82def`. **Fixed:** removed; the clone's state is in the "Now" lines.
+2. The S1.2q row still said its two leftovers waited in S1.2a's code. **Fixed:** they moved with S1.2r to §9.
+3. The entry first said the documents-only diff needed no review, against Q8. **Fixed:** this review is the record.
+4. The entry lacked the "Problems and fixes" heading. **Fixed.**
+5. LESSONS.md's intro, PLAN's status line and CLAUDE.md described the file as the predecessors' measurements only. **Fixed.**
+6. ASSESSMENT §7.4's heading still called the section validate-only. **Fixed:** it names the tested outcome.
+7. CLAUDE.md's status still read "S1.2 on hold". **Fixed:** it states D14's outcome per slice.
+8. D14 parked D7 and D8 but left D6's trading key and its custody design without a home. **Fixed:** they go with D7, in D14 and in §9.
+
+**Problems and fixes.** Only the review's findings above.
 
 **Decisions (owner, 2026-10-28, as recommended).**
 - S1.2r goes to §9.

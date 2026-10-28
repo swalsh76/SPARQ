@@ -1,6 +1,6 @@
 # Lessons kept from KalTerm3
 
-> **Carried from KAPS on 2026-10-25.** The sections up to "Running unattended" are KalTerm3's lessons as KAPS kept them; the last section adds what KAPS itself measured before it was frozen.
+> **Carried from KAPS on 2026-10-25.** The sections up to "Running unattended" are KalTerm3's lessons as KAPS kept them; "What KAPS measured" adds what KAPS itself measured before it was frozen, and the last section, "What SPARQ measured", what SPARQ has measured since.
 
 KalTerm3 (.NET 10, SQL Server 2025, WPF) was built through its milestones M0 to M7 in this repository and then retired by the owner on 2026-10-21. Its code is not used by KAPS. These are the measured facts and hard-won rules worth keeping.
 

@@ -2,7 +2,7 @@
 
 ## Start here
 
-**Read [docs/PLAN.md](docs/PLAN.md) before doing anything.** It is the source of truth for the direction, the architecture and the build order. Record how each slice was built and verified in [docs/BUILD-LOG.md](docs/BUILD-LOG.md), and update both when decisions change. The reasoning and sources are in [docs/ASSESSMENT.md](docs/ASSESSMENT.md); what the predecessors measured is in [docs/LESSONS.md](docs/LESSONS.md).
+**Read [docs/PLAN.md](docs/PLAN.md) before doing anything.** It is the source of truth for the direction, the architecture and the build order. Record how each slice was built and verified in [docs/BUILD-LOG.md](docs/BUILD-LOG.md), and update both when decisions change. The reasoning and sources are in [docs/ASSESSMENT.md](docs/ASSESSMENT.md); what the predecessors and SPARQ itself measured is in [docs/LESSONS.md](docs/LESSONS.md).
 
 SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written in Python. It is an **automated maker** for prediction markets: it quotes at a **seconds** scale in **second-tier** markets around a fair value taken from outside or related markets, never leaves a stale quote, and takes other traders' stale quotes when they are clearly wrong. It does **not** race professional firms in milliseconds: headline markets and news races are out of scope.
 
@@ -11,7 +11,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ## Status
 
-**S0 is done; S1 is closed** (S1.1 NO-GO, S1.1b dropped, S1.2 on hold: PLAN D13; closed by D14, 2026-10-28). **S2, weather against station observations** (PLAN §6.2): S2.1 is done; **S2.2 is done with no rules (W9)**, so S2.3 and S2.4 are not run. The next direction is the owner's call. **No real order is sent without the owner's go-ahead.**
+**S0 is done; S1 is closed** (PLAN D14, 2026-10-28: S1.1 NO-GO, S1.1b dropped unopened, S1.2b and S1.2c closed unbuilt, S1.3 and S1.4 not run). **S2, weather against station observations** (PLAN §6.2): S2.1 is done; **S2.2 is done with no rules (W9)**, so S2.3 and S2.4 are not run. The next direction is the owner's call. **No real order is sent without the owner's go-ahead.**
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
@@ -42,7 +42,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
   - On the analytics node, `uv` is in `~/.local/bin`. Runs there set `TMPDIR` and `POLARS_OOC_DISK_BUDGET_MB=60000` on the data drive (S1.2r, which would make that the default, is parked in PLAN §9). A long run is detached under `caffeinate`, and its clone is never switched while it runs.
 - **S2.h, core hardening from IKARS's review:** done, merged as PR #11 (`fb95046`, 2026-10-27; BUILD-LOG S2.h). SPARQ reads only `SPARQ_KALSHI_ENV`, `SPARQ_LIVE`, `SPARQ_KALSHI_KEY_ID` and `SPARQ_KALSHI_PRIVATE_KEY_PATH`. The signed WebSocket check passed with the owner's `SPARQ_*` variables (2026-10-27); PR #14 (`1586ecc`) makes the live test prove the key without account data.
 - **S2's decisions (owner, 2026-10-27):** W1 to W8 in PLAN §6.2; the $25-a-day floor stands for now; the lows wait for the highs. KAPS's ingest keeps recording.
-- **S1.2a done: go on (read once 2026-10-27 01:17 UTC on 2026-10-25 and 2026-10-26; BUILD-LOG S1.2a, PLAN S1.2a row).** 11.1% of 43,742 cleared levels in the forward rule's trades refilled within 1 s (stop above 50%); the activity hash matched `edf3189cf82a…`. The main risk for S1.2: an order joining 1 s after a trade fills about a third of the time and its fills lose 0.32 cents by 60 s and 2.91 by 10 minutes, before fees. Results stay in the live data folder's `results` on the analytics node; the node's check clone is at `8d82def`. PR #5 (S1.2a) is merged. S1.2b and S1.2c closed unbuilt (D14); S1.2r, with S1.2a's two leftovers (`ONE_E6` in `live/book.py`, the live command line's command list), is parked in PLAN §9. The read-only key for S1.2 (D6) is on the analytics node (location in the assistant's memory; check presence and mode only). Run analysis on the node with `TMPDIR` and `POLARS_OOC_DISK_BUDGET_MB` on the data drive.
+- **S1.2a done: go on (read once 2026-10-27 01:17 UTC on 2026-10-25 and 2026-10-26; BUILD-LOG S1.2a, PLAN S1.2a row).** 11.1% of 43,742 cleared levels in the forward rule's trades refilled within 1 s (stop above 50%); the activity hash matched `edf3189cf82a…`. The main risk for S1.2: an order joining 1 s after a trade fills about a third of the time and its fills lose 0.32 cents by 60 s and 2.91 by 10 minutes, before fees. Results stay in the live data folder's `results` on the analytics node. PR #5 (S1.2a) is merged. S1.2b and S1.2c closed unbuilt (D14); S1.2r, with S1.2a's two leftovers (`ONE_E6` in `live/book.py`, the live command line's command list), is parked in PLAN §9. The read-only key for S1.2 (D6) is on the analytics node (location in the assistant's memory; check presence and mode only). Run analysis on the node with `TMPDIR` and `POLARS_OOC_DISK_BUDGET_MB` on the data drive.
 
 - **S1.1b dropped, unopened (owner, 2026-10-27; PLAN D13):** the registered forward test (digest `0af9ea44be7f…`) is never opened and its forward days are not downloaded. Do not run the S1.1b run script's `verdict` step. D11's guard lapses with it.
 

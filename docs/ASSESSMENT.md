@@ -197,7 +197,7 @@ Written at the end of KAPS, after its K0.5 study returned a NO-GO, when the owne
 - **Kalshi's Liquidity Incentive Program** (terms in Kalshi's CFTC filing of 2026-07-15; `GET /incentive_programs`): 6,560 markets carried rewards totalling about $293,000 a day on 2026-10-25 (median $14 a day a market). It ends on 2027-01-01 at the latest, Kalshi may end it at any time, Market Maker Agreement holders are excluded, and Kalshi ended its Volume Incentive Program early (no earlier than 2026-10-13). The owner chose not to rely on it (PLAN Q4).
 - **Perpetual funding** (`GET /margin/funding_rates/historical`, 6,535 records): BTC funding was positive in 51.6% of 8-hour intervals since 2026-06-03, about 9% a year on average and 14.5% over the last 30 days; ETH about zero. Perps now include metals, oil, the S&P 500 and the Nasdaq 100. As a carry trade, a modest yield; as a hedge for binary positions in the same account, potentially useful.
 
-### 7.4 The middle tier (exploratory: the validate part only, about 25 slices looked at)
+### 7.4 The middle tier (exploratory: the validate part only, about 25 slices looked at; tested in SPARQ S1.1: NO-GO)
 
 From the K0.5 trade tape, with K0.5's fees, sample weights and strict fill rule, and intervals by event:
 
