@@ -501,3 +501,52 @@ The owner chose to keep them (2026-10-28).
 8. The CLAUDE.md status line called S3 active with S3.1 next while the proposal was unmerged. **Fixed:** approved, PR unmerged, S3.1 starts after the merge and its slice plan.
 
 **Problems and fixes.** Only the review's findings above.
+
+### S3.1 The certainty dump and the 99-cent queue (2026-10-28 UTC, done; the owner chooses what follows)
+
+**Built.** `python -m sparq_analytics.survey dump --kalshi DIR --live DIR --out DIR [--cut DAY] [--only history|live]` (`survey/dump.py`, `queue.py`, `implied.py`, `cli.py`).
+- *History* (markets closing on or before the cut, M3; `--cut` after 2026-10-10 is refused): every trade at 97 cents or more for either side, priced on that side, with who took it; each side's 99 regime (the first 99 after which it never printed below 97), true or false; the dump into resting 99-cent bids; the any-time reversals; per category the two rates (by market), the dumps per reversal and per false regime, the hours to the end and to settlement; the winning side's trades by level; the series with the biggest dump.
+- *Live* (the ingest's frames, any day, no outcome): the hour files reduced to the frames in a regime, those right after one and each market's first and last of the hour, which finds every onset and end exactly; episodes with the size shown at 99 at the onset and an hour before (from the last frame in the two hours before, else unknown); the dump during each; first-in-first-out fills for bids of 100 and 1,000 contracts; the fill a reversal would have given behind the same queue, from the history's dumps; the maker fee where the series charges one.
+- *The combination:* two bidders, reactive (at the onset, judged on the any-time reversals) and knowing (an hour before, judged on the false regimes); gains on the fills in the markets that paid, losses on the reversal's fills in the markets that reversed; the capital tied and the collateral held; M4's bar per category.
+- `--only` runs one reading; a live-only reading reports no loss.
+
+**Verified (local).** 19 tests on a hand-built world (six markets and eighteen trades in the history, five markets with frames and trades over four live hours, with an empty hour before), every answer worked out by hand: the cut and the early settlement, the two sides' last print below 97, who took, the regime's start, the false regime and the any-time reversal, the episodes and their censoring, the queue an hour before (shown, none, or unknown), the dump inside an episode, the capped fills, the maker fee at 99 cents, the expected fill of a reversal, the scaling to a day, and the combination's dollars, capital and collateral. 19 planted bugs, all caught (one first survived because the frame it concerned happened to be a market's last of the hour, so the world gained a later frame). The survey package is 100% covered; the full suite 1,884 passed, 196 skipped; ruff and mypy clean.
+
+**Verified (analytics node, real data).** `live extract` from 2026-10-18: the ingest's tables hold nothing before 2026-10-24 21:00 UTC, so the live span is 80 hours (386 hour files, 75.5 M frames, 15.4 M trades, 3.0 GB; 7 ticker gaps logged). `survey dump` runs in about ten minutes; two runs give the same figures. Results in `docs/research/certainty-dump.md`:
+
+| | |
+|---|---|
+| History | 17,538,187 markets; 75.9 M trades at 97 cents or more before the market's end; 935,895 regimes, 718 false; 2,775 any-time reversals (by side) |
+| Live | 638,318 episodes in 80 hours; 9,897 left-censored and 14,045 overlapping a logged ticker gap take no part |
+| Reactive bidder, 100 contracts, a day | Sports −$12,809; Crypto −$12,830; nine more categories negative; **Mentions +$39** (+$313 at 1,000) |
+| Knowing bidder, 100 contracts, a day | Sports +$7,166; a ceiling nothing reaches |
+| The whole 99-cent queue | about +$240,000 a day, 85% in crypto 15-minute markets; Sports +$5,904 with 97% of the gross taken back by reversals |
+
+**Against M4's bar:** Mentions clears it, on 28 reversals in 65 days and 3.3 days of frames; at the one-sided 0.025 bound of the reversal count alone the net is about $25. The figures are the run at `ea133c5`; the two later commits change tests only. Every other category is below it. Per M1 the owner chooses: go on to S3.2 (the default) or hear a strand proposal.
+
+**Review (PLAN Q8).** Commit reviews at low effort: `16de8e1` found that a category with only false regimes got a capital of 0 instead of none (**fixed**, `a539d7d`); `a539d7d` none; `4a75e63` found a 0/0 that became NaN in the JSON and a theoretical float path for the episodes a day (**fixed**, `3ee249e`: null, and a guard on an empty span); `3ee249e` none; `2a69a94` found that a category the history never saw read as "never reversed" (**fixed**, `4d22c1b`: unknown). The model itself changed twice on the real data, each time because the first output could not be right:
+1. The first run applied the payout rate per filled contract, so Sports showed +$1,980 a day. A reversal's panic is not rationed as the gains are: the loss falls on the bid's size, and the reactive bidder's risk is every 99 print that lost, not the hindsight regimes. **Fixed** (`4a75e63`): Sports −$24,480.
+2. That charged the whole bid in every reversal, which overstates where the queue is deep (Crypto's median queue is 14,000 contracts). **Fixed** (`2a69a94`): the loss is the fill a reversal's dump would have given behind the same queue, paired across the history's reversal dumps and the live queues, symmetric with the gains: Sports −$12,741.
+The merge review, at medium effort over the branch against `main`, found 10 issues:
+1. The dump rate per regime-hour divided by zero where a category's closed episodes all lasted under a second, writing infinity into the JSON. **Fixed** (`ea133c5`): null.
+2. Trades after a market's end (an early settlement) could start or void a regime. **Fixed:** nothing after the end counts, in both passes; test added (B's trade after its settlement). 3,771 regimes and 0.2 M trades left the counts.
+3. The fee terms are each series' current ones, not the terms in force at each trade, and an unknown fee type read as free. **Partly fixed:** the live span is four days old, so the current terms are the terms in force there, and `with_fees` is not reused; a type outside the quadratic family now leaves the fee unknown and is counted (`fee_unknown_episodes`; 18 of 638,318 in the run, in series the history's table lacks). Test added.
+4. The reactive rate was said to be "by market" while a market whose both sides printed 99 counts once on each. **No change to the count, wording fixed:** the unit is the side, which is what the bidder bids on; the live episodes are per side too.
+5. The ingest's logged ticker gaps were ignored, so a regime spanning an outage read as one episode with backfilled trades. **Fixed:** episodes overlapping a gap take no part (14,045 in the run); unit test of the overlap, and a gap in the test world.
+6. Each ticker hour file was read twice for the hour-before lookup, and the trades scanned twice. **Half fixed:** a one-slot cache reads each hour once; the two trade passes stay (the run takes ten minutes).
+7. The makers' gain a day divided by calendar days while missing trade files were skipped silently. **Fixed:** by the days of trades read (65 of 65 here), reported as `trade_days`.
+8. The resume point gave two branches for the node's check clone. **Fixed.**
+9. Two locals named `hours` shadowed the helper, and a dead `.get` default. **Fixed.**
+10. The `hours` helper's docstring claimed more exactness than it has. **Fixed:** it says what it does (whole hours exactly, fractions to a second).
+
+The code fixes were planted one at a time: the tests caught all 21 plants (two added for the end bound and the gap). After the fixes the real figures moved a little (Sports −$12,741 to −$12,809; Mentions +$45 to +$39).
+
+**Problems and fixes.**
+- The ingest's tables hold no frame before 2026-10-24 21:00, so the plan's "about ten days" of frames became 3.3; the figures a day scale with the span, the thin side of the Mentions lead.
+- polars divides an integer column by a literal through the reciprocal (2 hours read as 1.9999999999999998); the hours are whole seconds over 3,600.
+- A lazy join does not keep row order: one test read values unsorted and failed once in three runs; sorted.
+- The "unknown" piece of the hour-before lookup kept a column the others lacked and broke the concatenation, found by the test that first reached it.
+- Any episode still open when a ticker gap begins overlaps it, so the test world's gap sits where it excludes one episode that nothing else excludes; and a `when/then/otherwise` names its result after the `then` branch, so a test's replaced column was added beside the original until aliased.
+- A `tail` at the end of a `&&` chain hid a failing exit code and let one commit (`ea133c5`) in with a failing test (test-only; fixed in the next commit); chains are gated with `pipefail` since.
+
+**Decisions.** None taken in the slice; the owner's choice under M1 is open.
