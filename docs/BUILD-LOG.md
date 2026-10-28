@@ -202,6 +202,86 @@ The owner asked on 2026-10-26 to fix every outstanding item of the two code revi
 - The first plan from the steps lacked the words two tests look for ("data_checksums on at initdb", "alerts"); the wording was kept.
 - The polars standard-error test first gave both expressions the same column name; they are aliased.
 
+## S2. Weather against station observations (approved 2026-10-27)
+
+### S2.1 Sources, terms and the observation history (2026-10-27 to 2026-10-28, done)
+
+**Built.** The package `sparq_analytics.weather`, run as `python -m sparq_analytics.weather stations|download|check|delay|delay-report`:
+- `stations.py`: the map from climate site to station and zone (39 sites). Each market's site is read from its own rules (by code, or by station id). Markets naming no site take the one code their series and city use. Also the climate day (local standard time) with the civil day as a variant, and the scope: an explicit list of 24 daily-high series plus `KXRAIN`.
+- `metar.py`: the parser.
+  - Temperature from the tenths remark; otherwise from the body's whole degrees at the lower edge.
+  - The six-hour maximum, and hourly precipitation, where a trace counts as 0.
+  - Every temperature becomes its lowest possible whole °F (W4).
+- `bounds.py`: each report's own readings and the day's running bound and rain flag, under both day definitions.
+  - A six-hour maximum counts only when its six hours lie inside the day.
+  - Rain counts only when the routine report it is measured from was inside the day.
+- `archive.py`: the downloader for the Iowa Environmental Mesonet's archive. Routine and special reports, paced at 1.1 s, backing off on 429 and 5xx errors, resumable per station.
+- `check.py`: the gate.
+  - Each settled market's result against what its station's day settled, with W4's margins and, for information, without them.
+  - It refuses any day in the test part.
+- `live.py`: the delay recorder. It polls NOAA's aviation weather service once a minute; the first answer is the baseline.
+- The two addresses and the user agent are in `sparq_core.config`; `httpx` is declared by `sparq-analytics` (already in the lock).
+- The terms are in `docs/research/weather-sources.md`.
+
+**What was kept, changed and why.** Nothing in KalshiTerm2 or KAPS read weather, so nothing was ported. Changed from the slice plan:
+- The scope is an explicit series list, not the `KXHIGH` prefix. The prefix caught `KXHIGHINFLATION`, which the real data showed.
+- The 24-hour maximum group is not parsed. It arrives at the end of the day, so it adds nothing within the day.
+- West Palm Beach (`CLIDJT`) reports as `KDJT`, not `KPBI`: the archive has no `KPBI` reports since the airport was renamed.
+
+**Verified (local).**
+- 70 tests, with hand-built reports and answers worked out by hand: negative temperatures, a missing tenths remark, a trace, the six-hour maximum across the day start, the standard day across the autumn clock change, the Phoenix zone, retries and resuming, and the baseline poll.
+- 16 planted bugs: 15 were caught on the first run. A special report that restarted the rain window survived, so a test was added, and all 16 are caught.
+- The full suite: 1,775 passed and 198 skipped; ruff and mypy clean; the weather package fully covered.
+
+**Verified (analytics node, real data).**
+- *Stations.* Every in-scope market from 2026-08-07 to 2026-10-10 maps to a station: 62 series and city combinations.
+  - Houston's rain moved from Bush Intercontinental (`CLIIAH`, to 2026-08-13) to Hobby (`CLIHOU`).
+  - Chicago's rain is O'Hare, while Chicago's high is Midway.
+  - The highs' rules switched from the NWS report to The Weather Company on 2026-08-15.
+- *Download.* 2026-08-01 to 2026-10-23: 87,990 reports from 38 stations (`KPBI` had none), then 2,307 from `KDJT`. That is 90,297 in all, 2.2 MB, in under two minutes.
+- *Check on the fit part* (2026-08-07 to 2026-09-28): 8,397 settled markets, all with a station and reports.
+  - With W4's margins the bounds settle 2,243 under the standard day and 2,244 under the civil day, and **none is wrong**.
+  - Without the 1 °F margin, one call is wrong under the standard day: `KXHIGHNY-26AUG27-T80`, "below 80", settled YES although an hourly report put Central Park at 80 °F or more. The civil day adds `KXHIGHTDC-26SEP22-T66`. The Weather Company's daily maximum can come in below an hourly reading, so the margin is needed.
+  - Rain is the same under both day definitions: 913 NO with no rain reported, 271 YES with rain reported, and 7 YES the hourly reports did not count (misses, not wrong calls).
+  - Coverage: 85 days per station. Most stations are short of 24 routine reports on 2 to 7 days, largely the partial first and last days of the download. Boston is short on 20 days and Providence on 11.
+- *Publication delay* (`delay`, 2026-10-27 02:12 UTC to 2026-10-28 02:12 UTC, detached under `caffeinate` from the check clone; then `download` for 2026-10-26 to 2026-10-28 and `delay-report`):
+  - 1,143 reports from 38 stations: 76 in the first poll (the baseline) and 1,067 that arrived during the run. About 1,440 polls a minute apart; 8 failed with an HTTP error and were retried the next minute.
+  - Seconds after the observation time:
+
+    | | median | p95 | max |
+    |---|---|---|---|
+    | First seen by the poll | 195 | 312 | 1,866 |
+    | Received by the service (its own time) | 188 | 265 | 1,865 |
+    | First seen, routine reports (998) | 195 | 312 | 1,866 |
+    | First seen, special reports (69) | 193 | 260 | 313 |
+
+  - First seen later than 5, 6, 7, 10 and 15 minutes: 90, 24, 12, 7 and 4 of the 1,067. The slowest were routine reports: Providence 31 minutes, Chicago O'Hare 29, New Orleans 16, Tampa 15.
+  - Against the archive: all 1,143 found; 1,109 with the same text and 1,142 with the same readings. The one exception, College Station at 10:53 UTC on 2026-10-27, is archived without its remarks, so the archive reads the body's lower edge (16.5 °C) instead of the tenths (17.2 °C): the archive can only understate, never overstate, a bound.
+
+**Review (PLAN Q8).** Each commit from 2026-10-28 was reviewed at low effort, with no findings. The merge review, at medium effort over the branch against `main`, found 10 issues:
+1. `check` crashed on a window with no settled market (polars error on an empty frame). **Fixed:** it is refused with a message; test added.
+2. Network errors (`httpx`) and polars errors escaped the command line's "exit 1 with one error line". **Fixed;** test added.
+3. A rain market was called YES on any rain, whatever its strike. All 2,357 `KXRAIN` markets in the history are "more than 0", so no past call changes. **Fixed:** only that strike is called; tests added.
+4. A restarted delay recorder wrote the last two hours' reports again. The run measured had no restart. **Fixed:** it reads what the file holds first; test added.
+5. The archive comparison could count one live report twice where the archive holds two reports in the same minute. The run measured found 1,143 of 1,143, so it was not affected. **Fixed:** each live report is matched once, against any of them; test added.
+6. The `stations` docstring had Houston's rain codes in the wrong order. **Fixed.**
+7. The PLAN said W4 counts from the "time of issue" while the decision is the observation time; S2.2's row lacks the added measure. **Fixed:** W4 reworded; the S2.2 row is updated in PR #15, which already changes that row.
+8. The archive fetch waited up to a minute after its last failed try. **Fixed;** test asserts 5 waits for 6 tries.
+9. `in_scope` duplicated the scope filter and was used only by a test. **Fixed:** removed, and the test reads `SCOPE`. `day_bounds` is also unused by the code, but kept: S2.2's timeline needs it.
+10. The parser's docstring said whole degrees are "at least" half a degree high; it is "up to", and the code takes the lower edge. **Fixed.**
+
+The six code fixes were undone one at a time: the tests caught all six. Weather tests: 75 passed, the package 100% covered; ruff and mypy clean.
+
+**Decisions.**
+- **W4's history delay is 10 minutes after the observation time** (owner, 2026-10-28, as recommended). The p95 rounded up (6 minutes) would leave 2.2% of reports counted before they were public, each one a chance to overstate the edge; 10 minutes leaves 0.7%.
+- **Added to S2.2** (owner, 2026-10-28): measure, from the data already held, how often and by how much the settled high is above the highest hourly report available at the time, and how many hours later the reports show it. It sizes the follow-up below.
+- **Parked in PLAN §9** (owner, 2026-10-28; named as scope creep): the station's own 5-minute readings for earlier certainty, checked only if S2.2 finds an edge limited by when the outcome is known; and other weather networks for the direction and speed of temperature change, a forecasting strategy, low priority.
+
+**Problems and fixes.**
+- The first `stations` run stopped at `KXHIGHINFLATION-26DEC`: the prefix scope was replaced by the explicit list.
+- `KPBI` returned no reports; the live feed and the archive both carry the station as `KDJT`.
+- The delay run was started before the `KDJT` fix, so it polled `KPBI` and has no West Palm Beach reports. The 38 other stations agree closely, so the delay was not re-measured.
+
 ### S2.h Core hardening from IKARS's review (2026-10-27, owner approved; done)
 
 **Why.** IKARS (the owner's sibling project) seeded its core from SPARQ's `sparq-core` at `c017add`. Its live checks and merge review (IKARS BUILD-LOG M1.2) found weaknesses that were still in SPARQ. Each was checked against SPARQ's code before the slice, and the owner added the slice ahead of S2.2.

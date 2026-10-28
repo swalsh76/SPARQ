@@ -1,4 +1,5 @@
-"""Environments and client settings: the one place that knows Kalshi's addresses.
+"""Environments and client settings: the one place that knows Kalshi's addresses (and the
+weather sources' addresses S2 reads).
 
 Demo is the default. Production is an explicit opt-in (``SPARQ_KALSHI_ENV=production`` or passing
 ``Environment.PRODUCTION``), and every client logs a warning when it is used.
@@ -29,6 +30,13 @@ WS_URLS: dict[Environment, str] = {
     Environment.DEMO: "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2",
     Environment.PRODUCTION: "wss://external-api-ws.kalshi.com/trade-api/ws/v2",
 }
+
+# Weather station reports for S2 (PLAN §6.2, W3; terms in docs/research/weather-sources.md): the
+# Iowa Environmental Mesonet's archive (public domain; one request a second per address) and NOAA's
+# aviation weather service for live reports (100 requests a minute; it asks for a custom agent)
+WEATHER_ARCHIVE_URL = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
+WEATHER_LIVE_URL = "https://aviationweather.gov/api/data/metar"
+WEATHER_USER_AGENT = "SPARQ research (+https://github.com/swalsh76/SPARQ)"
 
 # Measured live (BUILD-LOG K0.5.3c and K0.5.4): the historical trades endpoint held 10 requests a
 # second for a full minute, but the live trades endpoint and both markets listings answered 429
