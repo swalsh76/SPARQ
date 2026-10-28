@@ -242,6 +242,7 @@ def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, 
     closed = known.filter(~pl.col("censored"))
     aggs = [
         pl.len().alias("episodes"),
+        (pl.len() * 24 // hours).alias("episodes_a_day"),
         pl.col("censored").sum().alias("censored"),
         pl.col("ticker").n_unique().alias("markets"),
         pl.col("onset_size_e2").median().alias("onset_size_median_e2"),

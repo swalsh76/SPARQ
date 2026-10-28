@@ -248,10 +248,17 @@ def summarize(
             pl.col("count_e2").sum().alias("reversal_e2"),
         )
     )
+    # the reactive bidder's base: every market whose winning side printed 99 to a resting bid
+    winners = (
+        near.filter((pl.col("cents") >= 99) & pl.col("won") & dead)
+        .group_by("category")
+        .agg(pl.col("ticker").n_unique().alias("winning_99_markets"))
+    )
     counts = markets.group_by("category").agg(pl.len().alias("markets"))
     categories = (
         counts.join(by_category, on="category", how="left")
         .join(any_time, on="category", how="left")
+        .join(winners, on="category", how="left")
         .with_columns(
             pl.exclude(
                 "category",
@@ -259,7 +266,12 @@ def summarize(
                 "hours_to_end_median",
                 "hours_to_end_p90",
                 "settle_ms_median",
+                "reactive_payout",
             ).fill_null(0)
+        )
+        .with_columns(
+            reactive_payout=pl.col("winning_99_markets")
+            / (pl.col("winning_99_markets") + pl.col("reversal_markets"))
         )
         .sort("category")
     )

@@ -108,11 +108,13 @@ def test_the_summary_has_the_payout_the_dump_and_the_reversals_per_category(
     assert (sports["dump_e2"], sports["dump_e6"], sports["lifted_e2"]) == (5_200, 51_480_000, 500)
     assert sports["false_dump_e2"] == 2_500
     assert (sports["reversal_markets"], sports["reversal_e2"]) == (2, 4_000)
+    assert (sports["winning_99_markets"], sports["reactive_payout"]) == (3, 0.6)
     assert (sports["hours_to_end_median"], sports["settle_ms_median"]) == (6.0, 21_900_000)
     assert sports["makers_gain_a_day_e6"] == 520_000  # 52 contracts at a cent, over one day
     weather = summary["by_category"]["Climate and Weather"]
     assert (weather["true_regimes"], weather["false_regimes"], weather["payout"]) == (1, 0, 1.0)
     assert (weather["dump_e2"], weather["reversal_markets"]) == (4_000, 0)
+    assert weather["reactive_payout"] == 1.0
     levels = {
         (r["category"], r["cents"], r["taker_bought_dead"], r["in_regime"]): r["contracts_e2"]
         for r in summary["levels"]

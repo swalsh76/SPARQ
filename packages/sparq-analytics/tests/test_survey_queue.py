@@ -132,6 +132,7 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     assert (summary["hours"], summary["episodes"], summary["left_censored"]) == (4, 5, 1)
     sports = summary["by_category"]["Sports"]
     assert (sports["episodes"], sports["censored"], sports["markets"]) == (3, 2, 2)
+    assert sports["episodes_a_day"] == 18
     assert sports["onset_size_median_e2"] == 200.0
     assert (sports["hour_before_size_median_e2"], sports["hour_before_unknown"]) == (1_500.0, 1)
     assert (sports["dump_e2"], sports["lifted_e2"]) == (7_900, 300)
