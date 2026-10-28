@@ -232,8 +232,13 @@ def _number(value: float | None) -> float | None:
 def _estimate(ours: pl.DataFrame, days: int) -> dict[str, Any]:
     """The total and per-day profit, and the profit per contract with its interval, clustered by
     city-day."""
-    clusters = ours.group_by("place", "day").agg(
-        pl.col("profit_e6").sum().alias("profit_e6"), (pl.col("c").sum() / 100).alias("contracts")
+    clusters = (
+        ours.group_by("place", "day")
+        .agg(
+            pl.col("profit_e6").sum().alias("profit_e6"),
+            (pl.col("c").sum() / 100).alias("contracts"),
+        )
+        .sort("place", "day")  # a fixed order, so the seeded bootstrap repeats exactly
     )
     per_contract: Estimate = cluster_bootstrap(
         clusters["profit_e6"].cast(pl.Float64).to_numpy(),
