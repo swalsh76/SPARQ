@@ -15,14 +15,14 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-28 UTC (S2.2 done: no rules; its PR awaits the merge review and the owner). Dates here are UTC.*
+*Last updated 2026-10-28 UTC (S2.2 done: no rules; its PR awaits the owner). Dates here are UTC.*
 
 - **Where the work happens:** open Claude Code in this repository's folder on the workstation (`%USERPROFILE%\dev\SPARQ`), not in KAPS's. This project's assistant memory (real host names, the analytics node's paths and account, the owner's preferences) is in the memory folder Claude Code keeps for this folder.
 - **Now (2026-10-28 UTC):**
   - **PR #10, S2.1**: merged (`abe14da`). W4's history delay is **10 minutes** after the observation time (owner, 2026-10-28).
   - **PR #15**: merged (`c58b2ab`): the mini code review rule (PLAN Q8, "Workflow" below), the PR checklist, and S2.2's approved plan in its PLAN row.
-  - **S2.2, exploration on the fit and validate parts: done, no rules (W9, owner, 2026-10-28)** on branch `s2/2-explore` (BUILD-LOG S2.2, `docs/research/weather-explore.md`). Takers could have taken stale quotes in 19 of 2,240 called fit-part markets ($0.23 a day at the lower bound) and in 1 on validate ($0): the book priced the bound a median 4.6 hours (highs) and 40 minutes (rain) before the call. S2.3 and S2.4 are not run and **the test part (2026-10-11 to 2026-10-22) stays unopened**. Parked in PLAN §9: resting bids at 99 cents for a certain side (8.8 M contracts on the fit part, no maker fee); the 5-minute readings entry gained S2.2's gap figures.
-  - **Next:** the merge review (medium) over the branch, then the PR for the owner. After it, the direction is the owner's call: S2 has no further slice, and the milestone's close-out slice is not yet planned.
+  - **S2.2, exploration on the fit and validate parts: done, no rules (W9, owner, 2026-10-28)** on branch `s2/2-explore` (BUILD-LOG S2.2, `docs/research/weather-explore.md`). Takers could have taken stale quotes in 19 of 2,240 called fit-part markets ($0.65 a day at the lower bound) and in 1 on validate ($0): the book priced the bound a median 4.6 hours (highs) and 40 minutes (rain) before the call. S2.3 and S2.4 are not run and **the test part (2026-10-11 to 2026-10-22) stays unopened**. Parked in PLAN §9: resting bids at 99 cents for a certain side (8.8 M contracts on the fit part, no maker fee); the 5-minute readings entry gained S2.2's gap figures.
+  - **Next:** the merge review is done (10 findings, 9 fixed, BUILD-LOG S2.2); the PR goes to the owner. After it, the direction is the owner's call: S2 has no further slice, and the milestone's close-out slice is not yet planned.
   - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28, the delay run's files and `explore-fit|validate.json` with their trades files. The check clone there is on `s2/2-explore`.
 - **Standing rules from the owner:**
   - Announce each slice before anything else, and narrate each step (each tool call) in one plain line first.

@@ -340,14 +340,14 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 - *Timeline.* A report counts 10 minutes after its observation time (W4). A bound counts only where **both** kinds of climate day allow it: the lower of the standard and the civil day's running bound, and rain once both have it. A report near midnight can then never settle the wrong day. *Chosen in building (not in the slice plan):* S2.1 found no wrong call under either day, and this is the conservative way to use both.
 - *The call:* the first counted moment the bound reaches the market's threshold (`check.threshold`, split out of `implied` so S2.1's and S2.2's calls cannot drift apart).
 - *Ours:* a trade after the call whose taker bought the certain side, as approved. It is priced one cent worse (W5) with the taker fee rounded up to a cent, each trade one order, and paid on Kalshi's result (W2).
-- *Capacity:* an upper bound (every such trade) and a lower bound (the first per market), each with the profit per contract and a studentized bootstrap clustered by city-day. Chicago's O'Hare and Midway count as one city, and so do Houston's two stations. The dollars a day are over the part's calendar days.
-- *W8:* the minutes from the call to the first trade of ours and to the last profitable one; the trades on the ruled-out side after the call; the calls Kalshi's result contradicted.
-- *The gap* (owner, 2026-10-28): per city-day of highs, the settled high (at least the winning bracket's lowest degree) against the highest hourly temperature, and the hours from the hourly peak until the bound (with the six-hour maximum) reached it.
+- *Capacity:* an upper bound (every such trade) and a lower bound (the first per market that was worth taking when it came: price and fee below a dollar), each with the profit per contract and a studentized bootstrap clustered by city-day. Chicago's O'Hare and Midway count as one city, and so do Houston's two stations. The dollars a day are over the part's calendar days.
+- *W8:* the minutes from the call to the first trade of ours and to the last profitable one; the trades on the ruled-out side after the call, and those at 99 cents or more for the certain side; how long before the call the certain side last traded below 95 cents (the book's lead); the calls Kalshi's result contradicted.
+- *The gap* (owner, 2026-10-28): per city-day of highs, the settled high (at least the winning bracket's lowest degree) against the highest hourly temperature, and the hours from the hourly peak until the bound (with the six-hour maximum) reached it (0 when it was no later).
 - `study.dataset.with_fees` made public (it was `_with_fees`; one caller and one test).
 
-**Verified (local).** 19 new tests on one hand-worked Central Park day (five markets, nine trades; prices, fees, profits, timings and the gap computed by hand). 12 planted bugs: 11 were caught on the first run. Rain counted on only one kind of day survived, so the timeline test gained rain on the clock's day only, and all 12 are caught. The weather package is 100% covered; the full suite has 1,862 passed and 196 skipped; ruff and mypy are clean.
+**Verified (local).** 20 tests in `test_weather_explore.py`, on one hand-worked Central Park day (six markets, twelve trades; prices, fees, profits, timings and the gap computed by hand). 12 planted bugs: 11 were caught on the first run. Rain counted on only one kind of day survived, so the timeline test gained rain on the clock's day only, and all 12 are caught. The weather package is 100% covered; the full suite has 1,862 passed and 196 skipped; ruff and mypy are clean.
 
-**Verified (analytics node, real data; 3 s a part).**
+**Verified (analytics node, real data; 3 s a part; at `ff195cc`, two runs of each part give byte-identical output).**
 
 | | fit (53 days) | validate (12 days) |
 |---|---|---|
@@ -357,17 +357,30 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 | Trades after the call | 41,731 | 9,653 |
 | Ours: trades, markets, city-days | 1,572, 19, 19 | 1, 1, 1 |
 | Upper bound: profit, a day | $2,173.60, $41.01 | $0.00 |
-| Upper bound: cents a contract (lower 2.5%) | 2.03 (0.71) | 0 |
-| Lower bound (first per market): profit, a day | $12.02, $0.23 | $0.00 |
+| Upper bound: cents a contract (lower 2.5%) | 2.03 (0.72) | 0 |
+| Lower bound (first worth taking per market): trades, profit, a day | 14, $34.23, $0.65 | 0, $0.00 |
 | Ruled-out side after the call: trades, contracts | 40,159, 8.8 M | 9,652, 2.1 M |
+| of which at 99 cents for the certain side | 38,381, 8.7 M | 9,652, 2.1 M |
 
 - *Where ours were.* 16 of the 19 markets are rain. The three highs rank 13th, 15th and 18th by profit; the five most profitable markets are rain (Atlanta 5 Sep, Houston 17 Sep, San Francisco 15 Aug, Boston 21 Sep, Washington 27 Aug).
 - *The book is ahead of the reports.* In the called markets, the certain side last traded below 95 cents a median **276 minutes before the call** for the highs (10% of markets under 70) and **41 minutes before** for rain (10% under 10). The validate part gives 325 and 40. Traders price the bound from forecasts, radar and the trend, hours before an hourly report proves it.
 - *The ruled-out side.* 38,381 of the fit part's 40,159 trades were at 99 cents for the certain side: holders sold a certain win at 99 cents (or a taker bought the dead side at 1 cent), and the maker bought it.
-- *The gap.* The settled high was above the highest hourly report on 679 of 1,086 city-days in the fit part (440 by 1 °F, 202 by 2, 32 by 3, 5 by 4 or more) and 137 of 253 in validate. On 426 of the 679 the six-hour maximum later reached it, a median of 4 hours after the hourly peak (p90 6); on 253 it never did.
+- *The gap.* The settled high was above the highest hourly report on 679 of 1,086 city-days in the fit part (440 by 1 °F, 202 by 2, 32 by 3, 5 by 4 or more) and 137 of 253 in validate. On 426 of the 679 the six-hour maximum later reached it (12 of them by the hourly peak), a median of 4 hours after the hourly peak (p90 6); on 253 it never did.
 
-**Review (PLAN Q8).** `3e45c8b` (resume point; docs only, no code). `a28ec77` reviewed at low effort: no findings.
+**Review (PLAN Q8).** `3e45c8b` (resume point; docs only, no code). `a28ec77` reviewed at low effort: no findings. The merge review, at medium effort over the branch against `main`, found 10 issues:
+1. The lead before the call and the 99-cent count, cited for W9, came from a one-off script, not from `explore`. **Fixed:** `explore` measures both (`lead`, `ruled_out_at_99_*`) and reproduces the script's figures exactly; tests added.
+2. The validate run opens the trade files of 2026-10-11 and 10-12, inside the test part, while the write-up said the test part was not read. A market trades until about 01:00 local after its day, so those files hold the validate part's last trades. **Fixed:** only the called markets' rows are read from any file; the write-up and the module say exactly what is opened. No test-part market's trade or result is read.
+3. The gap's hours could be negative when the six-hour maximum showed the settled high before the hourly peak. **Fixed:** the lag is 0 then, counted as "reached by the peak" (12 on the fit part); test added. The median and p90 did not change.
+4. The ruled-out counts dropped trades whose fee was unknown. None was in the real data. **Fixed:** they count every trade; test added.
+5. A trade with no taker side was counted nowhere. None was in the real data. **Fixed:** counted apart; test added.
+6. The lower bound took the first trade of ours even when it could not pay (at a dollar). **Fixed:** it takes the first trade worth taking when it came; the fit part's lower bound moves from $0.23 to $0.65 a day; test added.
+7. The write-up skipped the benchmark ladder that CLAUDE.md asks of every study. **Fixed:** it reports the raw price and the naive maker, and says why the bias correction has nothing to correct.
+8. The local hour converts each trade once per time zone. **Not changed:** about 42,000 trades and six zones take well under a second; the run takes 3 s.
+9. `settled_low` encoded the strike rules away from `threshold`. **Fixed:** moved next to it in `check.py`.
+10. `_quantiles` turned a missing quantile into 0. **Fixed.**
+
+The behaviour fixes (1, 3, 4, 6, and the lead's "before the call") were undone one at a time: the tests caught all five. Rerunning the real data also showed the results were not repeatable: the bootstrap's clusters came in no fixed order, and trades of one market in one millisecond (common) had no fixed order, so "the first trade" changed between runs (the lower bound's point moved from 21.7 to 6.1 cents a contract). **Fixed:** the clusters are sorted and the trade id breaks ties (which of such trades came first is not recorded). Weather tests: 97 passed, the package 100% covered; the full suite 1,865 passed and 196 skipped; ruff and mypy clean.
 
 **Decisions.**
-- **W9: no rules (owner, 2026-10-28, as recommended).** No rule could reach W7's 100 signalled city-days or its $25 floor, so S2.3 and S2.4 are not run and the test part stays unopened. `docs/research/weather-rules.json` holds the empty list; the write-up is `docs/research/weather-explore.md`.
+- **W9: no rules (owner, 2026-10-28, as recommended).** No rule could reach W7's 100 signalled city-days or its $25 floor, so S2.3 and S2.4 are not run and the test part stays unopened (its first two days' trade files were opened only for the validate markets' last trades). `docs/research/weather-rules.json` holds the empty list; the write-up is `docs/research/weather-explore.md`.
 - **Parked in PLAN §9** (named as scope creep): resting bids at 99 cents for an already-certain side. All 25 series in scope are plain `quadratic`, with no maker fee and no recorded fee change (read on the node, 2026-10-28). The 5-minute readings entry gains S2.2's gap figures.
