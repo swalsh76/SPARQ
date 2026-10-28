@@ -36,7 +36,7 @@ def combine(history: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
                 name = f"{position}_{size_e2}"
                 fills = frames[f"fills_a_day_e2_{name}"]
                 fee = frames[f"fee_a_day_e6_{name}"]
-                if fills is None or not regimes or past["settle_ms_median"] is None:
+                if fills is None or not regimes:
                     row[f"dollars_a_day_e6_{name}"] = None
                     row[f"capital_e6_{name}"] = None
                     row[f"clears_{name}"] = False
@@ -44,7 +44,11 @@ def combine(history: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
                 # 1 cent won on p of the contracts, 99 cents lost on the rest, exactly
                 gain = fills * (past["true_regimes"] * CENTS - past["false_regimes"] * (E6 - CENTS))
                 dollars = gain // (regimes * 100) - fee
-                capital = fills * (E6 - CENTS) // 100 * past["settle_ms_median"] // MS_PER_DAY
+                # no true regime: no settlement median, so the capital tied is unknown
+                settle = past["settle_ms_median"]
+                capital = (
+                    None if settle is None else fills * (E6 - CENTS) // 100 * settle // MS_PER_DAY
+                )
                 row[f"dollars_a_day_e6_{name}"] = dollars
                 row[f"capital_e6_{name}"] = capital
                 row[f"clears_{name}"] = dollars >= BAR_E6

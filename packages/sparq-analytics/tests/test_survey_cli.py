@@ -78,6 +78,12 @@ def test_a_category_without_a_history_regime_has_no_dollars() -> None:
     assert (culture["payout"], culture["regimes_in_history"]) == (None, 0)
     assert culture["dollars_a_day_e6_onset_10000"] is None
     assert not culture["clears_onset_10000"] and out["cleared"] == []
+    # only false regimes: the bid loses on every fill, and the capital tied is unknown
+    past = {"true_regimes": 0, "false_regimes": 2, "settle_ms_median": None}
+    lost = combine({"by_category": {"Culture": past}}, live)["by_category"]["Culture"]
+    assert lost["payout"] == 0.0
+    assert lost["dollars_a_day_e6_onset_10000"] == -9_901_000  # 10 contracts at -99c, the fee
+    assert lost["capital_e6_onset_10000"] is None
 
 
 def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPatch) -> None:

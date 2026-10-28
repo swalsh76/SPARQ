@@ -253,7 +253,13 @@ def summarize(
         counts.join(by_category, on="category", how="left")
         .join(any_time, on="category", how="left")
         .with_columns(
-            pl.exclude("category", "payout", "hours_to_end_median", "hours_to_end_p90").fill_null(0)
+            pl.exclude(
+                "category",
+                "payout",
+                "hours_to_end_median",
+                "hours_to_end_p90",
+                "settle_ms_median",
+            ).fill_null(0)
         )
         .sort("category")
     )
