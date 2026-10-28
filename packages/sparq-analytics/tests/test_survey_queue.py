@@ -86,8 +86,12 @@ def test_episodes_run_from_the_onset_to_the_first_frame_out(tmp_path: Path) -> N
     assert not first["left_censored"] and not rows[("L4", "yes", lm(1, 0))]["left_censored"]
     assert rows[("L5", "yes", lm(0, 30))]["left_censored"]
     assert rows[("L6", "yes", lm(0, 50))]["left_censored"]
-    # the ticker gap at 00:40 overlaps L5's episode only
-    assert [k for k, r in rows.items() if r["in_gap"]] == [("L5", "yes", lm(0, 30))]
+    # the ticker gap at 01:10 overlaps the episodes open then: L4 and L5, not L6 (over at 01:05)
+    assert [k for k, r in rows.items() if r["in_gap"]] == [
+        ("L4", "yes", lm(1, 0)),
+        ("L5", "yes", lm(0, 30)),
+    ]
+    assert rows[("L6", "yes", lm(0, 50))]["end_ms"] == lm(1, 5)
     assert not mark_gaps(found.drop("in_gap"), tmp_path / "nowhere", END)["in_gap"].any()
 
 
@@ -196,18 +200,19 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     )
     summary = summarize(found, start, end)
     assert (summary["hours"], summary["episodes"], summary["left_censored"]) == (4, 6, 2)
-    assert summary["gap_episodes"] == 1  # L5, which is left-censored as well
+    assert summary["gap_episodes"] == 2  # L4, and L5 which is left-censored as well
     sports = summary["by_category"]["Sports"]
-    assert (sports["episodes"], sports["censored"], sports["markets"]) == (3, 2, 2)
-    assert sports["episodes_a_day"] == 18
-    assert sports["onset_size_median_e2"] == 200.0
-    assert (sports["hour_before_size_median_e2"], sports["hour_before_unknown"]) == (1_500.0, 1)
-    assert (sports["dump_e2"], sports["lifted_e2"]) == (7_900, 300)
-    assert sports["fills_a_day_e2_onset_10000"] == 39_600  # 6,600 in 4 hours
+    # L1's two episodes; L4 sits in the gap, L5 and L6 are left-censored
+    assert (sports["episodes"], sports["censored"], sports["markets"]) == (2, 1, 1)
+    assert sports["episodes_a_day"] == 12
+    assert sports["onset_size_median_e2"] == 600.0
+    assert (sports["hour_before_size_median_e2"], sports["hour_before_unknown"]) == (1_500.0, 0)
+    assert (sports["dump_e2"], sports["lifted_e2"]) == (3_700, 300)
+    assert sports["fills_a_day_e2_onset_10000"] == 15_000  # 2,500 in 4 hours
     assert sports["fills_a_day_e2_hour_before_10000"] == 15_000
-    assert sports["fee_a_day_e6_onset_10000"] == 42_624
+    assert sports["fee_a_day_e6_onset_10000"] == 0  # the maker-fee market is in the gap
     assert sports["fee_unknown_episodes"] == 0
-    assert sports["rev_fills_a_day_e2_onset_10000"] == 28_200  # 4,700 in 4 hours
+    assert sports["rev_fills_a_day_e2_onset_10000"] == 16_800  # 2,800 in 4 hours
     assert sports["rev_fills_a_day_e2_hour_before_10000"] == 15_000
     weather = summary["by_category"]["Climate and Weather"]
     assert weather["rev_fills_a_day_e2_onset_10000"] == 0

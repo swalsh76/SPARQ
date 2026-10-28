@@ -33,9 +33,10 @@ day before):
 * ``L3`` (Sports): a plain book at 50c, one trade: no episode.
 * ``L4`` (Sports, maker fees): **bid 99 from 01:00** (100 shown; 150 at 02:00, open); 01:30 a no
   taker dumps 42. No frame in the two hours before 00:00: its queue an hour earlier is unknown.
-* ``L5`` (Sports): bid 99 at 00:30, in the span's first hour: left-censored, excluded. **A ticker
-  gap from 00:40 to 00:45** overlaps its episode and no other (every later one begins after it).
-* ``L6`` (Sports): bid 99 at 00:50, also in the first hour: left-censored, and in no gap.
+  **A ticker gap from 01:10 to 01:12 overlaps its episode**, so it takes no part in the figures;
+  L1's and L2's episodes begin after the gap and are untouched.
+* ``L5`` and ``L6`` (Sports): bid 99 at 00:30 and 00:50, in the span's first hour: left-censored,
+  excluded. L5 stays open and overlaps the gap too; L6 drops to 98 at 01:05, before the gap.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -195,6 +196,7 @@ FRAMES = [
     _frame(lm(2, 0), "L4", 990_000, 150, None, None),
     _frame(lm(0, 30), "L5", 990_000, 50, None, None),
     _frame(lm(0, 50), "L6", 990_000, 60, None, None),
+    _frame(lm(1, 5), "L6", 980_000, 70, 990_000, 10),
 ]
 LIVE_TRADES = [
     _trade(lm(1, 45), "L1", 990_000, 2_500, "no"),
@@ -245,7 +247,7 @@ def write_live(root: Path) -> Path:
         schema=MARKET_SCHEMA,
     ).write_parquet(live / "markets.parquet")
     pl.DataFrame(
-        [{"kind": "ticker", "start_ms": lm(0, 40), "end_ms": lm(0, 45), "reason": "lost"}],
+        [{"kind": "ticker", "start_ms": lm(1, 10), "end_ms": lm(1, 12), "reason": "lost"}],
         schema=GAP_SCHEMA,
     ).write_parquet(live / "gaps.parquet")
     return live

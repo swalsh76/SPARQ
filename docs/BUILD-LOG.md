@@ -546,7 +546,7 @@ The code fixes were planted one at a time: the tests caught all 21 plants (two a
 - polars divides an integer column by a literal through the reciprocal (2 hours read as 1.9999999999999998); the hours are whole seconds over 3,600.
 - A lazy join does not keep row order: one test read values unsorted and failed once in three runs; sorted.
 - The "unknown" piece of the hour-before lookup kept a column the others lacked and broke the concatenation, found by the test that first reached it.
-- Any episode still open when a ticker gap begins overlaps it, so the test world's gap had to sit before every episode but one; and a `when/then/otherwise` names its result after the `then` branch, so a test's replaced column was added beside the original until aliased.
+- Any episode still open when a ticker gap begins overlaps it, so the test world's gap sits where it excludes one episode that nothing else excludes; and a `when/then/otherwise` names its result after the `then` branch, so a test's replaced column was added beside the original until aliased.
 - A `tail` at the end of a `&&` chain hid a failing exit code and let one commit (`ea133c5`) in with a failing test (test-only; fixed in the next commit); chains are gated with `pipefail` since.
 
 **Decisions.** None taken in the slice; the owner's choice under M1 is open.

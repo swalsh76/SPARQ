@@ -20,22 +20,22 @@ def test_dump_writes_both_readings_and_prints_the_implied_dollars(
     assert implied["cleared"] == []
     sports = implied["by_category"]["Sports"]
     assert (sports["reactive_payout"], sports["knowing_payout"]) == (0.6, 0.75)
-    assert sports["episodes_a_day"] == 18
-    # reactive: a cent on 396 contracts a day in 3 of 5 sides; 99 cents on the 282 contracts
-    # a day a reversal's dump would fill behind the queues, in 2 of 5; the fee
+    assert sports["episodes_a_day"] == 12  # L4 sits in the ticker gap
+    # reactive: a cent on 150 contracts a day in 3 of 5 sides; 99 cents on the 168 contracts
+    # a day a reversal's dump would fill behind the queues, in 2 of 5; no fee left
     assert (sports["gain_e6_onset_10000"], sports["loss_e6_onset_10000"]) == (
-        2_376_000,
-        111_672_000,
+        900_000,
+        66_528_000,
     )
-    assert sports["dollars_a_day_e6_onset_10000"] == -109_338_624
+    assert sports["dollars_a_day_e6_onset_10000"] == -65_628_000
     # knowing: 150 contracts a day in 3 of 4; a false regime's 150 a day in 1 of 4
     assert (sports["gain_e6_hour_before_10000"], sports["loss_e6_hour_before_10000"]) == (
         1_125_000,
         37_125_000,
     )
     assert sports["dollars_a_day_e6_hour_before_10000"] == -36_000_000
-    assert sports["capital_e6_onset_10000"] == 99_371_250
-    assert sports["collateral_e6_onset_10000"] == 74_250_000  # 18 bids of $99 for an hour each
+    assert sports["capital_e6_onset_10000"] == 37_640_625
+    assert sports["collateral_e6_onset_10000"] == 49_500_000  # 12 bids of $99 for an hour each
     weather = implied["by_category"]["Climate and Weather"]
     assert (weather["reactive_payout"], weather["knowing_payout"]) == (1.0, 1.0)
     assert weather["dollars_a_day_e6_onset_10000"] == 6_000_000
