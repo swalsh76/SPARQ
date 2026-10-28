@@ -72,6 +72,19 @@ def threshold(
     return None
 
 
+def settled_low(strike_type: str | None, floor: float | None) -> int | None:
+    """The lowest whole degree F a winning market allows the day's high to be (the counterpart of
+    :func:`threshold`): ``between`` A and B from A, ``greater`` X from ``floor(X) + 1``; ``less``
+    has no lower edge."""
+    if floor is None:
+        return None
+    if strike_type == "between":
+        return math.ceil(floor)
+    if strike_type == "greater":
+        return math.floor(floor) + 1
+    return None
+
+
 def implied(
     series: str,
     strike_type: str | None,

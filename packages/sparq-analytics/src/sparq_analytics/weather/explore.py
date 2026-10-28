@@ -13,13 +13,20 @@ S2.3.
   could have taken instead (a taker of the other side met a maker who already held the certain
   side). We pay its price one cent worse (W5) and the taker fee rounded up to a cent, each trade
   one order, and receive Kalshi's result (W2), so a wrong call costs its whole price.
-* **Capacity.** The upper bound takes every such trade, the lower bound only the first in each
-  market; W7's floor is judged on the lower.
+* **Capacity.** The upper bound takes every such trade; the lower bound only the first in each
+  market that was worth taking when it came (its price and fee below a dollar). W7's floor is
+  judged on the lower.
 * **Repricing (W8).** For each called market, how long after the call the first and the last
-  profitable trade of ours came, and how much traded on the ruled-out side after the call.
+  profitable trade of ours came; how much traded on the ruled-out side after the call, and how
+  much of it at 99 cents or more for the certain side; and how long *before* the call the certain
+  side last traded below 95 cents (the book's lead on the reports).
 * **The gap.** For each city-day of highs, the settled high (at least the winning bracket's lowest
   degree) against the highest hourly temperature reported that day, and how many hours after the
-  hourly peak the bound (with the six-hour maximum) reached it.
+  hourly peak the bound (with the six-hour maximum) reached it (0 when it was no later).
+
+The trade files read run from the day before the part to two days after it, since a market trades
+from the day before its day to about 01:00 local after it. For the validate part that opens the
+test part's first two days, of which only the validate markets' rows are kept.
 
 Money stays in integer millionths of a dollar; only the summaries are shown in cents and dollars.
 """
@@ -37,11 +44,12 @@ from sparq_core.fixedpoint import E6
 from sparq_analytics.study.bootstrap import Estimate, cluster_bootstrap
 from sparq_analytics.study.dataset import with_fees
 from sparq_analytics.study.feecalc import check_bounds, taker_fee_expr
-from sparq_analytics.weather.check import strike_value, threshold
+from sparq_analytics.weather.check import settled_low, strike_value, threshold
 from sparq_analytics.weather.stations import (
     BY_STATION,
     FIT_END,
     HIGH_SERIES,
+    RAIN_SERIES,
     SITES,
     TEST_START,
     WeatherDataError,
@@ -51,6 +59,8 @@ DELAY_MS = 10 * 60 * 1000  # W4, set 2026-10-28
 WORSE_E6 = 10_000  # W5: one cent worse for us
 FEE_UNIT_E6 = 10_000  # the taker fee rounded up to a cent per order
 TAIL, RESAMPLES, SEED = 0.025, 2_000, 20261028
+CHEAP_E6 = 950_000  # the lead: the certain side's last trade below 95 cents
+NINETY_NINE_E6 = 990_000
 PARTS = {
     "fit": (date(2026, 8, 7), FIT_END),
     "validate": (FIT_END + timedelta(days=1), TEST_START - timedelta(days=1)),
@@ -148,9 +158,11 @@ def _local_hour(zones: list[str]) -> pl.Expr:
     return hour
 
 
-def trades_after(kalshi: Path, called: pl.DataFrame, first: date, last: date) -> pl.DataFrame:
-    """Every trade at or after its market's call, priced for us: ``ours`` when its taker bought
-    the certain side, ``profit_e6`` what taking it would have made after the fee."""
+def priced_trades(kalshi: Path, called: pl.DataFrame, first: date, last: date) -> pl.DataFrame:
+    """Every trade of a called market, priced for us: ``after`` when at or after the call,
+    ``ours`` when its taker bought the certain side, ``certain_e6`` the certain side's price,
+    ``profit_e6`` what taking it would have made after the fee (null when the fee is unknown) and
+    ``takeable`` when that would have been positive had the call been right."""
     paths = []
     day = first - timedelta(days=1)  # a market opens the day before its day
     while day <= last + timedelta(days=2):  # and closes about 01:00 local after it
@@ -166,12 +178,17 @@ def trades_after(kalshi: Path, called: pl.DataFrame, first: date, last: date) ->
         ),
         place=pl.col("code").replace(CITY),
     )
-    trades = pl.scan_parquet(paths).select(
-        pl.col("ticker"),
-        pl.col("created_time").alias("t"),
-        pl.col("yes_price_e6").cast(pl.Int64).alias("p"),
-        pl.col("count_e2").alias("c"),
-        pl.col("taker_side"),
+    tickers = markets["ticker"].to_list()
+    trades = (
+        pl.scan_parquet(paths)
+        .filter(pl.col("ticker").is_in(tickers))
+        .select(
+            pl.col("ticker"),
+            pl.col("created_time").alias("t"),
+            pl.col("yes_price_e6").cast(pl.Int64).alias("p"),
+            pl.col("count_e2").alias("c"),
+            pl.col("taker_side"),
+        )
     )
     joined = trades.join(
         markets.select(
@@ -179,12 +196,7 @@ def trades_after(kalshi: Path, called: pl.DataFrame, first: date, last: date) ->
         ).lazy(),
         on="ticker",
     )
-    frame = (
-        with_fees(joined, kalshi)
-        .with_columns(t_ms=pl.col("t").dt.epoch("ms"))
-        .filter(pl.col("t_ms") >= pl.col("call_ms"))
-        .collect()
-    )
+    frame = with_fees(joined, kalshi).with_columns(t_ms=pl.col("t").dt.epoch("ms")).collect()
     check_bounds(frame, multiplier="multiplier_e6", count="c", price="p")
     certain = pl.when(pl.col("call") == "yes").then(pl.col("p")).otherwise(E6 - pl.col("p"))
     price = pl.min_horizontal(certain + WORSE_E6, pl.lit(E6, dtype=pl.Int64))
@@ -195,7 +207,9 @@ def trades_after(kalshi: Path, called: pl.DataFrame, first: date, last: date) ->
     )
     return (
         frame.with_columns(
+            after=pl.col("t_ms") >= pl.col("call_ms"),
             ours=pl.col("taker_side") == pl.col("call"),
+            certain_e6=certain,
             price_e6=price,
             hour=_local_hour(sorted(set(markets["tz"].drop_nulls()))),
             after_s=(pl.col("t_ms") - pl.col("call_ms")) / 1000,
@@ -204,14 +218,15 @@ def trades_after(kalshi: Path, called: pl.DataFrame, first: date, last: date) ->
             fee_e6=pl.when(known).then((fee + FEE_UNIT_E6 - 1) // FEE_UNIT_E6 * FEE_UNIT_E6)
         )
         .with_columns(
-            profit_e6=(payoff - pl.col("price_e6")) * pl.col("c") // 100 - pl.col("fee_e6")
+            profit_e6=(payoff - pl.col("price_e6")) * pl.col("c") // 100 - pl.col("fee_e6"),
+            takeable=(E6 - pl.col("price_e6")) * pl.col("c") // 100 - pl.col("fee_e6") > 0,
         )
         .sort("t_ms", "ticker")
     )
 
 
-def _number(value: float) -> float | None:
-    return None if math.isnan(value) else round(value, 4)
+def _number(value: float | None) -> float | None:
+    return None if value is None or math.isnan(value) else round(value, 4)
 
 
 def _estimate(ours: pl.DataFrame, days: int) -> dict[str, Any]:
@@ -253,21 +268,49 @@ def _quantiles(values: pl.Series) -> dict[str, float | None]:
     if values.is_empty():
         return {"median": None, "p90": None, "max": None}
     return {
-        "median": _number(float(values.quantile(0.5) or 0.0)),
-        "p90": _number(float(values.quantile(0.9) or 0.0)),
-        "max": _number(float(values.quantile(1.0) or 0.0)),
+        "median": _number(values.quantile(0.5)),
+        "p90": _number(values.quantile(0.9)),
+        "max": _number(values.quantile(1.0)),
     }
 
 
+def lead(trades: pl.DataFrame) -> dict[str, Any]:
+    """By kind of market: how long before the call the certain side last traded below 95 cents,
+    over the markets where that last trade came before the call."""
+    kind = (
+        pl.when(pl.col("series_ticker") == RAIN_SERIES)
+        .then(pl.lit("rain"))
+        .otherwise(pl.lit("high"))
+    )
+    last = (
+        trades.filter(pl.col("certain_e6") < CHEAP_E6)
+        .group_by("ticker")
+        .agg(pl.col("series_ticker").first(), pl.col("call_ms").first(), pl.col("t_ms").max())
+        .with_columns(kind=kind, lead_min=(pl.col("call_ms") - pl.col("t_ms")) / 60_000)
+    )
+    out: dict[str, Any] = {}
+    for name in ("high", "rain"):
+        mine = last.filter(pl.col("kind") == name)
+        before = mine.filter(pl.col("lead_min") > 0)["lead_min"]
+        out[name] = {
+            "markets_below_95": mine.height,
+            "last_below_95_before_call": before.len(),
+            "median_min": _number(before.quantile(0.5)),
+            "p10_min": _number(before.quantile(0.1)),
+        }
+    return out
+
+
 def repricing(called: pl.DataFrame, after: pl.DataFrame) -> dict[str, Any]:
-    """W8: how fast ours ran out, what traded on the ruled-out side, and the calls the result
-    contradicted."""
-    ours = after.filter(pl.col("ours"))
+    """W8: how fast ours ran out, what traded on the ruled-out side (every trade, whatever its
+    fee), and the calls the result contradicted."""
+    ours = after.filter(pl.col("ours") & pl.col("profit_e6").is_not_null())
     per_market = ours.group_by("ticker").agg(
         pl.col("after_s").min().alias("first_s"),
         pl.col("after_s").filter(pl.col("profit_e6") > 0).max().alias("last_profitable_s"),
     )
-    ruled_out = after.filter(~pl.col("ours"))
+    ruled_out = after.filter(pl.col("taker_side").is_not_null() & ~pl.col("ours"))
+    at_99 = ruled_out.filter(pl.col("certain_e6") >= NINETY_NINE_E6)
     made = called.filter(pl.col("call_ms").is_not_null())
     wrong = made.filter(pl.col("result") != pl.col("call"))
     return {
@@ -277,6 +320,9 @@ def repricing(called: pl.DataFrame, after: pl.DataFrame) -> dict[str, Any]:
         "last_profitable_s": _quantiles(per_market["last_profitable_s"].drop_nulls()),
         "ruled_out_trades": ruled_out.height,
         "ruled_out_contracts": round(float(ruled_out["c"].sum()) / 100, 2),
+        "ruled_out_at_99_trades": at_99.height,
+        "ruled_out_at_99_contracts": round(float(at_99["c"].sum()) / 100, 2),
+        "side_unknown_trades": after.filter(pl.col("taker_side").is_null()).height,
         "wrong_calls": wrong.select("ticker", "call", "result").to_dicts(),
     }
 
@@ -294,17 +340,6 @@ def breakdown(ours: pl.DataFrame) -> pl.DataFrame:
         )
         .sort("series_ticker", "call", "hour")
     )
-
-
-def settled_low(strike_type: str | None, floor: float | None) -> int | None:
-    """The lowest whole °F a winning market allows the day's high to be."""
-    if floor is None:
-        return None  # "less" has no lower edge
-    if strike_type == "between":
-        return math.ceil(floor)
-    if strike_type == "greater":
-        return math.floor(floor) + 1
-    return None
 
 
 def gap(markets: pl.DataFrame, line: pl.DataFrame) -> tuple[dict[str, Any], pl.DataFrame]:
@@ -351,7 +386,8 @@ def gap(markets: pl.DataFrame, line: pl.DataFrame) -> tuple[dict[str, Any], pl.D
         joined.join(reach, on="event_ticker", how="left")
         .with_columns(
             gap_f=pl.col("settled_lo") - pl.col("hourly_f"),
-            hours_later=(pl.col("reach_ms") - pl.col("peak_ms")) / 3_600_000,
+            # the six-hour maximum can show it before the hourly peak counts: no lag then
+            hours_later=(pl.col("reach_ms") - pl.col("peak_ms")).clip(lower_bound=0) / 3_600_000,
         )
         .sort(*KEYS)
     )
@@ -365,6 +401,7 @@ def gap(markets: pl.DataFrame, line: pl.DataFrame) -> tuple[dict[str, Any], pl.D
         "above_hourly": above.height,
         "by_degrees": {str(row["gap_f"]): row["city_days"] for row in sizes.iter_rows(named=True)},
         "reached_later": reached.height,
+        "reached_by_the_peak": reached.filter(pl.col("hours_later") == 0).height,
         "hours_later": _quantiles(reached["hours_later"]),
         "never_reached": above.height - reached.height,
     }, detail
@@ -379,11 +416,12 @@ def explore(
         raise WeatherDataError("no settled market in scope in that window")
     line = timeline(bounds)
     called = calls(markets, line)
-    after = trades_after(kalshi, called, first, last)
+    trades = priced_trades(kalshi, called, first, last)
+    after = trades.filter(pl.col("after"))
     unknown_fee = after.filter(pl.col("fee_e6").is_null()).height
-    after = after.filter(pl.col("fee_e6").is_not_null())
-    ours = after.filter(pl.col("ours"))
-    lower = ours.group_by("ticker", maintain_order=True).first()  # sorted by time: the first
+    ours = after.filter(pl.col("ours") & pl.col("fee_e6").is_not_null())
+    # sorted by time: the first worth taking in each market
+    lower = ours.filter(pl.col("takeable")).group_by("ticker", maintain_order=True).first()
     days = (last - first).days + 1
     gap_summary, _ = gap(markets, line)
     summary = {
@@ -398,6 +436,7 @@ def explore(
         "upper": _estimate(ours, days),
         "lower": _estimate(lower, days),
         "repricing": repricing(called, after),
+        "lead": lead(trades),
         "by_hour": breakdown(ours.with_columns(series_ticker=pl.lit("all"), call=pl.lit("all")))
         .drop("series_ticker", "call")
         .to_dicts(),

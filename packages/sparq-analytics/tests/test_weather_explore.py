@@ -8,12 +8,11 @@ import pytest
 from sparq_analytics.weather import explore as explore_module
 from sparq_analytics.weather.archive import parse_csv
 from sparq_analytics.weather.bounds import REPORT_SCHEMA, report_bounds
-from sparq_analytics.weather.check import scope_markets
+from sparq_analytics.weather.check import scope_markets, settled_low
 from sparq_analytics.weather.cli import main
 from sparq_analytics.weather.explore import (
     explore,
     part_days,
-    settled_low,
     timeline,
 )
 from sparq_analytics.weather.stations import WeatherDataError
@@ -59,11 +58,14 @@ TRADES = [
     (B78, at(19, 30), "no", 100_000, 1_000),  # ours: 0.91 for 10, fee 0.06, +0.84
     (B78, at(19, 40), "yes", 50_000, 100),  # the ruled-out side
     (B78, at(20, 0), "no", 20_000, 500),  # ours: 0.99 for 5, fee 0.01, +0.04
+    (B78, at(20, 30), "yes", 10_000, 300),  # a holder sells the certain side at 99 cents
+    (T75, at(12, 0), "yes", 400_000, 100),  # 60 cents for the certain side, 61 min before
     (T75, at(14, 0), "no", 10_000, 200),  # ours at a dollar: nothing made, no fee
     (T85, at(20, 0), "yes", 500_000, 100),  # never called
     (B80, at(22, 30), "no", 200_000, 100),  # ours at 0.81, lost: -0.81 and fee 0.02
     (RAIN, at(19, 5), "yes", 600_000, 100),  # ours: 0.61, fee 0.02, +0.37
     (RAIN, at(19, 6), "yes", 700_000, 100),  # ours: 0.71, fee 0.02, +0.27
+    (RAIN, at(19, 10), None, 500_000, 100),  # no taker side: neither ours nor ruled out
 ]
 
 
@@ -137,7 +139,7 @@ def test_ours_are_the_takers_of_the_certain_side_after_the_call_priced_one_cent_
 ) -> None:
     _, after = run(tmp_path)
     assert T85 not in after["ticker"].to_list()  # never called
-    assert after.filter(pl.col("ticker") == B78).height == 3  # the 18:00 trade came before
+    assert after.filter(pl.col("ticker") == B78).height == 4  # the 18:00 trade came before
     ours = after.filter(pl.col("ours")).sort("ticker", "t_ms")
     assert ours.select("ticker", "price_e6", "fee_e6", "profit_e6").rows() == [
         (B78, 910_000, 60_000, 840_000),
@@ -161,8 +163,9 @@ def test_capacity_has_an_upper_bound_of_every_trade_and_a_lower_of_the_first(
     assert upper["fee_dollars"] == 0.13
     assert upper["contracts"] == 20.0
     assert upper["dollars_a_day"] == 0.69
-    assert lower["trades"] == 4
-    assert lower["profit_dollars"] == 0.38  # 0.84 + 0 - 0.83 + 0.37
+    # T75's only trade of ours, at a dollar, was never worth taking
+    assert lower["trades"] == 3
+    assert lower["profit_dollars"] == 0.38  # 0.84 - 0.83 + 0.37
     # one city-day: the interval collapses to the point
     assert upper["cents_per_contract"] == upper["cents_per_contract_lower"] == 3.45
     assert summary["trades_fee_unknown"] == 0
@@ -178,7 +181,9 @@ def test_repricing_reports_the_first_and_last_of_ours_and_the_wrong_calls(
     # first of ours: rain 240 s, B78 1,740 s, B80 1,740 s, T75 3,540 s
     assert reprice["first_ours_s"]["median"] == 1_740.0
     assert reprice["last_profitable_s"]["max"] == 3_540.0  # B78 at 20:00
-    assert (reprice["ruled_out_trades"], reprice["ruled_out_contracts"]) == (1, 1.0)
+    assert (reprice["ruled_out_trades"], reprice["ruled_out_contracts"]) == (2, 4.0)
+    assert (reprice["ruled_out_at_99_trades"], reprice["ruled_out_at_99_contracts"]) == (1, 3.0)
+    assert reprice["side_unknown_trades"] == 1
     assert reprice["wrong_calls"] == [{"ticker": B80, "call": "no", "result": "yes"}]
 
 
@@ -233,7 +238,7 @@ def test_explore_writes_its_summary_and_trades(
     assert "by_series" not in printed
     written = json.loads((data / "explore-fit.json").read_text(encoding="utf-8"))
     assert {row["hour"] for row in written["by_hour"]} == {10, 15, 16, 18}
-    assert pl.read_parquet(data / "explore-fit-trades.parquet").height == 7
+    assert pl.read_parquet(data / "explore-fit-trades.parquet").height == 9
 
 
 @pytest.mark.parametrize(
@@ -264,3 +269,70 @@ def test_a_window_without_a_call_measures_nothing(tmp_path: Path) -> None:
     assert summary["upper"]["trades"] == summary["lower"]["trades"] == 0
     assert summary["upper"]["cents_per_contract"] is None
     assert summary["repricing"]["first_ours_s"] == {"median": None, "p90": None, "max": None}
+
+
+def test_the_lead_is_how_long_before_the_call_the_certain_side_last_traded_cheap(
+    tmp_path: Path,
+) -> None:
+    summary, _ = run(tmp_path)
+    # below 95 cents: T75 at 12:00 (61 minutes before its call), B78 and B80 only after theirs;
+    # rain only after its call (19:05, 19:06, and 19:10 with no side)
+    assert summary["lead"]["high"] == {
+        "markets_below_95": 3,
+        "last_below_95_before_call": 1,
+        "median_min": 61.0,
+        "p10_min": 61.0,
+    }
+    assert summary["lead"]["rain"] == {
+        "markets_below_95": 1,
+        "last_below_95_before_call": 0,
+        "median_min": None,
+        "p10_min": None,
+    }
+
+
+def test_an_unknown_fee_leaves_ours_out_but_not_the_ruled_out_side(tmp_path: Path) -> None:
+    kalshi = write_world(tmp_path)
+    pl.DataFrame(
+        {
+            "ticker": ["KXHIGHNY", "KXRAIN"],
+            "fee_type": ["flat", "quadratic"],
+            "fee_multiplier_e6": [1_000_000, 1_000_000],
+        }
+    ).write_parquet(kalshi / "series.parquet")
+    reports = pl.read_parquet(tmp_path / "weather" / "archive" / "*.parquet")
+    summary, _ = explore(
+        kalshi, scope_markets(kalshi, SEP15, SEP15), report_bounds(reports), SEP15, SEP15
+    )
+    assert summary["trades_fee_unknown"] == 6  # every high trade after its call
+    assert summary["upper"]["markets"] == 1  # rain only
+    assert summary["repricing"]["ruled_out_trades"] == 2
+
+
+def test_the_gap_has_no_lag_when_the_bound_showed_it_before_the_hourly_peak() -> None:
+    markets = pl.DataFrame(
+        {
+            "event_ticker": ["KXHIGHNY-26SEP15"],
+            "series_ticker": ["KXHIGHNY"],
+            "result": ["yes"],
+            "strike_type": ["greater"],
+            "floor_strike": ["85"],
+            "station": ["KNYC"],
+            "day": [SEP15],
+        }
+    )
+    # the six-hour maximum shows 86 at 22:01; a later hourly report of 84 is the hourly peak
+    line = pl.DataFrame(
+        {
+            "station": ["KNYC"] * 3,
+            "day": [SEP15] * 3,
+            "counted_ms": [ms(19, 1), ms(22, 1), ms(23, 1)],
+            "hourly_f": [82, 82, 84],
+            "bound_f": [82, 86, 86],
+        },
+        schema_overrides={"hourly_f": pl.Int32, "bound_f": pl.Int32},
+    )
+    summary, detail = explore_module.gap(markets, line)
+    assert detail["hours_later"].to_list() == [0.0]
+    assert summary["by_degrees"] == {"2": 1}
+    assert (summary["reached_later"], summary["reached_by_the_peak"]) == (1, 1)
