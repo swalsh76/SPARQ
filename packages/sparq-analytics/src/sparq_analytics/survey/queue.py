@@ -238,6 +238,8 @@ def summarize(found: pl.DataFrame, start: datetime, end: datetime) -> dict[str, 
     """S3.1's live figures per category: the episodes, the queue, the dump rate and the fills a
     day, left-censored episodes excluded from the queue and the fills."""
     hours = int((end - start) / timedelta(hours=1))
+    if hours < 1:
+        raise SurveyDataError("the span holds no whole hour")
     known = found.filter(~pl.col("left_censored"))
     closed = known.filter(~pl.col("censored"))
     aggs = [

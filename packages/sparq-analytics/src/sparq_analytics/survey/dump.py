@@ -270,8 +270,13 @@ def summarize(
             ).fill_null(0)
         )
         .with_columns(
-            reactive_payout=pl.col("winning_99_markets")
-            / (pl.col("winning_99_markets") + pl.col("reversal_markets"))
+            # null, not 0/0, where no side ever printed 99 to a resting bid
+            reactive_payout=pl.when(
+                pl.col("winning_99_markets") + pl.col("reversal_markets") > 0
+            ).then(
+                pl.col("winning_99_markets")
+                / (pl.col("winning_99_markets") + pl.col("reversal_markets"))
+            )
         )
         .sort("category")
     )

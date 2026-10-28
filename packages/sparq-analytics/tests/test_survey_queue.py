@@ -145,3 +145,5 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
     assert weather["fills_a_day_e2_onset_10000"] == 60_000
     assert weather["fills_a_day_e2_hour_before_10000"] == 60_000
     assert weather["dump_e2_a_regime_hour"] is None  # no closed episode
+    with pytest.raises(SurveyDataError, match="no whole hour"):
+        summarize(found, start, start)

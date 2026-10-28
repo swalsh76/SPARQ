@@ -30,7 +30,7 @@ def test_the_cut_markets_are_settled_closing_by_the_cut_and_end_at_the_earlier_t
     tmp_path: Path,
 ) -> None:
     markets = cut_markets(write_history(tmp_path), SEP15)
-    assert sorted(markets["ticker"]) == ["A", "B", "C", "D", "G"]  # E after the cut, F unsettled
+    assert sorted(markets["ticker"]) == ["A", "B", "C", "D", "G", "H"]  # not E, F
     by = {row["ticker"]: row for row in markets.to_dicts()}
     assert by["B"]["end_ms"] == ms(22) < by["B"]["close_ms"]  # settled before its close
     assert by["A"]["end_ms"] == ms(20)
@@ -100,7 +100,7 @@ def test_the_summary_has_the_payout_the_dump_and_the_reversals_per_category(
 ) -> None:
     markets, _, near, regs = world(tmp_path)
     summary = summarize(markets, near, regs, SEP15, SEP15)
-    assert (summary["markets"], summary["trades_near_certain"], summary["regimes"]) == (5, 13, 5)
+    assert (summary["markets"], summary["trades_near_certain"], summary["regimes"]) == (6, 13, 5)
     assert summary["side_unknown_trades"] == 1
     sports = summary["by_category"]["Sports"]
     assert (sports["markets"], sports["true_regimes"], sports["false_regimes"]) == (4, 3, 1)
@@ -115,6 +115,9 @@ def test_the_summary_has_the_payout_the_dump_and_the_reversals_per_category(
     assert (weather["true_regimes"], weather["false_regimes"], weather["payout"]) == (1, 0, 1.0)
     assert (weather["dump_e2"], weather["reversal_markets"]) == (4_000, 0)
     assert weather["reactive_payout"] == 1.0
+    culture = summary["by_category"]["Culture"]
+    assert (culture["markets"], culture["true_regimes"], culture["dump_e2"]) == (1, 0, 0)
+    assert culture["payout"] is None and culture["reactive_payout"] is None  # never 0/0
     levels = {
         (r["category"], r["cents"], r["taker_bought_dead"], r["in_regime"]): r["contracts_e2"]
         for r in summary["levels"]

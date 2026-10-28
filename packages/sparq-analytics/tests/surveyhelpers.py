@@ -16,6 +16,7 @@
 * ``D`` (Sports, no wins): the yes side at 99 (25 dumped) and never below 97 again: a **false
   regime** for yes, which loses.
 * ``G`` (Sports, in a series with maker fees, yes wins): the yes side at 99 at 10:00 (10 dumped).
+* ``H`` (Culture, yes wins): one trade at 50c, so its category never printed 99 at all.
 * ``E`` closes after the cut and ``F`` is unsettled: both left out, trades and all.
 
 **Live** (hour files from 2026-10-25 00:00 UTC, four hours, plus an empty hour at 21:00 the
@@ -79,15 +80,16 @@ MARKETS = [
     _market("C", "KXNFLGAME", "yes", at(20), at(20, 30)),
     _market("D", "KXNFLGAME", "no", at(20), at(20, 10)),
     _market("G", "KXMAKER", "yes", at(20), at(20, 1)),
+    _market("H", "KXCULT", "yes", at(20), at(20, 2)),
     _market("E", "KXNFLGAME", "yes", datetime(2026, 10, 12, 20, tzinfo=UTC), None),
     _market("F", "KXNFLGAME", "", at(20), None),
 ]
 SERIES = pl.DataFrame(
     {
-        "ticker": ["KXNFLGAME", "KXRAIN", "KXMAKER"],
-        "category": ["Sports", "Climate and Weather", "Sports"],
-        "fee_type": ["quadratic", "quadratic", "quadratic_with_maker_fees"],
-        "fee_multiplier_e6": [1_000_000, 1_000_000, 1_000_000],
+        "ticker": ["KXNFLGAME", "KXRAIN", "KXMAKER", "KXCULT"],
+        "category": ["Sports", "Climate and Weather", "Sports", "Culture"],
+        "fee_type": ["quadratic", "quadratic", "quadratic_with_maker_fees", "quadratic"],
+        "fee_multiplier_e6": [1_000_000, 1_000_000, 1_000_000, 1_000_000],
     }
 )
 # (ticker, time, taker side, yes price, count)
@@ -108,6 +110,7 @@ TRADES: list[tuple[str, datetime, str | None, int, int]] = [
     ("C", at(18), "no", 990_000, 1_200),
     ("D", at(10), "no", 990_000, 2_500),
     ("G", at(10), "no", 990_000, 1_000),
+    ("H", at(10), "yes", 500_000, 100),
     ("E", at(10), "no", 990_000, 9_000),
     ("F", at(10), "no", 990_000, 9_000),
 ]
