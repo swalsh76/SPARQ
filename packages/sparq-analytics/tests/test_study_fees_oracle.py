@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 from sparq_analytics.history.schemas import FEE_CHANGES_SCHEMA, SERIES_SCHEMA
-from sparq_analytics.study.dataset import _with_fees
+from sparq_analytics.study.dataset import with_fees
 
 START = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
 FEE_TYPES = ("quadratic", "quadratic_with_maker_fees", "fixed")
@@ -105,7 +105,7 @@ def test_the_single_pass_lookup_gives_the_same_fees_as_the_split_and_sort(
 ) -> None:
     trades = build(tmp_path / "kalshi", seed)
     root = tmp_path / "kalshi"
-    mine = _with_fees(trades, root).sort("id").collect()
+    mine = with_fees(trades, root).sort("id").collect()
     reference = oracle(trades, root).sort("id").collect()
     assert mine.height == reference.height == trades.collect().height  # none lost or doubled
     assert mine.select("id", "fee_type", "multiplier_e6").equals(
@@ -116,7 +116,7 @@ def test_the_single_pass_lookup_gives_the_same_fees_as_the_split_and_sort(
 
 def test_the_oracle_scenario_really_exercises_the_cases(tmp_path: Path) -> None:
     trades = build(tmp_path / "kalshi", 1)
-    result = _with_fees(trades, tmp_path / "kalshi").collect()
+    result = with_fees(trades, tmp_path / "kalshi").collect()
     assert result["series_ticker"].null_count() > 0  # unknown market
     assert (result["series_ticker"] == "KXUNKNOWN").sum() > 0  # a series in no table
     assert result["fee_type"].n_unique() > 2  # several fees in force over time
