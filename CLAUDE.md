@@ -11,21 +11,22 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
 
 ## Status
 
-**S0 is done; S1 is closed** (PLAN D14, 2026-10-28: S1.1 NO-GO, S1.1b dropped unopened, S1.2b and S1.2c closed unbuilt, S1.3 and S1.4 not run). **S2, weather against station observations** (PLAN §6.2): S2.1 is done; **S2.2 is done with no rules (W9)**, so S2.3 and S2.4 are not run. The next direction is the owner's call. **No real order is sent without the owner's go-ahead.**
+**S0 is done; S1 is closed** (PLAN D14, 2026-10-28: S1.1 NO-GO, S1.1b dropped unopened, S1.2b and S1.2c closed unbuilt, S1.3 and S1.4 not run). **S2, weather against station observations, is closed** (PLAN §6.2: S2.1 done; S2.2 done with no rules, W9; S2.3 and S2.4 not run). **No strand is active: the next direction is the owner's call.** **No real order is sent without the owner's go-ahead.**
 
 ### Resume point (keep this current: update it at every step that changes it, so a lost session loses nothing)
 
-*Last updated 2026-10-28 UTC (S1.c done, its PR awaits the owner; S2.c next). Dates here are UTC.*
+*Last updated 2026-10-28 UTC (S1.c merged; S2.c done, its PR awaits the owner). Dates here are UTC.*
 
 - **Where the work happens:** open Claude Code in this repository's folder on the workstation (`%USERPROFILE%\dev\SPARQ`), not in KAPS's. This project's assistant memory (real host names, the analytics node's paths and account, the owner's preferences) is in the memory folder Claude Code keeps for this folder.
 - **Now (2026-10-28 UTC):**
   - **PR #10, S2.1**: merged (`abe14da`). W4's history delay is **10 minutes** after the observation time (owner, 2026-10-28).
   - **PR #15**: merged (`c58b2ab`): the mini code review rule (PLAN Q8, "Workflow" below), the PR checklist, and S2.2's approved plan in its PLAN row.
-  - **S2.2, exploration on the fit and validate parts: done, no rules (W9, owner, 2026-10-28)** on branch `s2/2-explore` (BUILD-LOG S2.2, `docs/research/weather-explore.md`). Takers could have taken stale quotes in 19 of 2,240 called fit-part markets ($0.65 a day at the lower bound) and in 1 on validate ($0): the book priced the bound a median 4.6 hours (highs) and 40 minutes (rain) before the call. S2.3 and S2.4 are not run and **the test part (2026-10-11 to 2026-10-22) stays unopened**. Parked in PLAN §9: resting bids at 99 cents for a certain side (8.8 M contracts on the fit part, no maker fee); the 5-minute readings entry gained S2.2's gap figures.
+  - **S2.2, exploration on the fit and validate parts: done, no rules (W9, owner, 2026-10-28)** on branch `s2/2-explore` (BUILD-LOG S2.2, `docs/research/weather-explore.md`). Takers could have taken stale quotes in 19 of 2,240 called fit-part markets ($0.65 a day at the lower bound) and in 1 on validate ($0): the book priced the bound a median 4.6 hours (highs) and 41 minutes (rain) before the call (fit part). S2.3 and S2.4 are not run and **the test part (2026-10-11 to 2026-10-22) stays unopened**. Parked in PLAN §9: resting bids at 99 cents for a certain side (8.7 M contracts on the fit part, no maker fee); the 5-minute readings entry gained S2.2's gap figures.
   - **PR #16, S2.2**: merged (`3ba4cde`).
-  - **S1.c, S1's close-out: done** on branch `s1/c-close-out` (plan approved 2026-10-28, as recommended; BUILD-LOG S1.c), **PR #17 awaits the owner's merge**: documents only. D14 closes S1 (S1.2b and S1.2c closed unbuilt, S1.3 and S1.4 not run under S1); S1.2r, S1.2b's recorder, and D7 and D8 parked in §9; LESSONS gains "What SPARQ measured"; ASSESSMENT §7.4 gets its outcome; the BUILD-LOG S1.c entry. Nothing changes on machines: S1.2a's live copies and the read-only key stay on the analytics node.
-  - **Next: S2.c, S2's close-out**, on branch `s2/c-close-out`, after S1.c is merged (plan proposed 2026-10-28: S2's verdict in PLAN, its lesson in LESSONS and ASSESSMENT §7.2, the BUILD-LOG S2.c entry, the check clone back to `main`). Owner's answers: **keep the weather data on the analytics node**; no S1 close-out inside S2.c (S1.c does it); the close-out does not propose a next direction. After both, the direction is the owner's call.
-  - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28, the delay run's files and `explore-fit|validate.json` with their trades files. The check clone there is on `s2/2-explore` until S2.c.
+  - **PR #17, S1.c (S1's close-out)**: merged (`98ece15`). D14 closes S1; S1.2r, the order-book recorder, D7 with D6's trading key, and D8 are parked in PLAN §9.
+  - **S2.c, S2's close-out: done** on branch `s2/c-close-out` (BUILD-LOG S2.c), **PR #18 awaits the owner's merge**. Documents only, plus the analytics node's check clone moved back to `main`. The weather data stays on the node (owner).
+  - **Next: the owner chooses the next direction.** A new strand starts as a proposal of decisions and slices for approval (PLAN §9 holds the parked leads).
+  - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28, the delay run's files and `explore-fit|validate.json` with their trades files. The check clone there is on `main`.
 - **Standing rules from the owner:**
   - Announce each slice before anything else, and narrate each step (each tool call) in one plain line first.
   - Plan before code; one branch per slice. **Merge a PR only when the owner explicitly approves that PR.**

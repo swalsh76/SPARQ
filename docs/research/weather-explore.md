@@ -40,7 +40,7 @@ W7 asks for a lower bound above zero over at least 100 signalled city-days and $
 
 Traders price the outcome from forecasts, radar and the trend, well before an hourly report proves it.
 
-**After the call, the trading is holders selling certain wins at 99 cents.** That was 38,381 of the 40,159 fit-part trades on the ruled-out side (8.8 M contracts; 2.1 M on validate). The 1 cent goes to the maker, and these series charge no maker fee. It is a maker question, parked in PLAN §9.
+**After the call, the trading is holders selling certain wins at 99 cents.** That was 38,381 of the 40,159 fit-part trades on the ruled-out side: 8.7 M of their 8.8 M contracts (2.1 M on validate, all of them). Some may be takers buying the dead side at 1 cent; the trade record does not say which. The 1 cent goes to the maker, and these series charge no maker fee. It is a maker question, parked in PLAN §9.
 
 **The settled high and the hourly reports.**
 - *Fit part:* the settled high was above the day's highest hourly report on 679 of 1,086 city-days: by 1 °F on 440, by 2 °F on 202, by 3 °F on 32 and by 4 °F or more on 5.

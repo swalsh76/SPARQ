@@ -190,6 +190,7 @@ Written at the end of KAPS, after its K0.5 study returned a NO-GO, when the owne
 - **Bracket-sum arbitrage inside events** (a live scan of 14,312 open events): of 5,611 mutually exclusive sets with two or more live markets, one priced to a riskless profit after fees, by 0.12 cents a set.
 - **Parlays:** two- to four-leg cross-game parlays are not overpriced (median 0.991 to 0.999 of the product of their legs; Moshrefi 2026); the markup appears only at six legs and above, on small samples. Quoting combos by RFQ is a race between fast bots in which only the best quote is accepted.
 - **Simple forecast models for weather:** a public backtest over 1,506 New York events found the market already priced the National Weather Service forecasts; prices move 1 to 3 cents within 10 to 30 minutes of an update, less than a 3 to 3.5 cent round trip (OddsReference, 2026).
+- **Taking stale weather quotes after station reports** (SPARQ S2.2, 2026-10-28): on the fit part the book priced a bound a median 4.6 hours (highs) and 41 minutes (rain) before the hourly reports proved it; $0.65 a day at the lower bound on the fit part and $0 on validate, so no rule was tested (SPARQ PLAN W9).
 - **Millisecond speed races** (spot jumps, live games, data releases): the professional firms are faster than a home connection running Python.
 
 ### 7.3 Measured, not relied on
