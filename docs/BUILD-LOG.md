@@ -334,7 +334,7 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 
 **Problems and fixes.** The private-channel test first expected no commands at all; the fake server records commands per connection, so "nothing sent" is `[[]]`.
 
-### S2.2 Exploration on the fit and validate parts (2026-10-28 UTC, in progress: results read, awaiting the owner's decision on the rules)
+### S2.2 Exploration on the fit and validate parts (2026-10-28 UTC, done: no rules)
 
 **Built.** `python -m sparq_analytics.weather explore --part fit|validate` (`weather/explore.py`). It refuses the test part by name and writes `explore-PART.json` and `explore-PART-trades.parquet` (the trades after each call) to the weather folder.
 - *Timeline.* A report counts 10 minutes after its observation time (W4). A bound counts only where **both** kinds of climate day allow it: the lower of the standard and the civil day's running bound, and rain once both have it. A report near midnight can then never settle the wrong day. *Chosen in building (not in the slice plan):* S2.1 found no wrong call under either day, and this is the conservative way to use both.
@@ -367,3 +367,7 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 - *The gap.* The settled high was above the highest hourly report on 679 of 1,086 city-days in the fit part (440 by 1 °F, 202 by 2, 32 by 3, 5 by 4 or more) and 137 of 253 in validate. On 426 of the 679 the six-hour maximum later reached it, a median of 4 hours after the hourly peak (p90 6); on 253 it never did.
 
 **Review (PLAN Q8).** `3e45c8b` (resume point; docs only, no code). `a28ec77` reviewed at low effort: no findings.
+
+**Decisions.**
+- **W9: no rules (owner, 2026-10-28, as recommended).** No rule could reach W7's 100 signalled city-days or its $25 floor, so S2.3 and S2.4 are not run and the test part stays unopened. `docs/research/weather-rules.json` holds the empty list; the write-up is `docs/research/weather-explore.md`.
+- **Parked in PLAN §9** (named as scope creep): resting bids at 99 cents for an already-certain side. All 25 series in scope are plain `quadratic`, with no maker fee and no recorded fee change (read on the node, 2026-10-28). The 5-minute readings entry gains S2.2's gap figures.
