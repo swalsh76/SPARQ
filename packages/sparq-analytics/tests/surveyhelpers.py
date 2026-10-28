@@ -35,6 +35,7 @@ day before):
   taker dumps 42. No frame in the two hours before 00:00: its queue an hour earlier is unknown.
 * ``L5`` (Sports): bid 99 at 00:30, in the span's first hour: left-censored, excluded. **A ticker
   gap from 00:40 to 00:45** overlaps its episode and no other (every later one begins after it).
+* ``L6`` (Sports): bid 99 at 00:50, also in the first hour: left-censored, and in no gap.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -193,6 +194,7 @@ FRAMES = [
     _frame(lm(1, 0), "L4", 990_000, 100, None, None),
     _frame(lm(2, 0), "L4", 990_000, 150, None, None),
     _frame(lm(0, 30), "L5", 990_000, 50, None, None),
+    _frame(lm(0, 50), "L6", 990_000, 60, None, None),
 ]
 LIVE_TRADES = [
     _trade(lm(1, 45), "L1", 990_000, 2_500, "no"),
@@ -211,6 +213,7 @@ LIVE_SERIES = {
     "L3": "KXNFLGAME",
     "L4": "KXMAKER",
     "L5": "KXNFLGAME",
+    "L6": "KXNFLGAME",
 }
 CATEGORY = {"KXNFLGAME": "Sports", "KXRAIN": "Climate and Weather", "KXMAKER": "Sports"}
 

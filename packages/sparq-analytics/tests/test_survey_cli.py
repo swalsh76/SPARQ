@@ -46,7 +46,7 @@ def test_dump_writes_both_readings_and_prints_the_implied_dollars(
     for name in ("dump-history.json", "dump-live.json", "dump.json"):
         assert json.loads((out / name).read_text(encoding="utf-8"))
     assert pl.read_parquet(out / "dump-regimes.parquet").height == 5
-    assert pl.read_parquet(out / "dump-episodes.parquet").height == 5
+    assert pl.read_parquet(out / "dump-episodes.parquet").height == 6
 
 
 def test_dump_can_do_one_reading(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -57,7 +57,7 @@ def test_dump_can_do_one_reading(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert not (out / "dump.json").exists()
     assert main([*base, "--live", str(live), "--only", "live"]) == 0
     alone = json.loads(capsys.readouterr().out)
-    assert alone["episodes"] == 5
+    assert alone["episodes"] == 6
     # without the history there is no reversal fill to report
     assert "rev_fills_a_day_e2_onset_10000" not in alone["by_category"]["Sports"]
 

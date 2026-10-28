@@ -73,6 +73,7 @@ def test_episodes_run_from_the_onset_to_the_first_frame_out(tmp_path: Path) -> N
         ("L2", "no", lm(1, 40)),
         ("L4", "yes", lm(1, 0)),
         ("L5", "yes", lm(0, 30)),
+        ("L6", "yes", lm(0, 50)),
     ]
     first = rows[("L1", "yes", lm(1, 30))]
     assert (first["end_ms"], first["onset_size_e2"], first["frames"]) == (lm(2, 30), 1_000, 2)
@@ -84,6 +85,7 @@ def test_episodes_run_from_the_onset_to_the_first_frame_out(tmp_path: Path) -> N
     assert (no["onset_size_e2"], no["frames"], no["censored"]) == (900, 2, True)
     assert not first["left_censored"] and not rows[("L4", "yes", lm(1, 0))]["left_censored"]
     assert rows[("L5", "yes", lm(0, 30))]["left_censored"]
+    assert rows[("L6", "yes", lm(0, 50))]["left_censored"]
     # the ticker gap at 00:40 overlaps L5's episode only
     assert [k for k, r in rows.items() if r["in_gap"]] == [("L5", "yes", lm(0, 30))]
     assert not mark_gaps(found.drop("in_gap"), tmp_path / "nowhere", END)["in_gap"].any()
@@ -193,7 +195,7 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
         FALSE_DUMPS,
     )
     summary = summarize(found, start, end)
-    assert (summary["hours"], summary["episodes"], summary["left_censored"]) == (4, 5, 1)
+    assert (summary["hours"], summary["episodes"], summary["left_censored"]) == (4, 6, 2)
     assert summary["gap_episodes"] == 1  # L5, which is left-censored as well
     sports = summary["by_category"]["Sports"]
     assert (sports["episodes"], sports["censored"], sports["markets"]) == (3, 2, 2)
@@ -220,7 +222,10 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
         summarize(found, start, start)
     # a fee type outside the quadratic family leaves the fee unknown, not free
     odd = fee_terms(kalshi).with_columns(
-        pl.when(pl.col("series_ticker") == "KXRAIN").then(pl.lit("flat")).otherwise("fee_type")
+        pl.when(pl.col("series_ticker") == "KXRAIN")
+        .then(pl.lit("flat"))
+        .otherwise("fee_type")
+        .alias("fee_type")
     )
     unknown = with_fills(raw, pl.read_parquet(live / "markets.parquet"), odd)
     assert unknown.filter(pl.col("ticker") == "L2")["fee_onset_10000"].to_list() == [None]
