@@ -25,7 +25,7 @@ SPARQ (Systematic Prediction-market Automated Risk-managed Quoting) is written i
   - **PR #16, S2.2**: merged (`3ba4cde`).
   - **PR #17, S1.c (S1's close-out)**: merged (`98ece15`). D14 closes S1; S1.2r, the order-book recorder, D7 with D6's trading key, and D8 are parked in PLAN §9.
   - **PR #18, S2.c (S2's close-out)**: merged (`af280ec`). S1 and S2 are closed. The weather data stays on the node (owner).
-  - **S3 proposed and approved (2026-10-28, as recommended; PLAN §6.3, M1 to M7):** three measurements in turn from data already held, with bars set before reading. **Its PR (branch `s3/proposal`) awaits the owner's merge.**
+  - **S3 proposed and approved (2026-10-28, as recommended; PLAN §6.3, M1 to M7):** three measurements in turn from data already held, with bars set before reading. **PR #19 awaits the owner's merge.**
   - **Next: S3.1, the certainty dump and the 99-cent queue**, on branch `s3/1-dump`, once the proposal is merged (announce the slice first; its slice plan goes to the owner before code). Outcome readings stop at 2026-10-10 (M3). The new machine is not part of S3 (M6): its proposal comes when it is online.
   - The analytics node's weather folder holds the reports of 39 stations from 2026-08-01 to 2026-10-28, the delay run's files and `explore-fit|validate.json` with their trades files. The check clone there is on `main`.
 - **Standing rules from the owner:**
