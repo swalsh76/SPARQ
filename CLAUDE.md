@@ -118,8 +118,26 @@ KalshiTerm 1 died of feature creep and changes of direction. Guard against both:
   - format, lint, types and tests are green, with the coverage gate;
   - live checks have run wherever a fake cannot show real behaviour;
   - its bundle and guides are current;
+  - its commit and merge reviews are done;
   - its BUILD-LOG entry is written.
-- **The BUILD-LOG entry** has one section per milestone and one subsection per slice, with the headings **Built**, **Verified** (local, on the server, live), **Problems and fixes**, and any decisions taken. The slice table in PLAN.md marks the slice "done (BUILD-LOG x.y)".
+- **Mini code review on every commit and merge (owner, 2026-10-27; PLAN Q8, as IKARS's R14).** Small, regular reviews, so that large whole-codebase reviews are rarely needed.
+  - **Before each commit,** review the commit's diff for:
+    - correctness and edge cases;
+    - money in fixed-point integers;
+    - reuse: no duplicate of existing code, and shared code in the shared module;
+    - efficiency on hot paths;
+    - simplification;
+    - tests that cover the change;
+    - no secrets, keys, real host names, paths or Kalshi data.
+  - **Before each merge,** review the whole branch diff against `main`, plus the modules it touches and their callers, for:
+    - consistency across the slice;
+    - drift from the PLAN decisions;
+    - docs and guides being current.
+  - **How:** the `/code-review` skill on the diff (low effort per commit, medium per merge), plus a reuse and simplification pass.
+  - **Findings:** fix each in the same branch, or park it in PLAN §9 with its reason. List them under **Review** in the slice's BUILD-LOG entry.
+  - **Reporting to the owner:** show a merge review as an itemized list, one finding per line: what was wrong and what was done (fixed, with the commit; parked; or no change, with why). Never only a count.
+  - A whole-codebase review still closes each milestone, and should then be short.
+- **The BUILD-LOG entry** has one section per milestone and one subsection per slice, with the headings **Built**, **Verified** (local, on the server, live), **Review**, **Problems and fixes**, and any decisions taken. The slice table in PLAN.md marks the slice "done (BUILD-LOG x.y)".
 - **Rollouts are asked for separately.** A change that must reach a production machine (the server host or the analytics node) gets its own rollout, asked for at the end of the slice. It is never folded silently into the merge.
 - **Close-out.** Every milestone ends with a close-out slice: gate evidence, docs brought up to date, and anything left over parked in PLAN.md §9.
 
