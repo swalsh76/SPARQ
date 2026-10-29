@@ -8,7 +8,7 @@
 - **Spreads and the half-spread:** the ingest's ticker frames and trades copied with `live extract`, 2026-10-24 21:00 to 2026-10-29 02:00 UTC, 101 hours, about 119 M frames and 24 M trades; 555,244 markets had a frame; the gap log holds 31 outages of the ticker feed. An empty side of the book, which the feed shows as a 0-cent bid or a 100-cent ask with no size, is read as missing.
 - **The surprise rate:** the settled binary markets closing on or before 2026-10-10 (M3), 17,538,187 of them, with the trades before them.
 - **Fees:** each series' current terms from the history's series table (the maker fee where a series charges one).
-- **Run:** `python -m sparq_analytics.survey tail --kalshi DIR --live DIR --out DIR` at commit `6a6d9c5`, about a minute; every figure below is in `tail.json`.
+- **Run:** `python -m sparq_analytics.survey tail --kalshi DIR --live DIR --out DIR` at commit `6a6d9c5`, about a minute; every figure below is in `tail.json`. Rerun at `7122e6d` (S3.c: the whole-codebase review's fixes and stable sorts), twice, identical in every figure (one floating-point mean's sixteenth digit aside): the thin uncontested half-spread is unchanged to the dollar, every half-spread cell, the volume and the surprise readings are unchanged, and the median spreads moved at the fourth significant figure, because frames of one market in one millisecond now keep the feed's order.
 
 ## Method
 

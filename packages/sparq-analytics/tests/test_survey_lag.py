@@ -8,6 +8,7 @@ from laghelpers import ACTIVE, FEES, GAME, _f, lt, write_lag_world
 from sparq_analytics.live.source import TICKER_SCHEMA, hour_name
 from sparq_analytics.survey import lag
 from sparq_analytics.survey.dump import SurveyDataError
+from sparq_analytics.survey.queue import gaps_of
 from sparq_analytics.survey.relations import pairs
 
 G = f"KXG-{GAME}"
@@ -66,6 +67,7 @@ def test_moves_need_two_cents_of_mid_and_an_unopposed_quote(tmp_path: Path) -> N
     )
     one = lag.moves(lag._with_mid(flicker).with_columns(carried=pl.lit(False)))
     assert one.select("a", "t", "direction", "a_move_e6").rows() == [("X", lt(0, 20), 1, 100_000)]
+    assert one["t_prev"].to_list() == [lt(0, 0)]  # the previous two-sided frame, not the flicker
     # the move across the hour boundary needs the carried frame, which is never a move itself
     hour1 = lag.frames_of(live / "ticker" / f"{hour_name(HOUR1)}.parquet")
     assert lag.moves(hour1).is_empty()
@@ -200,19 +202,64 @@ def test_tiers_gaps_and_market_info(tmp_path: Path) -> None:
     by_ticker = {r["ticker"]: r for r in info.to_dicts()}
     assert by_ticker["T1"]["tier"] == "under 100" and by_ticker["T2"]["tier"] == "100 to 1,000"
     assert by_ticker["M2"]["close_ms"] == lt(1, 0)
-    gaps = lag.gaps_of(live, END)
+    # a market the list gives no category for is "unknown", not a None cell
+    bare = markets.with_columns(
+        category=pl.when(pl.col("ticker") == "T4")
+        .then(pl.lit(None, dtype=pl.String))
+        .otherwise("category")
+    )
+    assert lag.market_info(bare, lag.tiers_of(live, HOUR0, END), FEES).filter(
+        pl.col("ticker") == "T4"
+    )["category"].to_list() == ["unknown"]
+    gaps = gaps_of(live, END)
     assert gaps.to_dicts() == [{"start_ms": lt(1, 30), "end_ms": lt(1, 31)}]
-    assert lag.gaps_of(tmp_path, END).is_empty()
-    events = pl.DataFrame({"t": [lt(0, 30), lt(0, 30, 30), lt(1, 25)]})
+    assert gaps_of(tmp_path, END).is_empty()
+    # the outage runs 01:30 to 01:31; an event's window opens at the earlier of a's previous
+    # frame and b's last frame: a move a minute after the outage is clean only when both are
+    # later than it, since otherwise the move, or the standing quote, may be older than it looks
+    events = pl.DataFrame(
+        {
+            "t": [lt(0, 30), lt(0, 30, 30), lt(1, 25), lt(1, 32), lt(1, 32), lt(1, 32)],
+            "t_prev": [lt(0, 0), lt(0, 0), lt(1, 0), lt(1, 29), lt(1, 31, 30), lt(1, 31, 30)],
+            "b_ts0": [lt(0, 0), None, lt(1, 0), lt(1, 31, 30), lt(1, 29), lt(1, 31, 30)],
+        }
+    )
     flags = lag.with_gaps(events, gaps).to_dicts()
     assert [(r["in_gap"], r["gap_1h"]) for r in flags] == [
         (False, False),
-        (False, True),
-        (True, True),
+        (False, True),  # b's quote is unknown: the window opens at a's previous frame
+        (True, True),  # the first ten minutes meet the outage
+        (True, True),  # a's previous frame lies before the outage
+        (True, True),  # b's last frame lies before the outage
+        (False, False),  # both after it
     ]
-    none = lag.with_gaps(events, lag.gaps_of(tmp_path, END))
+    none = lag.with_gaps(events, gaps_of(tmp_path, END))
     assert not none["in_gap"].any() and not none["gap_1h"].any()
-    assert lag._trades_of(live, [END]).is_empty()  # no trade file for that hour
+    assert lag.trades_of(live, [END]).is_empty()  # no trade file for that hour
+
+
+def test_a_market_without_a_close_time_can_still_respond() -> None:
+    events = pl.DataFrame(
+        {
+            "b": ["X", "Y"],
+            "t": [lt(0, 0)] * 2,
+            "expected": [1, 1],
+            "mid0": [500_000] * 2,
+            "close_b": [None, lt(0, 0, 30)],
+            "gap_1h": [False, False],
+        },
+        schema_overrides={"close_b": pl.Int64, "expected": pl.Int8},
+    )
+    two_sided = pl.DataFrame(
+        {
+            "ts_ms": [lt(0, 0), lt(0, 0), lt(0, 0, 5), lt(0, 0, 5)],
+            "ticker": ["X", "Y", "X", "Y"],
+            "mid_e6": [500_000, 500_000, 520_000, 520_000],
+        }
+    )
+    rows = {r["b"]: responses(r) for r in lag.with_responses(events, two_sided, lt(2)).to_dicts()}
+    assert rows["X"] == [0, 20_000, 20_000, 20_000, 20_000]  # no close time: never past it
+    assert rows["Y"] == [0, 20_000, None, None, None]  # closed at 30 s
 
 
 def test_the_summary_by_kind(tmp_path: Path) -> None:

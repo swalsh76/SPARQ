@@ -597,6 +597,8 @@ Also from the review's second pass: series pairs with no reachable quote leave t
 
 **Corrected (S3.3, 2026-10-29; commit `5af8248`, final rerun at `6a6d9c5`).** The feed shows an empty side of the book as a 0-cent bid or a 100-cent ask with no size, never as a null, and this slice's frame reader took such frames as two-sided quotes with a mid (9% of frames carry an empty bid, 3% an empty ask, mostly in thin ladders). With an empty side read as missing and the span grown to 101 hours (to 2026-10-29 02:00): 19.6 M moves, 61.7 M usable events (6.9 M rows now one-sided and left out); the 10-minute pass-through is thresholds 0.47 cents (was 0.60), outcomes 0.31, game 0.15, horizons 0.59 (was 0.30; agreement 65%, was 59%); the brackets' 2.4 cents in the mover's direction becomes −0.10 (neighbours sharing probability mass); the capacity is thresholds −$31.4 M a day (reachable −$32.7 M), game −$32.3 M (−$28.3 M), outcomes −$1.52 M (−$1.75 M), horizons −$1.26 M (−$0.98 M); nothing clears, the conclusions stand. The write-up and the PLAN carry the corrected figures; the table above is the first run's.
 
+**Corrected again (S3.c, 2026-10-29; commits `937fadc` and `cf5308f`).** The milestone's whole-codebase review found that a move whose previous two-sided frame (the one it is measured from), or whose watched quote, lay before a logged outage counted as a clean event with the pre-outage frame as the standing quote; such events are left out now, as in an outage (658,325 more event rows; 61,022,101 usable). And frames of one market in one millisecond were sorted unstably, so two runs of one commit differed by a move; the sorts are stable and two runs at `cf5308f` are byte-identical. The shares moved within a horizon rose by under a point, the pass-throughs changed by a hundredth of a cent at most, the capacities by under one percent; nothing clears, the conclusions stand. The write-up and the PLAN carry these final figures.
+
 ### S3.3 The thin tail and the surprise rate (2026-10-29 UTC, done; S3.c next)
 
 **Built.** `python -m sparq_analytics.survey tail --kalshi DIR --live DIR --out DIR [--cut DAY]` (`survey/tail.py`, `cli.py`), writing `tail-volume.json`, `tail-live.json`, `tail-surprise.json` and `tail.json`.
@@ -641,3 +643,54 @@ The test world gained an outage, a market closing mid-span, a trade on a stale b
 - 50,840 traded markets (3% of the traded) are absent from the downloaded market list; the first runs dropped them without a word. They are counted in the tier `unknown` with their $2.96 M a day.
 
 **Decisions.** None taken in the slice; S3.c weighs the strand proposal (M7).
+
+### S3.c Close-out (2026-10-29 UTC, done; S4 proposed)
+
+**Built.**
+- *Code:* the whole-codebase review's fixes in `sparq_analytics.survey` (`937fadc`), stable frame sorts (`cf5308f`) and the merge review's fixes (`7122e6d`), listed under Review; `survey lag` and `survey tail` rerun on them, twice each, on the live copies as they stood (no fresh extract, so the span is the write-ups' and every change in a figure traces to the fixes).
+- *Documents:* PLAN §6.3's verdict and S3.c row, the §6 table (S3 closed, S4 proposed), §6.4 (the S4 proposal, awaiting the owner's approval), §9 (the model node online, the surprise leads, S3.2's final figures); the S3.2 write-up at the final figures and the S3.3 write-up's reproduction note; LESSONS ("What SPARQ measured" gains S3.1, S3.2 and S3.3; "Kalshi API facts" gains the empty side of the book); ASSESSMENT §7.1 to §7.3; CLAUDE.md's status and resume point, and the commit trailer's model name.
+
+**Gate evidence.**
+
+| Slice | Outcome | PR |
+|---|---|---|
+| Proposal (M1 to M7) | approved 2026-10-28 | #19 |
+| S3.1 the certainty dump and the 99-cent queue | **done, below the bar:** a 100-contract bid joining when the price reaches 99 loses in every category but Mentions (+$39 a day on 28 reversals in 65 days); the whole queue nets about $240,000 a day, 85% to crypto bots | #20 |
+| S3.2 where the book is slow | **done, below the bar:** no relation type clears; related markets answer within seconds, the 10-minute pass-through is 0.15 to 0.59 cents and hitting the stale quotes loses $1.3 M to $32 M a day a kind to fees (corrected in S3.3 and here; the conclusions never changed) | #21 |
+| S3.3 the thin tail and the surprise rate | **done, both bars cleared:** $499,284 a day of half-spread in thin markets' uncontested trades (Sports $403,571) against $250; 14 series of 313 judged clear the surprise bar, 7.8 by chance | #22 |
+| S3.c close-out | **done:** this entry, the verdict and the S4 proposal | #23 |
+
+No order was sent in S3, and no key beyond the database role was used (M2). Every code slice passed format, lint, types, tests and the coverage gate in CI, and the survey package is 100% covered.
+
+**What stays.** On `main`: `sparq_analytics.survey` (`dump`, `lag`, `tail`), tested, and `live extract`'s four market columns. On the analytics node's data drive: the live copies (2026-10-18 to 2026-10-29 02:00, frames and trades), the survey outputs (`dump*.json`, `lag.json`, `tail*.json`, the pairs and the event files) and the run scripts. The owner decides whether they stay (S2.c's precedent: keep).
+
+**Verified (local).** ruff, mypy (222 files) and the survey tests (62) at 100% branch coverage of the package; the full suite 1,927 passed, 196 skipped; six regressions planted, one for each fix that gained a test, all caught.
+
+**Verified (analytics node, real data).** `survey lag` (about three and a half minutes) and `survey tail` (about a minute) ran at `937fadc`, then twice each at `cf5308f`; lag's two runs at `cf5308f` are byte-identical, where two at `937fadc` had differed by one move in 19.6 M, and tail's two differ in one floating-point mean's sixteenth digit (the parallel sum's order) and nothing else; after the merge review's revert `survey tail` ran twice more at `7122e6d`, again identical but for that digit, and its half-spread cells are the merged run's to the dollar while the median spreads moved at the fourth significant figure (the tie order). Against the merged figures (`6a6d9c5`): lag leaves 658,325 more event rows as in an outage (61,022,101 usable now); the shares moved within a horizon rose by under a point, the pass-throughs changed by a hundredth of a cent at most, the capacities by under one percent; nothing clears. Tail: the thin uncontested half-spread is unchanged to the dollar ($499,284 a day), the volume and surprise readings are unchanged, and a handful of live counts moved at the fourth significant figure. The check clone is on `s3/c-close` at `7122e6d` and goes back to `main` after the merge. Nothing is deployed.
+
+**Review (PLAN Q8).** The milestone's whole-codebase review, at medium effort over `sparq_analytics.survey` and its callers, found 10 issues:
+1. lag: a move whose previous frame, or whose watched quote, lay before a logged outage counted as a clean event, with the pre-outage frame as the standing quote. **Fixed** (`937fadc`): the window an outage voids opens at the earlier of the frame `a`'s move is measured from (its previous two-sided frame) and `b`'s last frame; 658,325 more event rows left on the real frames; tests.
+2. tail, queue: a quadratic fee type with a null multiplier gave a null fee summed as zero and not counted unknown (the lag module had it right). **Fixed:** no multiplier, no fee, counted unknown; tests. No series in the history has one, so no figure moved.
+3. lag: a watched market the list gave no category or close for made a `None` cell and never had a response. **Fixed:** the category `unknown`, as in the other studies; without a close, never past it; tests. The live list has seven markets without a category and none without a close; no figure moved.
+4. Four private names imported across modules and five constants defined three times. **Fixed:** `dump` holds the shared constants (`MS_PER_DAY`, `BAR_E6`, `RESAMPLES`, `TAIL`, `CENTS`); `a_day`, `bucket`, `trades_of` and `scan_trades` are public.
+5. `queue.mark_gaps` re-read the gap log the lag module reads, and three functions read the series table three ways. **Fixed:** one `gaps_of` in `queue`, one `series_table` in `dump`.
+6. tail: a closed market's last frame is carried through the rest of the span. **No change, after a fix was reverted** (`7122e6d`): dropping it made a trade printed after its market's listed close read an unknown book (28 markets in the span), and Kalshi extends close times when an event runs long, so the standing quote is the right reading; the carried frame costs memory only, since a market's time ends at its close.
+7. lag reads each trade hour file twice, as the following hour and then as the current one. **No change:** the whole run takes three and a half minutes; carrying the trades as the frames are carried would add a return value for seconds.
+8. lag: the trades-through shares count events while the contracts a day count each stale quote once. **No change in figures:** both are meant; the docstring says so now.
+9. cli: `--only`, `--hours` and `--cut` were accepted by every command and silently ignored. **Fixed:** a flag the command does not use is refused; tests.
+10. tail: `volume` scans and de-duplicates every downloaded market before the window filter. **No change:** the de-duplication keeps a market's latest row, so a filter on its times before it could change which row survives, and the run takes a minute.
+And from the reruns: 11. frames of one market in one millisecond were sorted unstably, so two runs of one commit differed by a move. **Fixed** (`cf5308f`): stable sorts wherever a frame's order decides a figure, in all three studies; lag's two runs identical, tail's to every reported digit. Per commit: `937fadc` at low effort, no findings (my own pass caught a local that shadowed the imported `a_day`, renamed before the commit); `cf5308f` at low effort, no findings; the documents commit (`ab1c8e1`) at low effort, no findings. The merge review, at medium effort over the branch against `main`, found 6 issues:
+1. lag: `with_first_move` marks the lag known for a market that closes inside the hour with no move seen, so its quote could count as reachable. **No change:** a quote is counted only with its 10-minute response known, which is null past the market's close, so a market closing inside the hour is counted only when its quote stood at least ten minutes, and such a quote was reachable.
+2. tail: dropping a closed market's carried frame (item 6) made a trade printed after a stale listed close read an unknown book, and Kalshi extends close times when an event runs long. **Fixed** (`7122e6d`): reverted; the standing quote is the right reading.
+3. lag: the outage window opens at `a`'s previous two-sided frame, the one the move is measured from, while the docstrings and the write-up said "previous frame". **Fixed** (`7122e6d`): the wording in the module, the write-up and this entry; the behaviour is the intended one, since the move itself is measured from that frame.
+4. The label `unknown` was spelled in five places. **Fixed:** `dump.UNKNOWN`, used by the four studies for a category or tier the data does not name (lag's quote state `unknown` is its own label and stays).
+5. cli: the flag-to-command mapping was spelled in the help strings and in `APPLIES`, and the cut default twice. **Fixed:** the help strings come from `APPLIES`; one `_cut`.
+6. lag: `with_gaps` tests every event against every outage, once a horizon. **No change:** 31 outages over 73 M rows cost seconds of a three-and-a-half-minute run.
+`7122e6d` reviewed at low effort: no findings.
+
+**Problems and fixes.**
+- The workstation's venv Python has no `uv` module; the user-level `uv` executable runs the gate.
+- Two runs of one commit on one span differed by a move, found only because the review's fixes forced a rerun on an unchanged span: every sort that decides which frame is previous, last or standing is stable now (LESSONS).
+- Kalshi's listed close time is not always the last trade: a few hundred trades in 28 markets over the span printed after it. A review fix had made them read an unknown book; the merge review pointed out that Kalshi extends close times when an event runs long, so the standing quote is the right reading, and the fix was reverted.
+
+**Decisions (owner, pending).** Whether the survey outputs stay on the analytics node (recommended: keep, as S2's did); the S4 proposal (§6.4).

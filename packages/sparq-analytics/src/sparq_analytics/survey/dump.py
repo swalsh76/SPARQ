@@ -16,6 +16,7 @@ is true regimes over all regimes, and a 99-cent bid breaks even at a reversal ra
 Money is integer millionths of a dollar; sizes are hundredths of a contract.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,11 @@ CENTS = 10_000
 NEAR_E6 = 97 * CENTS  # the near-certain band
 CERTAIN_E6 = 99 * CENTS
 MS_PER_HOUR = 3_600_000
+MS_PER_DAY = 24 * MS_PER_HOUR
+BAR_E6 = 25 * E6  # M4: $25 a day, S3.1's bar within a category and S3.2's for a relation type
+RESAMPLES, TAIL = 2_000, 0.025  # the bootstrap's draws, and each side's tail of a 95% interval
+SERIES_RENAMES = {"ticker": "series_ticker", "fee_multiplier_e6": "multiplier_e6"}
+UNKNOWN = "unknown"  # a category or tier the data does not name
 
 
 def hours(ms: pl.Expr) -> pl.Expr:
@@ -46,6 +52,13 @@ TOP_SERIES = 15
 
 class SurveyDataError(Exception):
     """The data folders lack something the survey needs, or the request reads held-out days."""
+
+
+def series_table(kalshi: Path, columns: Sequence[str]) -> pl.DataFrame:
+    """The history's series table with ``columns`` beside the ticker, renamed ``series_ticker``
+    (and the fee multiplier ``multiplier_e6``) so it joins to the markets as they name it."""
+    frame = pl.read_parquet(kalshi / "series.parquet", columns=["ticker", *columns])
+    return frame.rename({k: v for k, v in SERIES_RENAMES.items() if k in frame.columns})
 
 
 def cut_markets(kalshi: Path, cut: date = CUT) -> pl.DataFrame:
@@ -65,13 +78,11 @@ def cut_markets(kalshi: Path, cut: date = CUT) -> pl.DataFrame:
     )
     if markets.is_empty():
         raise SurveyDataError(f"no settled market closes on or before {cut}")
-    series = pl.read_parquet(
-        kalshi / "series.parquet", columns=["ticker", "category", "fee_type", "fee_multiplier_e6"]
-    ).rename({"ticker": "series_ticker", "fee_multiplier_e6": "multiplier_e6"})
+    series = series_table(kalshi, ["category", "fee_type", "fee_multiplier_e6"])
     return (
         markets.join(series, on="series_ticker", how="left")
         .with_columns(
-            pl.col("category").fill_null("unknown"),
+            pl.col("category").fill_null(UNKNOWN),
             close_ms=pl.col("close_time").dt.epoch("ms"),
             settlement_ms=pl.col("settlement_ts").dt.epoch("ms"),
         )
@@ -108,7 +119,8 @@ def trade_files(kalshi: Path, first: date, last: date) -> list[Path]:
     return paths
 
 
-def _scan(files: list[Path]) -> pl.LazyFrame:
+def scan_trades(files: list[Path]) -> pl.LazyFrame:
+    """The history's trade files with the columns the survey reads, the time in milliseconds."""
     return pl.scan_parquet(files, hive_partitioning=False).select(
         pl.col("ticker"),
         pl.col("created_time").dt.epoch("ms").alias("t_ms"),
@@ -123,7 +135,7 @@ def side_extremes(files: list[Path], markets: pl.DataFrame) -> pl.DataFrame:
     (null when it never did)."""
     yes = pl.col("yes_price_e6")
     return (
-        _scan(files)
+        scan_trades(files)
         .join(markets.select("ticker", "end_ms").lazy(), on="ticker")
         .filter(pl.col("t_ms") <= pl.col("end_ms"))
         .group_by("ticker")
@@ -142,7 +154,7 @@ def near_certain_trades(files: list[Path], markets: pl.DataFrame) -> pl.DataFram
     yes = pl.col("yes_price_e6")
     side_price = pl.when(pl.col("side") == "yes").then(yes).otherwise(E6 - yes)
     return (
-        _scan(files)
+        scan_trades(files)
         .filter((yes >= NEAR_E6) | (yes <= E6 - NEAR_E6))
         .join(
             markets.select(

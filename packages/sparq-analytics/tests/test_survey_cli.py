@@ -68,6 +68,15 @@ def test_dump_can_do_one_reading(tmp_path: Path, capsys: pytest.CaptureFixture[s
     [
         (["dump", "--live", "l", "--out", "o"], "--kalshi is required"),
         (["dump", "--kalshi", "k", "--out", "o", "--cut", "2026-10-11"], "held out"),
+        (
+            ["lag", "--kalshi", "k", "--live", "l", "--out", "o", "--cut", "2026-09-15"],
+            "--cut does not apply to lag",
+        ),
+        (
+            ["tail", "--kalshi", "k", "--live", "l", "--out", "o", "--only", "live"],
+            "--only does not apply to tail",
+        ),
+        (["dump", "--kalshi", "k", "--out", "o", "--hours", "1"], "--hours does not apply to dump"),
     ],
 )
 def test_a_bad_command_line_or_a_held_out_cut_exits_one(

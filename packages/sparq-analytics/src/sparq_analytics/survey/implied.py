@@ -22,11 +22,9 @@ from typing import Any
 
 from sparq_core.fixedpoint import E6
 
-from sparq_analytics.survey.dump import CENTS, MS_PER_HOUR
+from sparq_analytics.survey.dump import BAR_E6, CENTS, MS_PER_DAY, MS_PER_HOUR
 from sparq_analytics.survey.queue import BID_SIZES_E2
 
-BAR_E6 = 25 * E6
-MS_PER_DAY = 86_400_000
 POSITIONS = ("onset", "hour_before")
 
 

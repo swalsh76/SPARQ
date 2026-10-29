@@ -46,20 +46,24 @@ from sparq_analytics.study.bootstrap import Estimate, cluster_bootstrap
 from sparq_analytics.study.dataset import scan_markets
 from sparq_analytics.study.feecalc import maker_fee_expr
 from sparq_analytics.survey.dump import (
+    CENTS,
     CUT,
     HISTORY_START,
+    MS_PER_DAY,
     MS_PER_HOUR,
+    RESAMPLES,
+    TAIL,
+    UNKNOWN,
     SurveyDataError,
-    _scan,
     cut_markets,
+    scan_trades,
+    series_table,
     trade_files,
 )
-from sparq_analytics.survey.lag import TIERS, _a_day, _bucket, _trades_of, frames_of, gaps_of
-from sparq_analytics.survey.queue import span
+from sparq_analytics.survey.lag import TIERS, a_day, bucket, frames_of, trades_of
+from sparq_analytics.survey.queue import gaps_of, span
 
-MS_PER_DAY = 24 * MS_PER_HOUR
 THIN_TIERS = (TIERS[0][1], TIERS[1][1])  # under 1,000 contracts a day
-UNKNOWN = "unknown"
 COMPETING_E6 = 200_000  # a spread of 20 cents: a quote within 10 cents of the mid on each side
 TAIL_E6 = 900_000  # a side at 90 cents or more the day before close
 DAY_BEFORE_FROM_MS, DAY_BEFORE_TO_MS = 36 * MS_PER_HOUR, 12 * MS_PER_HOUR
@@ -71,8 +75,7 @@ BUCKETS: tuple[tuple[int | None, str], ...] = (
     (None, "99 and more"),
 )
 HALF_SPREAD_BAR_E6 = 250 * E6
-RESAMPLES, TAIL, SEED = 2_000, 0.025, 33
-CENTS_E6 = 10_000
+SEED = 33
 TRADE_COLUMNS = ("ts_ms", "ticker", "yes_price_e6", "count_e2")
 Gaps = list[tuple[int, int]]
 
@@ -97,9 +100,7 @@ def trade_days(kalshi: Path) -> list[date]:
 
 
 def _series(kalshi: Path) -> pl.DataFrame:
-    columns = ["ticker", "category", "title"]
-    series = pl.read_parquet(kalshi / "series.parquet", columns=columns)
-    return series.rename({"ticker": "series_ticker"})
+    return series_table(kalshi, ["category", "title"])
 
 
 def tiered(markets: pl.DataFrame, window_start_ms: int, window_end_ms: int) -> pl.DataFrame:
@@ -113,9 +114,9 @@ def tiered(markets: pl.DataFrame, window_start_ms: int, window_end_ms: int) -> p
         pl.min_horizontal("close_ms", window_end_ms) - pl.max_horizontal("open_ms", window_start_ms)
     )
     life_days = (-((-life_ms) // MS_PER_DAY)).clip(lower_bound=1)  # an exact ceiling
-    a_day = pl.col("contracts_e2").fill_null(0) / 100 / life_days
-    tier = pl.when(a_day.is_null()).then(pl.lit(UNKNOWN)).otherwise(_bucket(a_day, TIERS))
-    return markets.with_columns(contracts_a_day=a_day, tier=tier)
+    rate = pl.col("contracts_e2").fill_null(0) / 100 / life_days
+    tier = pl.when(rate.is_null()).then(pl.lit(UNKNOWN)).otherwise(bucket(rate, TIERS))
+    return markets.with_columns(contracts_a_day=rate, tier=tier)
 
 
 def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
@@ -129,7 +130,7 @@ def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
     )
     window_days = len(days)  # contiguous: trade_days saw to that
     traded = (
-        _scan(trade_files(kalshi, first, last))
+        scan_trades(trade_files(kalshi, first, last))
         .group_by("ticker")
         .agg(
             pl.len().alias("trades"),
@@ -216,7 +217,9 @@ def _hour_spreads(
     """Per market in one hour: the time two-sided, the time in all, and the spread integrated
     over the two-sided time; ``book`` holds the hour's frames with each market's carried frame
     first. A market's time ends at its close, and outage time counts for no one."""
-    ordered = book.join(closes, on="ticker", how="left").sort("ticker", "ts_ms")
+    ordered = book.join(closes, on="ticker", how="left").sort(
+        "ticker", "ts_ms", maintain_order=True
+    )  # stable: frames of one market in one millisecond keep the feed's order
     next_ms = pl.col("ts_ms").shift(-1).over("ticker").fill_null(hour_end_ms)
     timed = ordered.with_columns(
         from_ms=pl.max_horizontal("ts_ms", hour_start_ms),
@@ -240,13 +243,14 @@ def _hour_trades(
     trades: pl.DataFrame, book: pl.DataFrame, info: pl.DataFrame, gaps: Gaps
 ) -> pl.DataFrame:
     """Each trade of the hour with the quoted spread just before it, its half-spread dollars and
-    its maker fee; a trade whose last frame lies before an outage reads an unknown book."""
+    its maker fee (unknown without the series' terms: a fee type in the quadratic family and a
+    multiplier); a trade whose last frame lies before an outage reads an unknown book."""
     right = book.select(
         frame_ms=pl.col("ts_ms"),
         ticker=pl.col("ticker"),
         bid0=pl.col("yes_bid_e6"),
         ask0=pl.col("yes_ask_e6"),
-    ).sort("frame_ms")
+    ).sort("frame_ms", maintain_order=True)
     joined = (
         trades.with_columns(k=pl.col("ts_ms") - 1)
         .sort("k")
@@ -282,12 +286,13 @@ def _hour_trades(
     share = pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
     joined = joined.join(info, on="ticker", how="left").with_columns(share=share)
     readable = pl.col("half_e6").is_not_null()
+    terms = pl.col("share").is_not_null() & pl.col("multiplier_e6").is_not_null()
     fee = maker_fee_expr(
         pl.col("multiplier_e6"), pl.col("share"), pl.col("count_e2"), pl.col("yes_price_e6")
     )
     return joined.with_columns(
-        fee_e6=pl.when(readable & pl.col("share").is_not_null()).then(fee),
-        fee_unknown=readable & pl.col("share").is_null(),
+        fee_e6=pl.when(readable & terms).then(fee),
+        fee_unknown=readable & ~terms,
     ).select("ticker", "state", "count_e2", "half_e6", "fee_e6", "fee_unknown")
 
 
@@ -326,11 +331,15 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
         spread_sums.append(
             _hour_spreads(book, hour_start_ms, hour_start_ms + MS_PER_HOUR, closes, gaps)
         )
-        trades = _trades_of(live, [hour], TRADE_COLUMNS)
+        trades = trades_of(live, [hour], TRADE_COLUMNS)
         if trades.height:
-            trade_sums.append(_hour_trades(trades, book.sort("ts_ms"), info, gaps))
+            trade_sums.append(
+                _hour_trades(trades, book.sort("ts_ms", maintain_order=True), info, gaps)
+            )
+        # a closed market's carried frame costs memory only: its time ends at its close above,
+        # and a trade printed after the listed close (Kalshi extends closes) still reads its quote
         carried = (
-            book.sort("ticker", "ts_ms")
+            book.sort("ticker", "ts_ms", maintain_order=True)
             .group_by("ticker", maintain_order=True)
             .last()
             .select(frames.columns)
@@ -368,7 +377,7 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
                 "markets": r["markets"],
                 "median_spread_cents": None
                 if r["median_spread_e6"] is None
-                else r["median_spread_e6"] / CENTS_E6,
+                else r["median_spread_e6"] / CENTS,
                 "two_sided_share": r["two_sided_share"],
             }
             for r in rows
@@ -412,7 +421,7 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
         )
         out = {}
         for r in rows:
-            gross, fee = _a_day(r["half_e6"], hours), _a_day(r["fee_e6"], hours)
+            gross, fee = a_day(r["half_e6"], hours), a_day(r["fee_e6"], hours)
             out[" | ".join(str(r[k]) for k in keys)] = {
                 "markets": r["markets"],
                 "trades_a_day": r["trades"] * 24 / hours,
@@ -458,7 +467,7 @@ def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
     window_from = pl.col("close_ms") - DAY_BEFORE_FROM_MS
     window_to = pl.col("close_ms") - DAY_BEFORE_TO_MS
     priced = (
-        _scan(files)
+        scan_trades(files)
         .join(markets.select("ticker", "close_ms").lazy(), on="ticker")
         .filter((t >= window_from) & (t < window_to))
         .group_by("ticker")
@@ -489,7 +498,7 @@ def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
         .with_columns(
             surprise=(pl.col("result") != pl.col("side")).cast(pl.Int8),
             implied=(E6 - pl.col("p_e6")) / E6,
-            bucket=_bucket(pl.col("p_e6"), BUCKETS),
+            bucket=bucket(pl.col("p_e6"), BUCKETS),
             event_ticker=pl.col("event_ticker").fill_null(pl.col("ticker")),
         )
     )

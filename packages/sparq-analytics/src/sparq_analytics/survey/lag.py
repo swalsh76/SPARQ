@@ -32,7 +32,9 @@ at that moment, the watched market ``b`` is read:
   with that lag known, since a quote that moved in the same second as ``a`` was never there to
   hit.
 
-Events whose first ten minutes overlap a logged outage are excluded. The figures a day scale the
+An event is excluded when a logged outage falls between the earlier of the frame ``a``'s move is
+measured from (its previous two-sided frame) and ``b``'s last frame, and ten minutes after the
+move, since the move or the quote may then be older than it looks. The figures a day scale the
 span's sums by its hours; they are also broken down by ``b``'s activity tier (contracts a day in
 the span), by ``b``'s category and by the size of ``a``'s move. Money is integer millionths of a
 dollar; sizes are hundredths of a contract; responses are millionths per contract (10,000 to a
@@ -52,8 +54,16 @@ from sparq_core.fixedpoint import E6
 from sparq_analytics.live.source import HOUR, TRADE_SCHEMA, hour_files, hour_name, hour_of
 from sparq_analytics.study.bootstrap import Estimate, cluster_bootstrap
 from sparq_analytics.study.feecalc import taker_fee_expr
-from sparq_analytics.survey.dump import MS_PER_HOUR, SurveyDataError
-from sparq_analytics.survey.queue import FRAME_COLUMNS, span
+from sparq_analytics.survey.dump import (
+    BAR_E6,
+    CENTS,
+    MS_PER_HOUR,
+    RESAMPLES,
+    TAIL,
+    UNKNOWN,
+    SurveyDataError,
+)
+from sparq_analytics.survey.queue import FRAME_COLUMNS, gaps_of, span
 from sparq_analytics.survey.relations import SIGNED
 
 HORIZONS_MS = {"1s": 1_000, "10s": 10_000, "1m": 60_000, "10m": 600_000, "1h": 3_600_000}
@@ -67,7 +77,6 @@ TIERS: tuple[tuple[int | None, str], ...] = (
     (10_000, "1,000 to 10,000"),
     (None, "10,000 and more"),
 )
-BAR_E6 = 25 * E6  # M4: $25 a day for a relation type
 REACH_MS = 1_000  # a quote that stood this long before b moved could have been hit
 MOVE_BUCKETS: tuple[tuple[int | None, str], ...] = (  # a's move, in millionths
     (30_000, "2 to 3"),
@@ -75,9 +84,7 @@ MOVE_BUCKETS: tuple[tuple[int | None, str], ...] = (  # a's move, in millionths
     (100_000, "5 to 10"),
     (None, "10 and more"),
 )
-CENTS_E6 = 10_000
-MS_PER_DAY = 24 * MS_PER_HOUR
-RESAMPLES, TAIL, SEED = 2_000, 0.025, 32
+SEED = 32
 SPOTS = 20
 EVENT_FOLDER = "lag-events"
 _STATE_FRAME = ("yes_bid_e6", "yes_ask_e6", "yes_bid_size_e2", "yes_ask_size_e2", "mid_e6")
@@ -111,17 +118,22 @@ def empty_frames() -> pl.DataFrame:
 def moves(frames: pl.DataFrame) -> pl.DataFrame:
     """Every move among ``frames``: each two-sided frame against the market's previous two-sided
     frame (each market's carried frames come first, so a move across the hour boundary is seen
-    and a carried frame itself is never a move)."""
+    and a carried frame itself is never a move); ``t_prev`` is that previous frame's time."""
 
     def change(column: str) -> pl.Expr:
         return pl.col(column) - pl.col(column).shift(1).over("ticker")
 
-    # the differences are taken before the move filter, so each row sees its previous frame
+    # the differences are taken before the move filter, so each row sees its previous frame; the
+    # sorts are stable, so frames of one market in one millisecond keep the feed's order and a run
+    # reproduces to the unit
     ordered = (
         frames.filter(pl.col("mid_e6").is_not_null())
-        .sort("ticker", "ts_ms")
+        .sort("ticker", "ts_ms", maintain_order=True)
         .with_columns(
-            d_mid=change("mid_e6"), d_bid=change("yes_bid_e6"), d_ask=change("yes_ask_e6")
+            d_mid=change("mid_e6"),
+            d_bid=change("yes_bid_e6"),
+            d_ask=change("yes_ask_e6"),
+            t_prev=pl.col("ts_ms").shift(1).over("ticker"),
         )
     )
     d_mid = pl.col("d_mid")
@@ -129,6 +141,7 @@ def moves(frames: pl.DataFrame) -> pl.DataFrame:
     return ordered.filter((move & ~pl.col("carried")).fill_null(False)).select(
         a=pl.col("ticker"),
         t=pl.col("ts_ms"),
+        t_prev=pl.col("t_prev"),
         direction=d_mid.sign().cast(pl.Int8),
         a_move_e6=d_mid.abs(),
     )
@@ -166,15 +179,19 @@ def events_of(found: pl.DataFrame, pairs: pl.DataFrame, info: pl.DataFrame) -> p
 
 
 def with_gaps(events: pl.DataFrame, gaps: pl.DataFrame) -> pl.DataFrame:
-    """``in_gap``: an outage overlaps the event's first ten minutes; ``gap_1h``: its hour."""
+    """``in_gap``: an outage overlaps the event's window, from the earlier of the frame ``a``'s
+    move is measured from (``t_prev``, its previous two-sided frame) and ``b``'s last frame before
+    the move (the move, or the quote, may then be older than it looks) to ten minutes after the
+    move; ``gap_1h``: the same window to an hour after."""
     if gaps.is_empty():
         return events.with_columns(in_gap=pl.lit(False), gap_1h=pl.lit(False))
     t = pl.col("t")
+    since = pl.min_horizontal("t_prev", "b_ts0", t)  # skips nulls; never later than the move
 
     def overlap(window_ms: int) -> pl.Expr:
         return pl.any_horizontal(
             [
-                (pl.lit(row["start_ms"]) < t + window_ms) & (pl.lit(row["end_ms"]) > t)
+                (pl.lit(row["start_ms"]) < t + window_ms) & (pl.lit(row["end_ms"]) > since)
                 for row in gaps.to_dicts()
             ]
         )
@@ -194,7 +211,7 @@ def with_state(events: pl.DataFrame, book: pl.DataFrame) -> pl.DataFrame:
         bsz0=pl.col("yes_bid_size_e2"),
         asz0=pl.col("yes_ask_size_e2"),
         mid0=pl.col("mid_e6"),
-    ).sort("b_ts0")
+    ).sort("b_ts0", maintain_order=True)
     joined = (
         events.with_columns(k=pl.col("t") - 1)
         .sort("k")
@@ -227,11 +244,12 @@ def with_responses(
     """``b``'s mid change at each horizon, in the expected direction."""
     right = two_sided.select(
         ts_ms=pl.col("ts_ms"), b=pl.col("ticker"), mid_k=pl.col("mid_e6")
-    ).sort("ts_ms")
+    ).sort("ts_ms", maintain_order=True)
     out = events
     for name, delta in HORIZONS_MS.items():
         k = pl.col("k")
-        known = (k < loaded_end_ms) & (k < pl.col("close_b"))
+        # a market the list gives no close for is never past it
+        known = (k < loaded_end_ms) & (k < pl.col("close_b")).fill_null(True)
         if name == LONGEST:
             known = known & ~pl.col("gap_1h")
         response = pl.when(known).then(pl.col("expected") * (pl.col("mid_k") - pl.col("mid0")))
@@ -260,7 +278,7 @@ def with_first_move(
     through an outage."""
     right = changes.select(
         first_ms=pl.col("ts_ms"), b=pl.col("ticker"), mid_first=pl.col("mid_e6")
-    ).sort("first_ms")
+    ).sort("first_ms", maintain_order=True)
     joined = events.sort("t").join_asof(
         right, left_on="t", right_on="first_ms", by="b", strategy="forward", check_sortedness=False
     )  # fmt: skip
@@ -282,7 +300,7 @@ def with_through(events: pl.DataFrame, trades: pl.DataFrame) -> pl.DataFrame:
     yes = (pl.col("taker_side") == "yes").cast(pl.Int64)
     no = (pl.col("taker_side") == "no").cast(pl.Int64)
     cumulative = (
-        trades.sort("ticker", "ts_ms")
+        trades.sort("ticker", "ts_ms", maintain_order=True)
         .with_columns(
             yes_e2=(pl.col("count_e2") * yes).cum_sum().over("ticker"),
             no_e2=(pl.col("count_e2") * no).cum_sum().over("ticker"),
@@ -290,7 +308,7 @@ def with_through(events: pl.DataFrame, trades: pl.DataFrame) -> pl.DataFrame:
             no_n=no.cum_sum().over("ticker"),
         )
         .select("ts_ms", pl.col("ticker").alias("b"), "yes_e2", "no_e2", "yes_n", "no_n")
-        .sort("ts_ms")
+        .sort("ts_ms", maintain_order=True)
     )
     sums = ["yes_e2", "no_e2", "yes_n", "no_n"]
 
@@ -360,12 +378,12 @@ def tiers_of(live: Path, start: datetime, end: datetime) -> pl.DataFrame:
         .agg((pl.col("count_e2").sum() * 24 // (hours * 100)).alias("contracts_a_day"))
         .collect()
     )
-    return traded.with_columns(tier=_bucket(pl.col("contracts_a_day"), TIERS)).select(
+    return traded.with_columns(tier=bucket(pl.col("contracts_a_day"), TIERS)).select(
         "ticker", "tier"
     )
 
 
-def _bucket(value: pl.Expr, buckets: tuple[tuple[int | None, str], ...]) -> pl.Expr:
+def bucket(value: pl.Expr, buckets: tuple[tuple[int | None, str], ...]) -> pl.Expr:
     """The name of the first bucket whose bound ``value`` is under; the last bucket has none."""
     name = pl.lit(buckets[-1][1])
     for bound, label in reversed(buckets[:-1]):
@@ -374,29 +392,17 @@ def _bucket(value: pl.Expr, buckets: tuple[tuple[int | None, str], ...]) -> pl.E
 
 
 def market_info(markets: pl.DataFrame, tiers: pl.DataFrame, fees: pl.DataFrame) -> pl.DataFrame:
-    """Each market's series, category, close, tier (the lowest when it never traded) and fee
-    terms."""
+    """Each market's series, category (``UNKNOWN`` when the list gives none), close, tier (the
+    lowest when it never traded) and fee terms."""
     return (
-        markets.select("ticker", "series_ticker", "category", "close_ms")
+        markets.select("ticker", "series_ticker", pl.col("category").fill_null(UNKNOWN), "close_ms")
         .join(tiers, on="ticker", how="left")
         .with_columns(pl.col("tier").fill_null(TIERS[0][1]))
         .join(fees, on="series_ticker", how="left")
     )
 
 
-def gaps_of(live: Path, end: datetime) -> pl.DataFrame:
-    path = live / "gaps.parquet"
-    span_end_ms = int(end.timestamp() * 1000)
-    if not path.exists():
-        return pl.DataFrame(schema={"start_ms": pl.Int64, "end_ms": pl.Int64})
-    return (
-        pl.read_parquet(path)
-        .filter(pl.col("kind").is_in(["ticker", "all"]))
-        .select("start_ms", pl.col("end_ms").fill_null(span_end_ms))
-    )
-
-
-def _trades_of(
+def trades_of(
     live: Path,
     hours: list[datetime],
     columns: Sequence[str] = ("ts_ms", "ticker", "count_e2", "taker_side"),
@@ -440,23 +446,29 @@ def study_hour(
     book = pl.concat([with_carried] + ([following] if following is not None else [])).drop(
         "carried"
     )
-    two_sided = book.filter(pl.col("mid_e6").is_not_null()).sort("ticker", "ts_ms")
+    two_sided = book.filter(pl.col("mid_e6").is_not_null()).sort(
+        "ticker", "ts_ms", maintain_order=True
+    )
     changes = two_sided.filter(pl.col("mid_e6") != pl.col("mid_e6").shift(1).over("ticker"))
-    trades = _trades_of(live, [hour] + ([hour + HOUR] if following is not None else []))
+    trades = trades_of(live, [hour] + ([hour + HOUR] if following is not None else []))
+    events = with_state(events, book.sort("ts_ms", maintain_order=True))
     events = with_gaps(events, gaps)
-    events = with_state(events, book.sort("ts_ms"))
     events = with_responses(events, two_sided, int(loaded_end.timestamp() * 1000))
     events = with_first_move(events, changes, int(loaded_end.timestamp() * 1000))
     events = with_through(events, trades)
     events = with_capacity(events).sort("t", "a", "b", "kind")
-    ordered = with_carried.sort("ticker", "ts_ms")
+    ordered = with_carried.sort("ticker", "ts_ms", maintain_order=True)
     last = ordered.group_by("ticker", maintain_order=True).last()
     last_two_sided = (
         ordered.filter(pl.col("mid_e6").is_not_null())
         .group_by("ticker", maintain_order=True)
         .last()
     )
-    new_carried = pl.concat([last, last_two_sided]).unique().with_columns(carried=pl.lit(True))
+    new_carried = (
+        pl.concat([last, last_two_sided])
+        .unique(maintain_order=True)
+        .with_columns(carried=pl.lit(True))
+    )
     return events, new_carried.select(with_carried.columns), found.height, following
 
 
@@ -508,15 +520,16 @@ def run(
     return start, end, total
 
 
-def _a_day(value: int, hours: int) -> int:
+def a_day(value: int, hours: int) -> int:
     """A span's sum scaled to a day."""
     return int(value * 24 // hours)
 
 
 def _cells(frame: pl.LazyFrame, keys: list[str], hours: int) -> list[dict[str, Any]]:
     """The figures of each cell of ``keys``: events, pairs, responses, first moves, the trades
-    through each stale quote, and the counted quotes' capacity, for every quote and for the
-    reachable ones."""
+    through each stale quote (the shares count the events with such a trade; the contracts a day
+    count each stale quote once, at its counted event, so a trade inside two events' windows is
+    not doubled), and the counted quotes' capacity, for every quote and for the reachable ones."""
     counted = pl.col("counted")
     reachable = counted & pl.col("reachable")
     aggs = [
@@ -550,31 +563,31 @@ def _cells(frame: pl.LazyFrame, keys: list[str], hours: int) -> list[dict[str, A
         temporary += [f"{prefix}{k}" for k in ("gross_e6", "fee_e6", "net_e6", "quotes")]
     for row in rows:
         events = row["events"]
-        row["events_a_day"] = _a_day(row["events"], hours)
+        row["events_a_day"] = a_day(row["events"], hours)
         responses = {name: row[f"response_e6_{name}"] for name in HORIZONS_MS}
         row["response_cents"] = {
-            name: None if r is None else r / CENTS_E6 for name, r in responses.items()
+            name: None if r is None else r / CENTS for name, r in responses.items()
         }
         row["moved_within"] = {name: row[f"moved_within_{name}"] / events for name in HORIZONS_MS}
         row["agreement"] = None if row["moved"] == 0 else row["agreeing"] / row["moved"]
         row["through_with_share"] = row["through_with_events"] / events
         row["through_against_share"] = row["through_against_events"] / events
-        row["through_with_e2_a_day"] = _a_day(row["through_with_e2"], hours)
-        row["through_against_e2_a_day"] = _a_day(row["through_against_e2"], hours)
-        row["stale_quotes_a_day"] = _a_day(row["quotes"], hours)
+        row["through_with_e2_a_day"] = a_day(row["through_with_e2"], hours)
+        row["through_against_e2_a_day"] = a_day(row["through_against_e2"], hours)
+        row["stale_quotes_a_day"] = a_day(row["quotes"], hours)
         if row["signed"]:
             row["capacity"] = {
-                "gross_e6_a_day": _a_day(row["gross_e6"], hours),
-                "fee_e6_a_day": _a_day(row["fee_e6"], hours),
-                "net_e6_a_day": _a_day(row["net_e6"], hours),
-                "quotes_a_day": _a_day(row["quotes"], hours),
-                "reachable_gross_e6_a_day": _a_day(row["reachable_gross_e6"], hours),
-                "reachable_fee_e6_a_day": _a_day(row["reachable_fee_e6"], hours),
-                "reachable_net_e6_a_day": _a_day(row["reachable_net_e6"], hours),
-                "reachable_quotes_a_day": _a_day(row["reachable_quotes"], hours),
+                "gross_e6_a_day": a_day(row["gross_e6"], hours),
+                "fee_e6_a_day": a_day(row["fee_e6"], hours),
+                "net_e6_a_day": a_day(row["net_e6"], hours),
+                "quotes_a_day": a_day(row["quotes"], hours),
+                "reachable_gross_e6_a_day": a_day(row["reachable_gross_e6"], hours),
+                "reachable_fee_e6_a_day": a_day(row["reachable_fee_e6"], hours),
+                "reachable_net_e6_a_day": a_day(row["reachable_net_e6"], hours),
+                "reachable_quotes_a_day": a_day(row["reachable_quotes"], hours),
                 "fee_unknown": row["fee_unknown"],
-                "clears": _a_day(row["net_e6"], hours) >= BAR_E6,
-                "clears_reachable": _a_day(row["reachable_net_e6"], hours) >= BAR_E6,
+                "clears": a_day(row["net_e6"], hours) >= BAR_E6,
+                "clears_reachable": a_day(row["reachable_net_e6"], hours) >= BAR_E6,
             }
         else:
             row["capacity"] = None
@@ -629,7 +642,7 @@ def _intervals(usable: pl.LazyFrame, hours: int, start_ms: int) -> dict[str, dic
             resamples=RESAMPLES,
             seed=SEED,
         )
-        entry: dict[str, Any] = {"response_10m_cents": _interval(response, 1 / CENTS_E6)}
+        entry: dict[str, Any] = {"response_10m_cents": _interval(response, 1 / CENTS)}
         hourly = by_hour.filter(pl.col("kind") == kind)
         if hourly.height:
             for column, name in (("num", "net_e6_a_day"), ("reach", "reachable_net_e6_a_day")):
@@ -683,7 +696,7 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
         counted=first & measurable,
         reachable=pl.col("lag_known")
         & (pl.col("lag_ms").is_null() | (pl.col("lag_ms") >= REACH_MS)),
-        move=_bucket(pl.col("a_move_e6"), MOVE_BUCKETS),
+        move=bucket(pl.col("a_move_e6"), MOVE_BUCKETS),
     )
     by_kind = {row["kind"]: row for row in _cells(usable, ["kind"], hours)}
     for row in by_kind.values():
