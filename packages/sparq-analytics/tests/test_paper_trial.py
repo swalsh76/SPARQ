@@ -53,32 +53,33 @@ def test_the_scope_limits_the_quotes_to_the_rules(tmp_path: Path) -> None:
 
 
 def test_the_trial_marks_fills_to_settlement_and_judges_each_rule(tmp_path: Path) -> None:
-    live = write_paper_live(tmp_path, days=3)
+    live = write_paper_live(tmp_path, days=3, extra=True)
     out = tmp_path / "out"
     result = trial.run_test(live, FEES, out, RULES, D25, D26, min_days=1)
     assert (result["days_kept"], result["dropped_days"], result["hours_kept"]) == (
         1, ["2026-10-26"], 24,
     )  # fmt: skip
     fills = pl.read_parquet(out / "paper-test-fills.parquet")
-    # k = 5 only, so half S4.1's fills: P1 two asks... no: one ask and one bid, P2 one ask, P5
-    # one bid (P1's 23:40 fill is in the window too: a bid), and nothing from the dropped day
+    # k = 5 only: P1 an ask and two bids (00:20 and 23:40), P2 an ask, P5 a bid, P7 a bid;
+    # nothing from the dropped day
     assert set(fills["k_e6"]) == {50_000}
     assert sorted(zip(fills["ticker"], fills["side"], strict=True)) == [
-        ("P1", "ask"), ("P1", "bid"), ("P1", "bid"), ("P2", "ask"), ("P5", "bid"),
+        ("P1", "ask"), ("P1", "bid"), ("P1", "bid"), ("P2", "ask"), ("P5", "bid"), ("P7", "bid"),
     ]  # fmt: skip
-    assert result["fills"] == 5 and result["settled_fills"] == 1  # P5 alone has settled
+    assert result["fills"] == 6 and result["settled_fills"] == 1  # P5 alone has settled
     r1 = result["by_rule"]["R1"]
-    assert (r1["fills"], r1["settled_fills"], r1["unsettled_fills"], r1["size"]) == (4, 1, 3, 10)
+    assert (r1["fills"], r1["settled_fills"], r1["unsettled_fills"], r1["size"]) == (5, 1, 4, 10)
     # P5's bid at 25 on 1 contract settled yes: 75 cents, no fee, in 24 hours
     assert r1["settlement"]["net_e6_a_day"] == 750_000 and r1["contracts_settled"] == 1.0
     assert r1["settlement"]["cents_a_contract"] == pytest.approx(75.0)
     assert r1["settlement"]["interval_e6_a_day"]["clusters"] == 1  # no spread to bootstrap
-    assert r1["mid_1h"]["marked_fills"] == 2 and r1["mid_1h"]["net_e6_a_day"] > 0
+    assert r1["mid_1h"]["marked_fills"] == 3  # P1 twice and P7; P2 has no mid, P5 is closed
+    assert r1["mid_1h"]["net_e6_a_day"] > 0
     assert r1["go"] is False  # one settled cluster has no lower bound
     r2 = result["by_rule"]["R2"]
     assert r2["size"] == 50 and r2["settlement"]["net_e6_a_day"] == 750_000  # a 1-contract trade
     r3 = result["by_rule"]["R3"]
-    assert r3["categories"] == ["Sports"] and r3["fills"] == 4  # P1 and P5 are Sports
+    assert r3["categories"] == ["Sports"] and r3["fills"] == 4  # P1 and P5; not P7 (Economics)
     r4 = result["by_rule"]["R4"]
     assert (r4["state"], r4["fills"], r4["settled_fills"]) == ("one_sided", 1, 0)
     assert r4["settlement"]["cents_a_contract"] is None and r4["go"] is False
@@ -104,6 +105,7 @@ def test_test_command_writes_the_verdicts(
     assert main([*argv, "--min-days", "1"]) == 0
     printed = json.loads(capsys.readouterr().out)
     assert printed["go"] == [] and printed["by_rule"]["R1"]["fills"] == 4
+    assert printed["dropped_days"] == ["2026-10-26"]
     assert json.loads((out / "paper-test.json").read_text(encoding="utf-8"))["days_kept"] == 1
     assert main(argv) == 1  # seven days by default
     assert "fewer than 7" in capsys.readouterr().err

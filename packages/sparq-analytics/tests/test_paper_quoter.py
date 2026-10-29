@@ -269,3 +269,15 @@ def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPat
     with pytest.raises(SystemExit) as stop:
         runpy.run_module("sparq_analytics.paper", run_name="__main__")
     assert stop.value.code == 0
+
+
+def test_an_outage_outside_the_span_drops_no_day(tmp_path: Path) -> None:
+    live = write_paper_live(
+        tmp_path,
+        gaps=[
+            {"kind": "ticker", "start_ms": lm(1, 30), "end_ms": lm(1, 31), "reason": "lost"},
+            {"kind": "ticker", "start_ms": lm(30, 0), "end_ms": lm(34, 0), "reason": "a later day"},
+        ],
+    )
+    summary = quoter.run(live, FEES, tmp_path / "out")
+    assert (summary["dropped_days"], summary["hours_kept"], summary["fills"]) == ([], 2, 8)

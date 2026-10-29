@@ -115,21 +115,32 @@ CATEGORY = {
     "KXP4": "Crypto",
     "KXP5": "Sports",
     "KXP6": "Politics",
+    "KXP7": "Economics",
 }
 FEES = pl.DataFrame(
     {
         "series_ticker": list(CATEGORY),
-        "fee_type": ["quadratic_with_maker_fees"] + ["quadratic"] * 5,
-        "multiplier_e6": [1_000_000] * 6,
+        "fee_type": ["quadratic_with_maker_fees"] + ["quadratic"] * 6,
+        "multiplier_e6": [1_000_000] * 7,
     }
 )
 
 
-def write_paper_live(root: Path, days: int = 1, gaps: list[dict[str, Any]] | None = None) -> Path:
-    """The live world under ``root / "live"``: an empty hour, then the hours of the span."""
+EXTRA_FRAMES = [_frame(lm(0, 0), "P7", 200_000, 10, 600_000, 10)]
+EXTRA_TRADES = [_trade(lm(0, 25), "P7", 150_000, 100, "no")]
+
+
+def write_paper_live(
+    root: Path, days: int = 1, gaps: list[dict[str, Any]] | None = None, extra: bool = False
+) -> Path:
+    """The live world under ``root / "live"``: an empty hour, then the hours of the span. With
+    ``extra``, ``P7`` (``KXP7``, Economics) quotes bid 20 ask 60 at 00:00 and a no taker takes 1
+    contract at 15 at 00:25, filling the paper bids at 25 and 30: an uncontested fill outside
+    Sports, for the registered test's category rule."""
     live = root / "live"
-    frames = pl.DataFrame(FRAMES, schema=TICKER_SCHEMA)
-    tape = pl.DataFrame(TRADES, schema=TRADE_SCHEMA)
+    frames = pl.DataFrame(FRAMES + (EXTRA_FRAMES if extra else []), schema=TICKER_SCHEMA)
+    tape = pl.DataFrame(TRADES + (EXTRA_TRADES if extra else []), schema=TRADE_SCHEMA)
+    series = SERIES | ({"P7": "KXP7"} if extra else {})
     hours = [BASE_TIME + i * HOUR for i in range(-1, 2 if days == 1 else 49)]
     for start in hours:
         lo, hi = int(start.timestamp() * 1000), int((start + HOUR).timestamp() * 1000)
@@ -151,7 +162,7 @@ def write_paper_live(root: Path, days: int = 1, gaps: list[dict[str, Any]] | Non
                 "cap_strike": None,
                 "weather_rules": None,
             }
-            for m, s in SERIES.items()
+            for m, s in series.items()
         ],
         schema=MARKET_SCHEMA,
     ).write_parquet(live / "markets.parquet")

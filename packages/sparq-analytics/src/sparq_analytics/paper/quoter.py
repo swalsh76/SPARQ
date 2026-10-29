@@ -371,7 +371,10 @@ def replay(
     """The paper quoter over ``[start, end)`` of the live copies, hour by hour."""
     span_end_ms = int(end.timestamp() * 1000)
     gap_frame = gaps_of(live, end)
-    dropped = outage_days(gap_frame)
+    # only the window's days can be dropped: an outage outside it drops nothing
+    dropped = [
+        d for d in outage_days(gap_frame) if start.date() <= d < end.date() or d == start.date()
+    ]
     files = kept_hours(live, start, end, dropped)
     if not files:
         raise SurveyDataError("every hour of the span lies in a dropped day")
