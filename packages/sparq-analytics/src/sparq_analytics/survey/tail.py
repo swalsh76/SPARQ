@@ -199,7 +199,7 @@ def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
 # -- spreads and the half-spread ----------------------------------------------------------------
 
 
-def _outage_overlap(start: pl.Expr, end: pl.Expr, gaps: Gaps) -> pl.Expr:
+def outage_overlap(start: pl.Expr, end: pl.Expr, gaps: Gaps) -> pl.Expr:
     """The time of ``[start, end)`` that falls inside a logged outage."""
     if not gaps:
         return pl.lit(0, dtype=pl.Int64)
@@ -228,7 +228,7 @@ def _hour_spreads(
     ).with_columns(
         dur_ms=(
             (pl.col("to_ms") - pl.col("from_ms")).clip(lower_bound=0)
-            - _outage_overlap(pl.col("from_ms"), pl.col("to_ms"), gaps)
+            - outage_overlap(pl.col("from_ms"), pl.col("to_ms"), gaps)
         ).clip(lower_bound=0)
     )
     two_sided = pl.col("spread_e6").is_not_null()
