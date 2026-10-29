@@ -372,9 +372,8 @@ def replay(
     span_end_ms = int(end.timestamp() * 1000)
     gap_frame = gaps_of(live, end)
     # only the window's days can be dropped: an outage outside it drops nothing
-    dropped = [
-        d for d in outage_days(gap_frame) if start.date() <= d < end.date() or d == start.date()
-    ]
+    last_day = (end - timedelta(milliseconds=1)).date()
+    dropped = [d for d in outage_days(gap_frame) if start.date() <= d <= last_day]
     files = kept_hours(live, start, end, dropped)
     if not files:
         raise SurveyDataError("every hour of the span lies in a dropped day")

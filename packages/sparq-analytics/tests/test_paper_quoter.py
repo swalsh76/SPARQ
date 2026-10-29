@@ -281,3 +281,18 @@ def test_an_outage_outside_the_span_drops_no_day(tmp_path: Path) -> None:
     )
     summary = quoter.run(live, FEES, tmp_path / "out")
     assert (summary["dropped_days"], summary["hours_kept"], summary["fills"]) == ([], 2, 8)
+
+
+def test_an_outage_on_the_span_s_last_part_day_drops_it(tmp_path: Path) -> None:
+    # the copies end at 01:00 on the 27th; a 15-minute outage that morning drops the 27th too
+    live = write_paper_live(
+        tmp_path,
+        days=3,
+        gaps=[
+            {"kind": "ticker", "start_ms": lm(29, 0), "end_ms": lm(30, 0), "reason": "lost"},
+            {"kind": "ticker", "start_ms": lm(48, 5), "end_ms": lm(48, 20), "reason": "lost"},
+        ],
+    )
+    summary = quoter.run(live, FEES, tmp_path / "out")
+    assert summary["dropped_days"] == ["2026-10-26", "2026-10-27"]
+    assert (summary["hours_kept"], summary["fills"]) == (24, 10)  # no fill from the 27th
