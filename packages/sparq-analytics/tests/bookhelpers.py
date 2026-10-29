@@ -178,6 +178,13 @@ def markets() -> pl.DataFrame:
     )
 
 
+def settlements() -> pl.DataFrame:
+    return pl.DataFrame(
+        {"ticker": ["M4"], "result": ["yes"], "settled_ms": [BASE + 90_000_000]},
+        schema={"ticker": pl.String, "result": pl.String, "settled_ms": pl.Int64},
+    )
+
+
 def gaps() -> pl.DataFrame:
     return pl.DataFrame(
         [
@@ -228,6 +235,8 @@ class FakeCopier:
             )
         elif "FROM gap_log" in query:
             data = gaps()
+        elif "settlement_ts" in query:
+            data = settlements()
         else:
             data = markets()
         data.write_csv(output)

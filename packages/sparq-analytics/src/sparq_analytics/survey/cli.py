@@ -75,10 +75,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _check(args: argparse.Namespace) -> None:
-    """A flag given to a command it means nothing to is refused, not ignored."""
-    for flag, commands in APPLIES.items():
-        if getattr(args, flag) is not None and args.command not in commands:
+def check(
+    args: argparse.Namespace,
+    applies: dict[str, tuple[str, ...]],
+    names: dict[str, str] | None = None,
+) -> None:
+    """A flag given to a command it means nothing to is refused, not ignored; ``applies`` maps
+    each flag to its commands, ``names`` a flag to its attribute when they differ."""
+    for flag, commands in applies.items():
+        if (
+            getattr(args, (names or {}).get(flag, flag)) is not None
+            and args.command not in commands
+        ):
             raise UsageError(f"--{flag} does not apply to {args.command}")
 
 
@@ -181,7 +189,7 @@ HANDLERS = {"dump": _dump, "lag": _lag, "tail": _tail}
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        _check(args)
+        check(args, APPLIES)
         return HANDLERS[args.command](args)
     except ERRORS as error:
         print(f"error: {error}", file=sys.stderr)

@@ -93,6 +93,8 @@ def test_extract_copies_each_hour_once_and_resumes(tmp_path: Path) -> None:
     assert report.hours_copied == 4 and report.hours_present == 0
     assert report.rows == {"ticker": frames().height, "trade": trades().height}
     assert report.markets == markets().height and report.gaps == 1
+    assert report.settlements == 1
+    assert pl.read_parquet(tmp_path / "settlements.parquet").row(0)[:2] == ("M4", "yes")
     assert pl.read_parquet(tmp_path / "gaps.parquet").row(0)[0] == "ticker"
     copied = pl.read_parquet(sorted((tmp_path / "trade").glob("*.parquet")))
     assert copied.schema["is_block_trade"] == pl.Boolean
@@ -102,7 +104,8 @@ def test_extract_copies_each_hour_once_and_resumes(tmp_path: Path) -> None:
     again = asyncio.run(extract(conn, tmp_path, T0, end, now=now))
     assert again.hours_copied == 0 and again.hours_present == 4
     # the market list is copied afresh each run; hours only once
-    assert sum("FROM market" in q for q, _ in conn.calls) == 2
+    assert sum("AS weather_rules" in q for q, _ in conn.calls) == 2
+    assert sum("settlement_ts" in q for q, _ in conn.calls) == 2
     assert sum("FROM ticker" in q for q, _ in conn.calls) == 2
 
 

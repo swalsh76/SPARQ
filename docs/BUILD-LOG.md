@@ -741,3 +741,33 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 - The first runs marked a fill against the market's last two-sided mid in the span even when that mid was seen before the fill (a one-sided book's only mid, or a market that went one-sided for good); the merge review caught it, and the close mark now needs a frame at or after the fill. The headline figure fell by a quarter.
 
 **Decisions (owner, 2026-10-29).** The four rules approved as proposed ("rules approved, merge PR24") and registered in `docs/research/paper-rules.json` (sha256 `6c7a87357267…`, pinned by `test_the_registered_rules_are_pinned`); the test part is the live days after the registration.
+
+### S4.2 The registered test (2026-10-29 UTC, built; PR #25; the run is due 2026-11-13)
+
+**Built.** `python -m sparq_analytics.paper test --kalshi DIR --live DIR --out DIR --rules docs/research/paper-rules.json --from DAY --to DAY [--min-days N]` (`paper/trial.py`, `cli.py`), writing `paper-test-fills.parquet` and `paper-test.json`.
+- *The rules:* the file's sha256 is pinned in `trial.DIGEST` (and by a test); a changed file is refused. The quoter gained a `Scope` (the values of k, and markets closing within a time of the quote): the test replays the four registered rules exactly, 5 cents inside, markets closing within 7 days, the states, categories and sizes of each.
+- *The window:* whole UTC days inside the live copies, at least seven kept (a day touched by an outage over ten minutes leaves, T6; only the window's own days can be dropped, the span's last part day included); `--min-days` lowers the floor for a smoke run, never for the test.
+- *Settlement:* `live extract` copies the market table's `result` and `settlement_ts` as `settlements.parquet` (the discovery pass keeps them current, so no API call); each fill is marked to settlement (yes $1, no $0) and to the 1-hour mid; fills whose market has not settled are counted apart and take no part in the bar.
+- *The verdict* per rule (T7): GO when the settlement-marked net a day clears $25 at the lower bound of the (event, day) interval and the 1-hour mark is positive.
+
+**Verified (local).** 7 tests on the paper world (a seventh market, Economics, with an uncontested fill, for the category rule): the digest pin and the refusal of a changed file; the window inside the copies and its order; the scope's one k and 7-day close; the fills, the settlement marks and each rule's figures and verdict on a world where one market has settled; the command's files, exit codes and refused flags; the dropped days bounded to the window. 6 planted bugs, all caught (a seventh, the ignored categories, was missed until the world gained the Economics fill). The paper package at 100% branch coverage; the full suite 1,943 passed, 196 skipped.
+
+**Verified (analytics node, real data).** `live extract` copied the settlements (1,073,433 settled markets) and grew the copies to 2026-10-29 06:00. **A smoke run, not the test:** `paper test --from 2026-10-25 --to 2026-10-27 --min-days 1` at `275c4ed` (three of the fit part's days, 72 hours, 43,853 fills, 38,783 of them settled) runs in a minute. Marked to settlement, **the uncontested rules lose**: R1 −$1,588 a day (−3.1 cents a contract, interval −$1,971 to −$1,173 over 6,056 clusters), R2 −$3,602, R3 (Sports) −$1,447 (−3.8 cents); R4 (one-sided) +$171 (lower −$58). Their 1-hour mid marks stay positive ($3,716, $9,583, $1,205, $371 a day). No rule is GO on these days. This is the fit part re-read with settlements, not the registered test, whose window (2026-10-30 to 2026-11-05) has not yet passed; but it says what the mid marks could not: the mid of a wide thin book is not where the market settles, and the paper quote is picked off at settlement by about the half-spread it books against the mid.
+
+**Review (PLAN Q8).** `68805cf` (docs). `2f563ea` reviewed at low effort: no findings; the smoke run found that a dropped day outside the window was counted (fixed in `bc1d2fb`, with a test, and the world's Economics fill for the category plant that had been missed). `bc1d2fb` reviewed at low effort: two findings, fixed in `d19de95`: the day filter's end bound excluded the span's last part day, and a clause was dead. `d19de95` reviewed at low effort: no findings. The merge review, at medium effort over the branch against `main`, found 10 issues, all fixed in `275c4ed` (reviewed at low effort: no findings):
+1. The window's last hour read no frames after it, so its fills had no 1-hour mark even when the next hour was copied. **Fixed:** the replay reads the hour after the window for the marks when the copies hold it and the day is kept; test.
+2. The rules file's `regime_e6`, `empty_side_e6` and `outage_day_ms` were never checked against the code's constants, so a later constant change would silently un-register the test. **Fixed:** `check_constants` refuses the mismatch; test.
+3. The BUILD-LOG's Review ended in a placeholder. **Fixed:** this list.
+4. The resume point kept S4.1's node sentence beside S4.2's, two states for one clone. **Fixed.**
+5. The settled fills and the gross were counted over all settled fills while the net, the cents and the interval ran over those with known fees. **Fixed:** the netted fills are reported beside the marked ones, from the quoter's own cell figures.
+6. `judge` re-implemented the quoter's cell figures by hand. **Fixed:** `_cells` takes its marks and judges each rule's pre-filtered fills; one copy of the logic.
+7. The paper command line duplicated the survey command line's flag check. **Fixed:** `survey.cli.check(args, applies, names)` is shared.
+8. `window`'s fourth parameter was misnamed. **Fixed:** `min_days`, and the window returns the marks' end.
+9. The settlement mark was Int32 beside Int64 marks. **Fixed:** Int64 literals.
+10. The rules file was read twice. **Fixed:** once.
+
+**Problems and fixes.**
+- The dropped-day rule read the whole gap log, so 2026-10-28's outage dropped a day outside the test window and the count of kept days was wrong; the window's own days only, now.
+- The smoke run's figures are the slice's real finding and were not expected before the test's window: the settlement marks turn the fit part's edge negative. The registered test runs as registered on 2026-11-13; the owner decides what else follows.
+
+**Decisions (owner, pending).** Whether to run the registered test on 2026-11-13 as registered (recommended: yes, it is one command, and the rules file stays pinned), and what S4 does after it.

@@ -1,4 +1,3 @@
-import hashlib
 import json
 import runpy
 import sys
@@ -272,14 +271,28 @@ def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPat
     assert stop.value.code == 0
 
 
-def test_the_registered_rules_are_pinned() -> None:
-    # S4.2's rules (PLAN §6.4, T6), approved by the owner on 2026-10-29: the file may not change
-    path = Path(__file__).resolve().parents[3] / "docs" / "research" / "paper-rules.json"
-    assert (
-        hashlib.sha256(path.read_bytes()).hexdigest()
-        == "6c7a87357267391093bce9c4acb2cb5876f3492bb063de9a6a6da4aecccdc3d7"
+def test_an_outage_outside_the_span_drops_no_day(tmp_path: Path) -> None:
+    live = write_paper_live(
+        tmp_path,
+        gaps=[
+            {"kind": "ticker", "start_ms": lm(1, 30), "end_ms": lm(1, 31), "reason": "lost"},
+            {"kind": "ticker", "start_ms": lm(30, 0), "end_ms": lm(34, 0), "reason": "a later day"},
+        ],
     )
-    rules = json.loads(path.read_text(encoding="utf-8"))
-    assert [r["id"] for r in rules["rules"]] == ["R1", "R2", "R3", "R4"]
-    assert rules["shared"]["inside_e6"] == 50_000
-    assert rules["shared"]["close_within_ms"] == 7 * 86_400_000
+    summary = quoter.run(live, FEES, tmp_path / "out")
+    assert (summary["dropped_days"], summary["hours_kept"], summary["fills"]) == ([], 2, 8)
+
+
+def test_an_outage_on_the_span_s_last_part_day_drops_it(tmp_path: Path) -> None:
+    # the copies end at 01:00 on the 27th; a 15-minute outage that morning drops the 27th too
+    live = write_paper_live(
+        tmp_path,
+        days=3,
+        gaps=[
+            {"kind": "ticker", "start_ms": lm(29, 0), "end_ms": lm(30, 0), "reason": "lost"},
+            {"kind": "ticker", "start_ms": lm(48, 5), "end_ms": lm(48, 20), "reason": "lost"},
+        ],
+    )
+    summary = quoter.run(live, FEES, tmp_path / "out")
+    assert summary["dropped_days"] == ["2026-10-26", "2026-10-27"]
+    assert (summary["hours_kept"], summary["fills"]) == (24, 10)  # no fill from the 27th

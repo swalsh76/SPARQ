@@ -117,8 +117,24 @@ def market_info(live: Path, fees: pl.DataFrame, start: datetime, end: datetime) 
 # -- the paper quotes and their fills ------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class Scope:
+    """What the quoter quotes: the values of ``k`` (cents inside, in millionths) and, for the
+    registered test, only markets closing within ``close_within_ms`` of the quote."""
+
+    inside: tuple[int, ...] = INSIDE_E6
+    close_within_ms: int | None = None
+
+
+FIT = Scope()
+
+
 def paper_quotes(
-    book: pl.DataFrame, info: pl.DataFrame, hour_start_ms: int, hour_end_ms: int
+    book: pl.DataFrame,
+    info: pl.DataFrame,
+    hour_start_ms: int,
+    hour_end_ms: int,
+    scope: Scope = FIT,
 ) -> pl.DataFrame:
     """The paper quotes standing in one hour: for every frame of a thin market whose book is
     uncontested or one-sided (and not in the certainty regime), one row a value of ``k`` with the
@@ -142,13 +158,19 @@ def paper_quotes(
         state=state,
         regime=regime,
     )
+    closing_soon = (
+        pl.lit(True)
+        if scope.close_within_ms is None
+        else (pl.col("close_ms") - pl.col("frame_ms") <= scope.close_within_ms).fill_null(False)
+    )
     kept = timed.filter(
         pl.col("state").is_not_null()
         & (pl.col("valid_to") > pl.col("valid_from"))
         & (pl.col("regime") > EXTREME_E6)
         & (pl.col("regime") < E6 - EXTREME_E6)
+        & closing_soon
     )
-    quoted = kept.join(pl.DataFrame({"k_e6": list(INSIDE_E6)}), how="cross")
+    quoted = kept.join(pl.DataFrame({"k_e6": list(scope.inside)}), how="cross")
     k = pl.col("k_e6")
     pbid = pl.when(bid.is_not_null()).then(bid + k).otherwise(ask - EMPTY_SIDE_E6)
     pask = pl.when(ask.is_not_null()).then(ask - k).otherwise(bid + EMPTY_SIDE_E6)
@@ -291,22 +313,24 @@ def study_hour(
     carry: Carry,
     span_end: datetime,
     current: pl.DataFrame | None = None,
-    next_kept: bool = True,
+    read_following: bool = True,
+    scope: Scope = FIT,
 ) -> tuple[pl.DataFrame, pl.DataFrame, Carry, pl.DataFrame | None]:
     """One hour's fills with their 10-minute and 1-hour marks, its quote time, what the hour hands
-    the next, and the following hour's frames (read for the marks when that hour is kept)."""
+    the next, and the following hour's frames (read for the marks when asked and copied before
+    ``span_end``)."""
     if current is None:
         current = frames_of(live / "ticker" / f"{hour_name(hour)}.parquet")
     next_path = live / "ticker" / f"{hour_name(hour + HOUR)}.parquet"
     following = (
         frames_of(next_path)
-        if next_kept and next_path.exists() and hour + HOUR < span_end
+        if read_following and next_path.exists() and hour + HOUR < span_end
         else None
     )
     loaded_end = hour + (2 * HOUR if following is not None else HOUR)
     hour_start_ms, hour_end_ms = int(hour.timestamp() * 1000), int((hour + HOUR).timestamp() * 1000)
     book = pl.concat([carry.frames, current])
-    quotes = paper_quotes(book, info, hour_start_ms, hour_end_ms)
+    quotes = paper_quotes(book, info, hour_start_ms, hour_end_ms, scope)
     trades = trades_of(live, [hour], TRADE_COLUMNS)
     found = fills_of(trades, quotes, carry.filled)
     two_sided = pl.concat([book] + ([following] if following is not None else [])).filter(
@@ -326,21 +350,34 @@ def study_hour(
     return found, quote_time(quotes, gaps), handed, following
 
 
-def run(
+@dataclass(frozen=True)
+class Replay:
+    """A replay's fills (with their marks), the quote time by cell, the hours kept and the days
+    dropped."""
+
+    fills: pl.DataFrame
+    times: pl.DataFrame
+    hours: int
+    dropped: list[date]
+
+
+def replay(
     live: Path,
     fees: pl.DataFrame,
-    out: Path,
-    hours: int | None = None,
+    start: datetime,
+    end: datetime,
+    scope: Scope = FIT,
     log: Callable[[str], None] = lambda _: None,
-) -> dict[str, Any]:
-    """The whole fit-part reading: the fills written to ``out/paper-fills.parquet`` and the
-    figures returned (and written as ``paper.json`` by the command line)."""
-    start, end = span(live)
-    if hours is not None:
-        end = min(end, start + hours * HOUR)
+    marks_end: datetime | None = None,
+) -> Replay:
+    """The paper quoter over ``[start, end)`` of the live copies, hour by hour; the marks may read
+    frames to ``marks_end`` (the copies' end, for a window inside them), else to ``end``."""
+    marks_end = end if marks_end is None else marks_end
     span_end_ms = int(end.timestamp() * 1000)
     gap_frame = gaps_of(live, end)
-    dropped = outage_days(gap_frame)
+    # only the window's days can be dropped: an outage outside it drops nothing
+    last_day = (end - timedelta(milliseconds=1)).date()
+    dropped = [d for d in outage_days(gap_frame) if start.date() <= d <= last_day]
     files = kept_hours(live, start, end, dropped)
     if not files:
         raise SurveyDataError("every hour of the span lies in a dropped day")
@@ -353,8 +390,12 @@ def run(
     for i, path in enumerate(files):
         hour = hour_of(path.stem)
         next_kept = i + 1 < len(files) and hour_of(files[i + 1].stem) == hour + HOUR
+        # the last kept hour's marks may read the hour after it when that hour is copied and kept
+        read_following = next_kept or (
+            i + 1 == len(files) and (hour + HOUR).date() not in set(dropped)
+        )
         found, timed, carry, following = study_hour(
-            hour, live, info, gaps, carry, end, current, next_kept
+            hour, live, info, gaps, carry, marks_end, current, read_following, scope
         )
         current = following if next_kept else None
         if not next_kept:  # across a dropped day the book is not carried: a day-old quote is none
@@ -362,7 +403,6 @@ def run(
         fills.append(found)
         times.append(timed)
         log(f"{path.stem}: {found.height:,} fills")
-    out.mkdir(parents=True, exist_ok=True)
     all_fills = (
         pl.concat(fills)
         .join(carry.last_mid, on="ticker", how="left")
@@ -377,14 +417,31 @@ def run(
         )
         .sort("fill_ms", "ticker", "k_e6", "side", maintain_order=True)
     )
-    all_fills.write_parquet(out / "paper-fills.parquet")
-    return summarize(all_fills, pl.concat(times), start, end, len(files), dropped)
+    return Replay(all_fills, pl.concat(times), len(files), dropped)
+
+
+def run(
+    live: Path,
+    fees: pl.DataFrame,
+    out: Path,
+    hours: int | None = None,
+    log: Callable[[str], None] = lambda _: None,
+) -> dict[str, Any]:
+    """The whole fit-part reading: the fills written to ``out/paper-fills.parquet`` and the
+    figures returned (and written as ``paper.json`` by the command line)."""
+    start, end = span(live)
+    if hours is not None:
+        end = min(end, start + hours * HOUR)
+    played = replay(live, fees, start, end, FIT, log)
+    out.mkdir(parents=True, exist_ok=True)
+    played.fills.write_parquet(out / "paper-fills.parquet")
+    return summarize(played.fills, played.times, start, end, played.hours, played.dropped)
 
 
 # -- the figures -----------------------------------------------------------------------------------
 
 
-def _pnl(fills: pl.DataFrame) -> pl.DataFrame:
+def _pnl(fills: pl.DataFrame, marks: tuple[str, ...] = MARKS) -> pl.DataFrame:
     """Per fill and size: the dollars against each mark, the maker fee and the net."""
     sign = pl.when(pl.col("side") == "bid").then(1).otherwise(-1)
     terms = fee_terms_known(pl.col("share"), pl.col("multiplier_e6"))
@@ -401,7 +458,7 @@ def _pnl(fills: pl.DataFrame) -> pl.DataFrame:
             .cast(pl.Int64)
         )
         columns.append(fee.alias(f"fee_{s}"))
-        for mark in MARKS:
+        for mark in marks:
             mid = pl.col(f"mid_{mark}")
             gross = pl.when(mid.is_not_null()).then(
                 sign * (mid - pl.col("paper_price_e6")) * fill // 100
@@ -439,7 +496,12 @@ def _interval(frame: pl.DataFrame, column: str, hours: int) -> dict[str, Any]:
 
 
 def _cells(
-    fills: pl.DataFrame, times: pl.DataFrame, keys: list[str], hours: int, intervals: bool
+    fills: pl.DataFrame,
+    times: pl.DataFrame,
+    keys: list[str],
+    hours: int,
+    intervals: bool,
+    marks: tuple[str, ...] = MARKS,
 ) -> dict[str, dict[str, Any]]:
     """The figures of each cell of ``keys`` (the rule, state and k, with a category or tier):
     one entry a size, built from the quote time, so a cell quoted but never filled shows its
@@ -455,11 +517,12 @@ def _cells(
     for s in SIZES_E2:
         aggs.append(pl.col(f"fill_e2_{s}").sum().alias(f"contracts_{s}"))
         aggs.append(pl.col(f"fee_{s}").sum().alias(f"fee_{s}"))
-        for mark in MARKS:
+        for mark in marks:
             netted = pl.col(f"net_{mark}_{s}")
             aggs.append(pl.col(f"gross_{mark}_{s}").sum().alias(f"gross_{mark}_{s}"))
             aggs.append(netted.sum().alias(f"net_{mark}_{s}"))
             aggs.append(pl.col(f"gross_{mark}_{s}").is_not_null().sum().alias(f"marked_{mark}_{s}"))
+            aggs.append(netted.is_not_null().sum().alias(f"netted_fills_{mark}_{s}"))
             aggs.append(
                 pl.col(f"fill_e2_{s}")
                 .filter(netted.is_not_null())
@@ -493,12 +556,13 @@ def _cells(
                 "fee_e6_a_day": a_day(r[f"fee_{s}"] or 0, hours),
                 "marks": {},
             }
-            for mark in MARKS:
+            for mark in marks:
                 # the net, and the cents a contract, are over the marked fills whose fee is known
                 net_e6: int = r[f"net_{mark}_{s}"] or 0
                 over: float = (r[f"netted_{mark}_{s}"] or 0) / 100
                 entry: dict[str, Any] = {
                     "marked_fills": r[f"marked_{mark}_{s}"] or 0,
+                    "netted_fills": r[f"netted_fills_{mark}_{s}"] or 0,
                     "gross_e6_a_day": a_day(r[f"gross_{mark}_{s}"] or 0, hours),
                     "net_e6_a_day": a_day(net_e6, hours),
                     "netted_contracts": over,
