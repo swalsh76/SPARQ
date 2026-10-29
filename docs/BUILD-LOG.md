@@ -780,7 +780,14 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 **Verified.** The model node's endpoint was probed with a model listing and three small synthetic prompts (no Kalshi data): it serves one model, a 3-bit quantized Qwen-family reasoning model, at 50 to 95 tokens a second; the weather rules reading and the threshold direction were right, the rain-title check was doubtful. A reply's `content` is empty when the token budget is spent on the reasoning, which the client must leave room for. The key was read from the assistant's memory and never printed or written to the repository.
 
-**Review (PLAN Q8).** Documents only, so no test was run for this branch; the commit's diff is reviewed at low effort and the branch at medium effort before the merge: S5_REVIEW
+**Review (PLAN Q8).** Documents only, so no test was run for this branch; the branch was reviewed at medium effort and found 7 issues, all fixed:
+1. The Review section ended in a placeholder. **Fixed:** this list.
+2. N5 asserted the sample's markets were all from after the model's cutoff without a check. **Fixed:** the cutoff is stated as unknown, the sample as closing from 2026-08-07, and the gain is reported by closing week with an early-weeks gain read as possible leakage.
+3. S5.2's placebo came from the same series, whose markets can share outcomes. **Fixed:** a market of a different event, within the same category and price band.
+4. S5.1's bar could pass on the whole while the rain markets, where the probe's doubtful answer sat, failed. **Fixed:** the bar holds in the highs and the rain markets separately.
+5. The resume point lost the smoke outputs' folder and the run scripts' names. **Fixed:** restored in the S4.2 bullet.
+6. The status line left S4 and S5 unclear as to which was active. **Fixed:** S4 is waiting for its test window; S5 is proposed and awaits the owner.
+7. N7's timing had no token budget. **Fixed:** 2,000 tokens a reply, about 800 used at 60 a second, about 13 seconds a market, roughly 22 hours for 6,000, to be measured on 100 markets first; the weather reading about ten hours.
 
 **Problems and fixes.**
 - PLAN §9 had described the machine from Strata's own description (a 125B mixture-of-experts model); the probe found a much smaller model, and the entry now says what was measured.
