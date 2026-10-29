@@ -774,7 +774,7 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 ## S5. What a local language model can add (proposed 2026-10-29)
 
-### S5 proposal (2026-10-29 UTC, documents only; awaiting the owner's approval)
+### S5 proposal (PR #27, 2026-10-29 UTC, documents only; awaiting the owner's approval)
 
 **Built (documents only).** PLAN §6.5 (N1 to N9, S5.1 to S5.c), the S5 row in §6, the corrected model node entry in §9, and the CLAUDE.md status and resume point.
 
