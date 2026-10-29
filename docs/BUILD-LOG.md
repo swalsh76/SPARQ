@@ -742,7 +742,7 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 **Decisions (owner, 2026-10-29).** The four rules approved as proposed ("rules approved, merge PR24") and registered in `docs/research/paper-rules.json` (sha256 `6c7a87357267…`, pinned by `test_the_registered_rules_are_pinned`); the test part is the live days after the registration.
 
-### S4.2 The registered test (2026-10-29 UTC, built; the run is due 2026-11-13)
+### S4.2 The registered test (2026-10-29 UTC, built; PR #25; the run is due 2026-11-13)
 
 **Built.** `python -m sparq_analytics.paper test --kalshi DIR --live DIR --out DIR --rules docs/research/paper-rules.json --from DAY --to DAY [--min-days N]` (`paper/trial.py`, `cli.py`), writing `paper-test-fills.parquet` and `paper-test.json`.
 - *The rules:* the file's sha256 is pinned in `trial.DIGEST` (and by a test); a changed file is refused. The quoter gained a `Scope` (the values of k, and markets closing within a time of the quote): the test replays the four registered rules exactly, 5 cents inside, markets closing within 7 days, the states, categories and sizes of each.
