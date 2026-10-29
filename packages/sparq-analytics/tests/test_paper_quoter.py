@@ -1,3 +1,4 @@
+import hashlib
 import json
 import runpy
 import sys
@@ -269,3 +270,16 @@ def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPat
     with pytest.raises(SystemExit) as stop:
         runpy.run_module("sparq_analytics.paper", run_name="__main__")
     assert stop.value.code == 0
+
+
+def test_the_registered_rules_are_pinned() -> None:
+    # S4.2's rules (PLAN §6.4, T6), approved by the owner on 2026-10-29: the file may not change
+    path = Path(__file__).resolve().parents[3] / "docs" / "research" / "paper-rules.json"
+    assert (
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        == "6c7a87357267391093bce9c4acb2cb5876f3492bb063de9a6a6da4aecccdc3d7"
+    )
+    rules = json.loads(path.read_text(encoding="utf-8"))
+    assert [r["id"] for r in rules["rules"]] == ["R1", "R2", "R3", "R4"]
+    assert rules["shared"]["inside_e6"] == 50_000
+    assert rules["shared"]["close_within_ms"] == 7 * 86_400_000
