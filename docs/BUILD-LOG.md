@@ -697,7 +697,7 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 ## S4. A paper quoter in the thin tail (approved 2026-10-29)
 
-### S4.1 The paper quoter on the fit part (2026-10-29 UTC, done; the rules await the owner's approval)
+### S4.1 The paper quoter on the fit part (2026-10-29 UTC, done; PR #24; the rules await the owner's approval)
 
 **Built.** `python -m sparq_analytics.paper fit --kalshi DIR --live DIR --out DIR [--hours N]` (`paper/quoter.py`, `cli.py`), writing `paper-fills.parquet` and `paper.json`.
 - *Scope and quotes* (T2, T3): for every frame of a thin market (S3.3's tiers over the span, every category) whose mid or standing price is between 3 and 97 cents and whose book is uncontested (spread over 20 cents) or one-sided, a paper bid and ask k cents inside the standing quotes (5 and 10), or 20 cents from the standing quote on an empty side, of S contracts (10 and 50), standing from the frame to the market's next frame or its close.
