@@ -354,7 +354,7 @@ def run(
         .join(last_mids(files), on="ticker", how="left")
         .join(last_trades(trade_files), on="ticker", how="left")
         .with_columns(
-            censored=(pl.col("close_ms").fill_null(span_end_ms) > span_end_ms),
+            censored=pl.col("close_ms").is_null() | (pl.col("close_ms") > span_end_ms),
             traded_again=(pl.col("last_trade_ms") > pl.col("fill_ms")).fill_null(False),
         )
         .sort("fill_ms", "ticker", "k_e6", "side", maintain_order=True)
@@ -442,7 +442,9 @@ def _cells(
         for mark in MARKS:
             aggs.append(pl.col(f"gross_{mark}_{s}").sum().alias(f"gross_{mark}"))
             aggs.append(pl.col(f"net_{mark}_{s}").sum().alias(f"net_{mark}"))
-            aggs.append(pl.col(f"net_{mark}_{s}").is_not_null().sum().alias(f"marked_{mark}"))
+            aggs.append(pl.col(f"gross_{mark}_{s}").is_not_null().sum().alias(f"marked_{mark}"))
+            netted = pl.col(f"fill_e2_{s}").filter(pl.col(f"net_{mark}_{s}").is_not_null())
+            aggs.append(netted.sum().alias(f"netted_{mark}"))
         rows = fills.group_by(keys).agg(aggs).join(timed, on=time_keys, how="left").sort(keys)
         for r in rows.to_dicts():
             quote_hours = (r["quote_ms"] or 0) / MS_PER_HOUR
@@ -462,12 +464,14 @@ def _cells(
                 "marks": {},
             }
             for mark in MARKS:
-                net = r[f"net_{mark}"]
+                # the net, and the cents a contract, are over the marked fills whose fee is known
+                net, netted = r[f"net_{mark}"], r[f"netted_{mark}"] / 100
                 entry: dict[str, Any] = {
                     "marked_fills": r[f"marked_{mark}"],
                     "gross_e6_a_day": a_day(r[f"gross_{mark}"], hours),
                     "net_e6_a_day": a_day(net, hours),
-                    "cents_a_contract": None if contracts == 0 else net / contracts / CENTS,
+                    "netted_contracts": netted,
+                    "cents_a_contract": None if netted == 0 else net / netted / CENTS,
                 }
                 if intervals and mark != "10m":
                     sub = fills.filter(pl.all_horizontal([pl.col(k) == r[k] for k in keys]))
