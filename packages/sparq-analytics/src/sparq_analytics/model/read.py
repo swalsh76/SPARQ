@@ -11,6 +11,12 @@ numbers. The answer is compared with what the repository already knows:
 * **the bounds**, against Kalshi's own strike fields (``strike_type``, ``floor_strike``,
   ``cap_strike``): over the markets that have a strike type.
 
+A market whose rules name a place but no code (every one of 2024 and 2025, and some of 2026) has
+no site to compare. What the model answers there is classified apart, against the one code the
+market's series uses where its named markets show one (S2.1's rule): **declined** (null), **right**,
+**wrong**, **other** (a name the map does not know), **unmapped** (the series has no single code) or
+**unparsed**.
+
 A reply that is missing, truncated or not the object asked for counts as disagreement. The bar (N6):
 site and bounds each agree in at least 99% of markets with a 95% lower bound of at least 98%
 (cluster bootstrap over events), in the highs and in the rain markets separately, and at least
@@ -65,6 +71,7 @@ MARKET_COLUMNS = [
     "cap_strike",
     "rules_primary",
 ]
+UNNAMED = ("declined", "right", "wrong", "other", "unmapped", "unparsed")
 OBJECT = re.compile(r"\{.*?\}", re.S)
 READ_WEATHER_HASH = hashlib.sha256(READ_WEATHER.encode()).hexdigest()
 ROW_SCHEMA = {
@@ -85,7 +92,8 @@ ROW_SCHEMA = {
     "parsed": pl.Boolean,
     "site_answer": pl.String,
     "site_agree": pl.Boolean,
-    "invented": pl.Boolean,
+    "series_site": pl.String,
+    "unnamed_answer": pl.String,
     "bounds_agree": pl.Boolean,
 }
 
@@ -109,6 +117,7 @@ def reading_markets(kalshi: Path, first: date, last: date) -> pl.DataFrame:
         rows.append(
             {
                 "ticker": row["ticker"],
+                "series": row["series_ticker"],
                 "event_ticker": row["event_ticker"],
                 "group": "rain" if row["series_ticker"] == RAIN_SERIES else "highs",
                 "day": day,
@@ -121,6 +130,7 @@ def reading_markets(kalshi: Path, first: date, last: date) -> pl.DataFrame:
         )
     schema = {
         "ticker": pl.String,
+        "series": pl.String,
         "event_ticker": pl.String,
         "group": pl.String,
         "day": pl.Date,
@@ -185,6 +195,31 @@ def bounds_agree(
     return strike_type == "between" and same(lower, floor) and same(upper, cap)
 
 
+def series_sites(markets: pl.DataFrame) -> pl.DataFrame:
+    """Each series' one code, where the markets of ``markets`` that name a site name the same."""
+    return (
+        markets.filter(pl.col("site").is_not_null())
+        .group_by("series")
+        .agg(pl.col("site").unique().alias("sites"))
+        .filter(pl.col("sites").list.len() == 1)
+        .select("series", series_site=pl.col("sites").list.first())
+    )
+
+
+def classify_unnamed(answer: dict[str, Any] | None, series_site: str | None) -> str:
+    """What the model answered for a market whose rules name no site."""
+    if answer is None:
+        return "unparsed"
+    given = answer["site"]
+    if given is None or str(given).strip().lower() in ("", "null", "none"):
+        return "declined"
+    if (code := site_of(given)) is None:
+        return "other"
+    if series_site is None:
+        return "unmapped"
+    return "right" if code == series_site else "wrong"
+
+
 def read_one(client: ModelClient, row: dict[str, Any]) -> dict[str, Any]:
     """One market: the model's reply and how it compares."""
     base: dict[str, Any] = {
@@ -193,6 +228,7 @@ def read_one(client: ModelClient, row: dict[str, Any]) -> dict[str, Any]:
         "group": row["group"],
         "sample": row["sample"],
         "site_truth": row["site"],
+        "series_site": row.get("series_site"),
         "strike_type": row["strike_type"],
         "floor": row["floor"],
         "cap": row["cap"],
@@ -216,7 +252,7 @@ def read_one(client: ModelClient, row: dict[str, Any]) -> dict[str, Any]:
         "parsed": answer is not None,
         "site_answer": answered,
         "site_agree": (answered == row["site"]) if named else None,
-        "invented": (answered is not None) if not named else None,
+        "unnamed_answer": None if named else classify_unnamed(answer, row.get("series_site")),
         "bounds_agree": (
             answer is not None
             and bounds_agree(row["strike_type"], row["floor"], row["cap"], answer)
@@ -307,7 +343,7 @@ def rate(frame: pl.DataFrame, flag: str) -> dict[str, Any]:
 def figures(frame: pl.DataFrame) -> dict[str, Any]:
     """One group's figures: replies, the site over the markets that name one, the bounds over those
     with a strike type, and examples of disagreement."""
-    unnamed = frame.filter(pl.col("invented").is_not_null())
+    unnamed = frame.filter(pl.col("unnamed_answer").is_not_null())
     bad = frame.filter(
         ~pl.col("parsed")
         | pl.col("site_agree").eq(False)  # a null (nothing to compare) is not a disagreement
@@ -331,7 +367,9 @@ def figures(frame: pl.DataFrame) -> dict[str, Any]:
         "site": rate(frame, "site_agree"),
         "bounds": rate(frame, "bounds_agree"),
         "rules_naming_no_site": unnamed.height,
-        "invented_site": int(unnamed["invented"].sum()) if unnamed.height else 0,
+        "unnamed_answers": {
+            kind: int((unnamed["unnamed_answer"] == kind).sum()) for kind in UNNAMED
+        },
         "no_strike_type": int(frame["strike_type"].is_null().sum()),
         "disagreements": bad.height,
         "examples": examples,

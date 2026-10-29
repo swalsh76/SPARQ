@@ -31,7 +31,7 @@ def window_and_older(kalshi: Path) -> pl.DataFrame:
             window.with_columns(sample=pl.lit("window")),
             older.with_columns(sample=pl.lit("older")),
         ]
-    )
+    ).join(read.series_sites(window), on="series", how="left")
 
 
 def test_the_markets_read_are_s2_s_window_and_never_its_test_part(tmp_path: Path) -> None:
@@ -115,7 +115,8 @@ def test_the_reading_check_against_the_hand_figures(tmp_path: Path) -> None:
     assert (
         by["H4"]["site_answer"] == "CLINYC" and by["H4"]["site_agree"] and by["H4"]["bounds_agree"]
     )
-    assert by["H5"]["site_agree"] is None and by["H5"]["invented"] is True
+    assert by["H5"]["site_agree"] is None and by["H5"]["unnamed_answer"] == "wrong"
+    assert by["H5"]["series_site"] == "CLINYC" and by["H1"]["unnamed_answer"] is None
     assert by["H6"]["bounds_agree"] is None and by["H6"]["site_agree"] is True
     assert (by["H7"]["parsed"], by["H7"]["site_agree"], by["H7"]["bounds_agree"]) == (
         False,
@@ -132,17 +133,14 @@ def test_the_reading_check_against_the_hand_figures(tmp_path: Path) -> None:
     assert (highs["site"]["n"], highs["site"]["agree"]) == (7, 5)
     assert highs["site"]["rate"] == pytest.approx(5 / 7)
     assert (highs["bounds"]["n"], highs["bounds"]["agree"]) == (7, 4)
-    assert (highs["rules_naming_no_site"], highs["invented_site"], highs["no_strike_type"]) == (
-        1,
-        1,
-        1,
-    )
+    assert (highs["rules_naming_no_site"], highs["no_strike_type"]) == (1, 1)
+    assert highs["unnamed_answers"] == dict.fromkeys(read.UNNAMED, 0) | {"wrong": 1}
     assert highs["disagreements"] == 3
     assert [e["ticker"] for e in highs["examples"]] == ["H3", "H7", "H8"]
     assert highs["examples"][1]["truth"] == ["CLINYC", "greater", 81.0, None]
     assert (rain["markets"], rain["parsed"], rain["disagreements"]) == (2, 2, 1)
     assert (rain["site"]["agree"], rain["site"]["n"], rain["bounds"]["agree"]) == (1, 2, 2)
-    assert rain["rules_naming_no_site"] == 0 and rain["invented_site"] == 0
+    assert rain["rules_naming_no_site"] == 0 and sum(rain["unnamed_answers"].values()) == 0
     older = summary["earlier_sample"]
     assert (older["markets"], older["site"]["agree"], older["bounds"]["agree"]) == (2, 2, 1)
     assert not any(summary["clears"].values()) and not summary["parse_clears"]
@@ -270,3 +268,32 @@ def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPat
     with pytest.raises(SystemExit) as stop:
         runpy.run_module("sparq_analytics.model", run_name="__main__")
     assert stop.value.code == 0
+
+
+def test_an_answer_for_a_market_naming_no_site_is_classified_by_its_series_code() -> None:
+    def say(site: Any) -> dict[str, Any]:
+        return {"site": site, "direction": "greater", "lower": 1, "upper": None}
+
+    cases = [
+        (None, "CLINYC", "unparsed"),
+        (say(None), "CLINYC", "declined"),
+        (say(" Null "), "CLINYC", "declined"),
+        (say(""), None, "declined"),
+        (say("Austin Bergstrom"), "CLINYC", "other"),
+        (say("KNYC"), None, "unmapped"),
+        (say("knyc"), "CLINYC", "right"),
+        (say("CLIMIA"), "CLINYC", "wrong"),
+    ]
+    for answer, series_site, expected in cases:
+        assert read.classify_unnamed(answer, series_site) == expected
+    assert set(read.UNNAMED) == {c[2] for c in cases}
+
+
+def test_a_series_has_one_code_only_when_its_named_markets_agree() -> None:
+    markets = pl.DataFrame(
+        {
+            "series": ["A", "A", "A", "B", "B", "C"],
+            "site": ["CLINYC", "CLINYC", None, "CLIMIA", "CLISFO", None],
+        }
+    )
+    assert read.series_sites(markets).to_dicts() == [{"series": "A", "series_site": "CLINYC"}]

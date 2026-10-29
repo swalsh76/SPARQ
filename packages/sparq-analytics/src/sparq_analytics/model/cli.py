@@ -91,12 +91,13 @@ def _read(args: argparse.Namespace) -> int:
     window = read.reading_markets(kalshi, read.READ_FIRST, read.READ_LAST)
     older = read.reading_markets(kalshi, date(2000, 1, 1), read.READ_FIRST - timedelta(days=1))
     older_n = read.OLDER_SAMPLE if args.limit is None else min(args.limit, read.OLDER_SAMPLE)
+    codes = read.series_sites(window)
     markets = pl.concat(
         [
             read.sample(window, args.limit).with_columns(sample=pl.lit("window")),
             read.sample(older, older_n).with_columns(sample=pl.lit("older")),
         ]
-    )
+    ).join(codes, on="series", how="left")
     client = make_client(settings, args.cache or out / "model-cache")
     started = time.monotonic()
     try:
