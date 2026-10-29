@@ -7,8 +7,9 @@ and the ask not moving against each other (a pure widening is not a move). For e
 at that moment, the watched market ``b`` is read:
 
 * its quote just before the move (its last frame strictly before; **unknown** when none was seen,
-  **one-sided** when a side is missing, **extreme** when the mid is at 3 cents or less or 97 or
-  more, which is S3.1's certainty regime: those events take no further part);
+  **one-sided** when a side is missing, which the feed shows as a 0-cent bid or a 100-cent ask
+  with no size, **extreme** when the mid is at 3 cents or less or 97 or more, which is S3.1's
+  certainty regime: those events take no further part);
 * its **response** at 1 s, 10 s, 1 min, 10 min and 1 h: the change of its mid, counted positive
   in the direction the pair expects (``a``'s direction times the pair's sign; ``a``'s direction
   alone for an unsigned kind); null past ``b``'s close, past the copied frames, or where a logged
@@ -83,9 +84,15 @@ _STATE_FRAME = ("yes_bid_e6", "yes_ask_e6", "yes_bid_size_e2", "yes_ask_size_e2"
 
 
 def _with_mid(frames: pl.DataFrame) -> pl.DataFrame:
-    two_sided = pl.col("yes_bid_e6").is_not_null() & pl.col("yes_ask_e6").is_not_null()
-    mid = (pl.col("yes_bid_e6") + pl.col("yes_ask_e6")) // 2
-    return frames.with_columns(mid_e6=pl.when(two_sided).then(mid))
+    """The frames with an empty side read as missing (the feed shows it as a 0-cent bid or a
+    100-cent ask with no size, never as a null) and the mid where both sides stand."""
+    bid = pl.when(pl.col("yes_bid_size_e2") > 0).then(pl.col("yes_bid_e6"))
+    ask = pl.when(pl.col("yes_ask_size_e2") > 0).then(pl.col("yes_ask_e6"))
+    return frames.with_columns(yes_bid_e6=bid, yes_ask_e6=ask).with_columns(
+        mid_e6=pl.when(
+            pl.col("yes_bid_e6").is_not_null() & pl.col("yes_ask_e6").is_not_null()
+        ).then((pl.col("yes_bid_e6") + pl.col("yes_ask_e6")) // 2)
+    )
 
 
 def frames_of(path: Path, carried: bool = False) -> pl.DataFrame:

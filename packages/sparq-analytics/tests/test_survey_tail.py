@@ -56,19 +56,20 @@ def test_spreads_by_tier(tmp_path: Path) -> None:
     reading = tail.live_reading(live, FEES)
     assert (reading["hours"], reading["markets_with_frames"]) == (2, 3)
     spreads = reading["spreads_by_tier"]
-    # L1: 30 minutes at 4 cents, 30 at 30, then an hour one-sided
+    # L1: 30 minutes at 4 cents, 30 at 30, then an hour with the ask side empty (a 100-cent ask
+    # of no size, as the feed shows it); L2: 4 cents all along; both in the lowest tier
     assert spreads["under 100"] == {
-        "markets": 1,
-        "median_spread_cents": 17.0,
-        "two_sided_share": 0.5,
+        "markets": 2,
+        "median_spread_cents": 10.5,
+        "two_sided_share": 0.75,
     }
-    assert spreads["100 to 1,000"] == {
+    assert spreads["10,000 and more"] == {
         "markets": 1,
-        "median_spread_cents": 4.0,
+        "median_spread_cents": 80.0,
         "two_sided_share": 1.0,
     }
-    assert spreads["1,000 to 10,000"]["median_spread_cents"] == 80.0
-    assert reading["spreads_by_tier_and_category"]["under 100 | Sports"]["markets"] == 1
+    assert set(spreads) == {"under 100", "10,000 and more"}
+    assert reading["spreads_by_tier_and_category"]["under 100 | Sports"]["markets"] == 2
 
 
 def test_half_spread_by_state_and_the_thin_bar(tmp_path: Path) -> None:
@@ -84,9 +85,9 @@ def test_half_spread_by_state_and_the_thin_bar(tmp_path: Path) -> None:
         "net_e6_a_day": 2_115_840,
         "fee_unknown_trades": 0,
     }
-    uncontested = by_state["uncontested"]  # L1's 2 contracts at 30 cents, L3's 100 at 80
-    assert (uncontested["markets"], uncontested["half_spread_e6_a_day"]) == (2, 483_600_000)
-    assert uncontested["contracts_a_day"] == 1_224.0 and uncontested["fee_e6_a_day"] == 0
+    uncontested = by_state["uncontested"]  # L1's 2 contracts at 30 cents, L3's 100,000 at 80
+    assert (uncontested["markets"], uncontested["half_spread_e6_a_day"]) == (2, 480_003_600_000)
+    assert uncontested["contracts_a_day"] == 1_200_024.0 and uncontested["fee_e6_a_day"] == 0
     one_sided = by_state["one_sided"]
     assert (one_sided["markets"], one_sided["half_spread_e6_a_day"]) == (1, 0)
     assert one_sided["contracts_a_day"] == 6.0
@@ -94,10 +95,10 @@ def test_half_spread_by_state_and_the_thin_bar(tmp_path: Path) -> None:
     assert thin["contested"]["half_spread_e6_a_day"] == 2_640_000
     assert thin["uncontested"]["half_spread_e6_a_day"] == 3_600_000  # L1 alone: L3 is not thin
     assert (
-        reading["half_spread_by_tier_and_state"]["1,000 to 10,000 | uncontested"][
+        reading["half_spread_by_tier_and_state"]["10,000 and more | uncontested"][
             "half_spread_e6_a_day"
         ]
-        == 480_000_000
+        == 480_000_000_000
     )
     assert reading["half_spread_thin_by_category_and_state"]["Sports | contested"]["markets"] == 2
     assert (reading["thin_uncontested_half_spread_e6_a_day"], reading["clears"]) == (
@@ -109,7 +110,7 @@ def test_half_spread_by_state_and_the_thin_bar(tmp_path: Path) -> None:
 def test_live_reading_without_trades(tmp_path: Path) -> None:
     live = write_tail_live(tmp_path, trades=False)
     reading = tail.live_reading(live, FEES)
-    assert reading["spreads_by_tier"]["under 100"]["median_spread_cents"] == 17.0  # all untraded
+    assert reading["spreads_by_tier"]["under 100"]["markets"] == 3  # all untraded: lowest tier
     assert reading["half_spread_by_state"] == {} and reading["clears"] is False
     assert reading["thin_uncontested_half_spread_e6_a_day"] == 0
 
@@ -143,14 +144,17 @@ def test_surprise_rates_and_the_clearing_series(tmp_path: Path) -> None:
     sports = reading["by_category"]["Sports"]
     assert (sports["markets"], sports["events"], sports["surprises"]) == (4, 3, 1)
     assert (sports["observed"], sports["implied"]) == (0.25, pytest.approx(0.06))
-    assert sports["lower"] < 0.06 and sports["clears"] is False  # three events: wide
+    assert sports["lower"] < 0.06 and sports["clears"] is False  # three events: not judged
+    assert sports["judged"] is False
     economics = reading["by_category"]["Economics"]
     assert (economics["observed"], economics["lower"], economics["clears"]) == (1.0, 1.0, True)
+    assert economics["judged"] is True  # sixty events
     assert economics["implied"] == pytest.approx(0.05)
     buckets = reading["by_bucket"]
     assert (buckets["90 to 95"]["markets"], buckets["90 to 95"]["surprises"]) == (3, 1)
     assert buckets["90 to 95"]["implied"] == pytest.approx(0.23 / 3)
     assert buckets["95 to 99"]["markets"] == 60 and buckets["99 and more"]["surprises"] == 0
+    assert buckets["95 to 99"]["clears"] is True and buckets["99 and more"]["judged"] is False
     assert list(reading["by_series"]) == ["KXZ"]  # KXS has 4 markets, under the 50
     assert (reading["series_tested"], reading["expected_by_chance"]) == (1, 0.025)
     [clearing] = reading["clearing_series"]
@@ -159,15 +163,50 @@ def test_surprise_rates_and_the_clearing_series(tmp_path: Path) -> None:
     )  # fmt: skip
     assert clearing["markets"] == 60 and clearing["clears"] is True
     lowered = tail.surprise(kalshi, CUT, min_markets=4)
-    assert list(lowered["by_series"]) == ["KXS", "KXZ"] and lowered["series_tested"] == 2
+    assert list(lowered["by_series"]) == ["KXS", "KXZ"]  # KXS has three events: not judged
+    assert (lowered["series_tested"], lowered["series_too_few_events"]) == (1, 1)
     assert lowered["by_series"]["KXS"]["observed"] == 0.25
+    assert lowered["expected_by_chance"] == 0.025
 
 
-def test_a_tested_series_need_not_clear(tmp_path: Path) -> None:
+def test_a_series_with_too_few_events_is_not_judged(tmp_path: Path) -> None:
     kalshi = write_tail_history(tmp_path, only=("S1", "S2", "S3", "S6"))
     reading = tail.surprise(kalshi, CUT, min_markets=4)
-    assert list(reading["by_series"]) == ["KXS"] and reading["by_series"]["KXS"]["clears"] is False
-    assert reading["clearing_series"] == [] and reading["expected_by_chance"] == 0.025
+    assert list(reading["by_series"]) == ["KXS"] and reading["by_series"]["KXS"]["judged"] is False
+    assert reading["clearing_series"] == [] and reading["expected_by_chance"] == 0.0
+    assert (reading["series_tested"], reading["series_too_few_events"]) == (0, 1)
+
+
+def test_a_market_without_a_life_is_in_the_lowest_tier() -> None:
+    day = 86_400_000
+    frame = pl.DataFrame(
+        {
+            "ticker": ["A", "B", "C"],
+            "open_ms": [0, 0, None],
+            "close_ms": [day, 3 * day, None],
+            "contracts_e2": [50_000, None, 5_000_000],
+        }
+    )
+    tiers = tail.tiered(frame, 0, 2 * day)
+    rows = {r["ticker"]: (r["contracts_a_day"], r["tier"]) for r in tiers.to_dicts()}
+    assert rows["A"] == (500.0, "100 to 1,000")  # one day of life
+    assert rows["B"] == (0.0, "under 100")  # never traded, two days inside the window
+    assert rows["C"] == (None, "under 100")  # no life to speak of
+
+
+def test_a_judged_cell_need_not_clear() -> None:
+    # twenty events, one surprise, priced at 95: observed 0.05 against an implied 0.05
+    frame = pl.DataFrame(
+        {
+            "event_ticker": [f"E{i}" for i in range(20)],
+            "surprise": [1] + [0] * 19,
+            "implied": [0.05] * 20,
+        }
+    )
+    rate = tail._rate(frame)
+    assert (rate["judged"], rate["observed"]) == (True, 0.05)
+    assert rate["implied"] == pytest.approx(0.05)
+    assert rate["lower"] < 0.05 and rate["clears"] is False
 
 
 def test_an_hour_without_a_trade_file_has_no_trades(tmp_path: Path) -> None:

@@ -3,13 +3,15 @@
 Three readings, none building anything:
 
 * **Volume**, from the history's trade files (any day, M3: no outcome): each traded market's
-  contracts and dollars a day over the days it was open inside the window, placed in the activity
-  tiers S3.2 used; by tier and category the markets, trades, contracts and dollars a day; and the
-  markets open in the window that never traded (the silent tail).
+  contracts and dollars a day over the days it was open inside the window (whole days, at least
+  one), placed in the activity tiers S3.2 used; by tier and category the markets, trades,
+  contracts and dollars a day; and the markets open in the window that never traded (the silent
+  tail).
 * **Spreads and the half-spread**, from the live frames and trades: each market's time-weighted
   mean quoted spread while two-sided and the share of time a side was missing, by tier (the live
-  span's own contracts a day) and category; and, for every live trade, half the quoted spread just
-  before it times its contracts, which is what a maker at the touch earns against the mid, summed
+  span's own contracts a day over the days open, the same rule) and category; and, for every live
+  trade, half the quoted spread just before it times its contracts, which is what a maker at the
+  touch earns against the mid, summed
   by tier, category and whether a competing quote stood within 10 cents of the mid at that moment
   (a spread of 20 cents or less: **contested**), none did (**uncontested**) or a side was missing
   (**one-sided**, no half-spread to read); gross and net of the maker fee where the series charges
@@ -19,8 +21,9 @@ Three readings, none building anything:
   from 36 to 12 hours before its close; where a side then stood at 90 cents or more, whether the
   market settled against it. The rate by category, by price bucket and by series with enough
   markets, each with a cluster-bootstrap interval over events, against the price-implied rate (the
-  mean of one minus the price); the series whose interval lies wholly above the implied rate are
-  listed with their title and rules text, beside the number that would clear by chance alone.
+  mean of one minus the price); a cell is judged only with ten events or more; the series whose
+  interval lies wholly above the implied rate are listed with their title and rules text, beside
+  the number that would clear by chance alone.
 
 Money is integer millionths of a dollar; sizes are hundredths of a contract; a trade's dollars are
 its yes price times its contracts, as in S3.1.
@@ -48,7 +51,7 @@ from sparq_analytics.survey.dump import (
     cut_markets,
     trade_files,
 )
-from sparq_analytics.survey.lag import TIERS, _bucket, frames_of, tiers_of
+from sparq_analytics.survey.lag import TIERS, _bucket, frames_of
 from sparq_analytics.survey.queue import span
 
 MS_PER_DAY = 24 * MS_PER_HOUR
@@ -57,6 +60,7 @@ COMPETING_E6 = 200_000  # a spread of 20 cents: a quote within 10 cents of the m
 TAIL_E6 = 900_000  # a side at 90 cents or more the day before close
 DAY_BEFORE_FROM_MS, DAY_BEFORE_TO_MS = 36 * MS_PER_HOUR, 12 * MS_PER_HOUR
 MIN_SERIES_MARKETS = 50  # M4: a series needs this many settled markets in the tail
+MIN_EVENTS = 10  # and this many events, or its interval means nothing
 BUCKETS: tuple[tuple[int | None, str], ...] = (
     (950_000, "90 to 95"),
     (990_000, "95 to 99"),
@@ -88,6 +92,23 @@ def _series(kalshi: Path) -> pl.DataFrame:
     columns = ["ticker", "category", "title"]
     series = pl.read_parquet(kalshi / "series.parquet", columns=columns)
     return series.rename({"ticker": "series_ticker"})
+
+
+def tiered(markets: pl.DataFrame, window_start_ms: int, window_end_ms: int) -> pl.DataFrame:
+    """Each market's contracts a day over its days open inside the window (whole days, at least
+    one) and its tier; ``markets`` carries ``open_ms``, ``close_ms`` and ``contracts_e2`` (null
+    for a market that never traded, which is in the lowest tier)."""
+    # min_horizontal and max_horizontal skip nulls, so a missing open or close time is caught first
+    known = pl.col("open_ms").is_not_null() & pl.col("close_ms").is_not_null()
+    life_ms = pl.when(known).then(
+        pl.min_horizontal("close_ms", window_end_ms) - pl.max_horizontal("open_ms", window_start_ms)
+    )
+    life_days = (life_ms / MS_PER_DAY).ceil().clip(lower_bound=1)
+    a_day = pl.col("contracts_e2").fill_null(0) / 100 / life_days
+    # a market without an open or close time has no life: the lowest tier, not the bucket
+    # helper's fall-through into the highest
+    tier = pl.when(a_day.is_null()).then(pl.lit(TIERS[0][1])).otherwise(_bucket(a_day, TIERS))
+    return markets.with_columns(contracts_a_day=a_day, tier=tier)
 
 
 def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
@@ -122,15 +143,8 @@ def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
         .join(_series(kalshi).select("series_ticker", "category"), on="series_ticker", how="left")
         .with_columns(pl.col("category").fill_null("unknown"))
     )
-    life_ms = pl.min_horizontal("close_ms", window_end_ms) - pl.max_horizontal(
-        "open_ms", window_start_ms
-    )
-    life_days = (life_ms / MS_PER_DAY).ceil().clip(lower_bound=1)
-    joined = markets.join(traded, on="ticker", how="left").with_columns(life_days=life_days)
-    active = joined.filter(pl.col("trades").is_not_null()).with_columns(
-        contracts_a_day=pl.col("contracts_e2") / 100 / pl.col("life_days")
-    )
-    active = active.with_columns(tier=_bucket(pl.col("contracts_a_day"), TIERS))
+    joined = tiered(markets.join(traded, on="ticker", how="left"), window_start_ms, window_end_ms)
+    active = joined.filter(pl.col("trades").is_not_null())
     aggs = [
         pl.len().alias("markets"),
         pl.col("trades").sum().alias("trades"),
@@ -261,13 +275,20 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
     hours = int((end - start) / timedelta(hours=1))  # at least one: span() saw to that
     days = hours / 24
     markets = pl.read_parquet(
-        live / "markets.parquet", columns=["ticker", "series_ticker", "category"]
+        live / "markets.parquet",
+        columns=["ticker", "series_ticker", "category", "open_ms", "close_ms"],
     )
+    contracts = (
+        pl.scan_parquet(hour_files(live, "trade", start, end))
+        .group_by("ticker")
+        .agg(pl.col("count_e2").sum().alias("contracts_e2"))
+        .collect()
+    )
+    span_ms = (int(start.timestamp() * 1000), int(end.timestamp() * 1000))
     info = (
-        markets.join(tiers_of(live, start, end), on="ticker", how="left")
-        .with_columns(
-            pl.col("tier").fill_null(TIERS[0][1]), pl.col("category").fill_null("unknown")
-        )
+        tiered(markets.join(contracts, on="ticker", how="left"), *span_ms)
+        .with_columns(pl.col("category").fill_null("unknown"))
+        .select("ticker", "series_ticker", "category", "tier")
         .join(fees, on="series_ticker", how="left")
     )
     spread_sums: list[pl.DataFrame] = []
@@ -467,6 +488,7 @@ def _rate(frame: pl.DataFrame) -> dict[str, Any]:
         seed=SEED,
     )
     implied = float(np.mean(frame["implied"].to_numpy()))
+    judged = by_event.height >= MIN_EVENTS
     return {
         "markets": frame.height,
         "events": by_event.height,
@@ -475,7 +497,8 @@ def _rate(frame: pl.DataFrame) -> dict[str, Any]:
         "lower": estimate.lower_e6,
         "upper": estimate.upper_e6,
         "implied": implied,
-        "clears": bool(estimate.lower_e6 > implied),
+        "judged": judged,
+        "clears": bool(judged and estimate.lower_e6 > implied),
     }
 
 
@@ -512,6 +535,7 @@ def surprise(
             .join(sample, on="ticker")
         )
         rules = dict(zip(texts["series_ticker"], texts["rules_primary"], strict=True))
+    tested = sum(1 for v in by_series.values() if v["judged"])
     return {
         "cut": cut.isoformat(),
         **counts,
@@ -519,8 +543,9 @@ def surprise(
         "by_bucket": cells("bucket"),
         "by_category": cells("category"),
         "by_series": by_series,
-        "series_tested": len(by_series),
-        "expected_by_chance": len(by_series) * TAIL,
+        "series_tested": tested,
+        "series_too_few_events": len(by_series) - tested,
+        "expected_by_chance": tested * TAIL,
         "clearing_series": [
             {
                 "series": k,

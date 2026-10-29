@@ -41,20 +41,22 @@ S3 (1 of 3), "99 and more" is S6.
 **Live** (hour files from 2026-10-25 00:00, two hours, with an empty hour before):
 
 * ``L1`` (``KXA``, Sports): 00:00 bid 40 ask 44 (a 4-cent spread); 00:30 bid 30 ask 60 (30 cents);
-  01:00 bid 50 alone. Time-weighted: 30 minutes at 4 cents and 30 at 30, so a mean spread of 17
+  01:00 bid 50 with the ask side empty (the feed shows a 100-cent ask of no size).
+  Time-weighted: 30 minutes at 4 cents and 30 at 30, so a mean spread of 17
   cents while two-sided, and two-sided half the time. Trades: 00:10 a yes taker of 1 contract at
   44, when the spread was 4 cents (**contested**; half-spread 2 cents times 1 contract, $0.02);
   00:40 a no taker of 2 at 30 (30 cents, **uncontested**; 15 cents times 2, $0.30); 01:10 a yes
-  taker of 0.5 at 50 with one side missing (**one-sided**, no half-spread to read). 3.5 contracts
-  in two hours is 42 a day: "under 100", thin. No maker fee in ``KXA``.
+  taker of 0.5 at 50 with one side missing (**one-sided**, no half-spread to read). The live
+  tiers follow the history's rule: contracts over the days open inside the span, at least one
+  day, so 3.5 contracts are 3.5 a day: "under 100", thin. No maker fee in ``KXA``.
 * ``L2`` (``KXM``, Sports, maker fees): 48/52 throughout (4 cents, two-sided all along). Trade
   00:20 a yes taker of 10 contracts at 52: contested, half-spread $0.20, maker fee $0.04368 (7% of
-  a quarter of 10 × 0.52 × 0.48). 10 contracts in two hours is 120 a day: "100 to 1,000", thin.
-* ``L3`` (``KXB``, Crypto): 10/90 throughout (80 cents). Trade 00:15 a yes taker of 100 contracts
-  at 90: uncontested, half-spread $40. 1,200 a day: "1,000 to 10,000", not thin.
+  a quarter of 10 × 0.52 × 0.48). 10 a day: "under 100", thin.
+* ``L3`` (``KXB``, Crypto): 10/90 throughout (80 cents). Trade 00:15 a yes taker of 100,000
+  contracts at 90: uncontested, half-spread $40,000. 100,000 a day: "10,000 and more".
 
 Scaled to a day (twelve times the two hours): contested $2.64 gross, $0.52 of fees; uncontested
-$483.60 over all tiers but only $3.60 in the thin tiers (L1), far below the $250 bar.
+$480,003.60 over all tiers but only $3.60 in the thin tiers (L1), far below the $250 bar.
 """
 
 from collections.abc import Sequence
@@ -185,7 +187,7 @@ def write_tail_history(root: Path, only: Sequence[str] | None = None) -> Path:
 FRAMES = [
     _frame(lm(0, 0), "L1", 400_000, 10, 440_000, 10),
     _frame(lm(0, 30), "L1", 300_000, 10, 600_000, 10),
-    _frame(lm(1, 0), "L1", 500_000, 10, None, None),
+    _frame(lm(1, 0), "L1", 500_000, 10, 1_000_000, 0),  # an empty ask, as the feed shows it
     _frame(lm(0, 0), "L2", 480_000, 10, 520_000, 10),
     _frame(lm(0, 0), "L3", 100_000, 10, 900_000, 10),
 ]
@@ -194,7 +196,7 @@ LIVE_TRADES = [
     _trade(lm(0, 40), "L1", 300_000, 200, "no"),
     _trade(lm(1, 10), "L1", 500_000, 50, "yes"),
     _trade(lm(0, 20), "L2", 520_000, 1_000, "yes"),
-    _trade(lm(0, 15), "L3", 900_000, 10_000, "yes"),
+    _trade(lm(0, 15), "L3", 900_000, 10_000_000, "yes"),
 ]
 LIVE_SERIES = {"L1": "KXA", "L2": "KXM", "L3": "KXB"}
 CATEGORY = {"KXA": "Sports", "KXM": "Sports", "KXB": "Crypto"}
