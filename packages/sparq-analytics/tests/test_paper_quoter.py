@@ -144,10 +144,8 @@ def test_the_summary_by_rule(tmp_path: Path) -> None:
     one = summary["by_rule"]["one_sided | 100000 | 10"]
     assert (one["fills"], one["contracts"], one["quotes"]) == (1, 1.0, 2)
     assert one["quote_hours_a_day"] == pytest.approx(119 / 60 * 12)
-    assert (
-        one["marks"]["close"]["marked_fills"] == 0
-        and one["marks"]["close"]["cents_a_contract"] == 0
-    )
+    assert one["marks"]["close"]["marked_fills"] == 0
+    assert one["marks"]["close"]["cents_a_contract"] is None  # nothing marked, nothing netted
     assert set(summary["by_rule"]) == {
         f"{s} | {k} | {size}"
         for s in ("uncontested", "one_sided")
@@ -213,3 +211,53 @@ def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPat
     with pytest.raises(SystemExit) as stop:
         runpy.run_module("sparq_analytics.paper", run_name="__main__")
     assert stop.value.code == 0
+
+
+def test_the_summary_nets_only_the_fills_whose_fee_is_known() -> None:
+    # two marked bid fills of 10 contracts at 40 against a mid of 50 (+$1.00 each); the second's
+    # series has no fee terms, so it is marked but not netted; a market without a listed close is
+    # censored
+    fills = pl.DataFrame(
+        {
+            "ticker": ["A", "B"],
+            "event_ticker": ["A-E", "B-E"],
+            "category": ["Sports", "Sports"],
+            "tier": ["under 100", "under 100"],
+            "state": ["uncontested", "uncontested"],
+            "k_e6": [50_000, 50_000],
+            "side": ["bid", "bid"],
+            "paper_price_e6": [400_000, 400_000],
+            "fill_ms": [lm(0, 10), lm(0, 20)],
+            "fill_e2_1000": [1_000, 1_000],
+            "fill_e2_5000": [1_000, 1_000],
+            "mid_10m": [500_000, 500_000],
+            "mid_1h": [None, None],
+            "mid_close": [500_000, 500_000],
+            "close_ms": [lm(5, 0), None],
+            "multiplier_e6": [1_000_000, None],
+            "share": [0, None],
+            "censored": [False, True],
+            "traded_again": [True, False],
+        },
+        schema_overrides={
+            "mid_1h": pl.Int64, "close_ms": pl.Int64, "multiplier_e6": pl.Int64, "share": pl.Int64,
+        },
+    )  # fmt: skip
+    times = pl.DataFrame(
+        {
+            "state": ["uncontested"],
+            "k_e6": [50_000],
+            "tier": ["under 100"],
+            "category": ["Sports"],
+            "quotes": [2],
+            "quote_ms": [7_200_000],
+        }
+    )
+    summary = quoter.summarize(fills, times, BASE_TIME, END, 2, [])
+    rule = summary["by_rule"]["uncontested | 50000 | 10"]
+    ten = rule["marks"]["10m"]
+    assert (ten["marked_fills"], ten["gross_e6_a_day"]) == (2, 2_000_000 * 12)
+    assert (ten["netted_contracts"], ten["net_e6_a_day"]) == (10.0, 1_000_000 * 12)
+    assert ten["cents_a_contract"] == pytest.approx(10.0)  # not 5: the unknown fee's fill is out
+    assert (rule["fee_unknown_fills"], rule["censored"]) == (1, 0.5)
+    assert rule["marks"]["1h"]["cents_a_contract"] is None
