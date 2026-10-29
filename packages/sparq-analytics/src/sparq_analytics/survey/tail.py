@@ -5,28 +5,31 @@ Three readings, none building anything:
 * **Volume**, from the history's trade files (any day, M3: no outcome): each traded market's
   contracts and dollars a day over the days it was open inside the window (whole days, at least
   one), placed in the activity tiers S3.2 used; by tier and category the markets, trades,
-  contracts and dollars a day; and the markets open in the window that never traded (the silent
-  tail).
+  contracts and dollars a day; the markets open in the window that never traded (the silent
+  tail); and the traded markets the market list lacks or gives no times for (tier ``unknown``).
 * **Spreads and the half-spread**, from the live frames and trades: each market's time-weighted
   mean quoted spread while two-sided and the share of time a side was missing, by tier (the live
   span's own contracts a day over the days open, the same rule) and category; and, for every live
   trade, half the quoted spread just before it times its contracts, which is what a maker at the
-  touch earns against the mid, summed
-  by tier, category and whether a competing quote stood within 10 cents of the mid at that moment
-  (a spread of 20 cents or less: **contested**), none did (**uncontested**) or a side was missing
-  (**one-sided**, no half-spread to read); gross and net of the maker fee where the series charges
-  one. M4's bar is $250 a day of half-spread in thin markets' uncontested trades, a tenth captured
+  touch earns against the mid, summed by tier, category and whether a competing quote stood within
+  10 cents of the mid at that moment (a spread of 20 cents or less: **contested**), none did
+  (**uncontested**) or a side was missing (**one-sided**, no half-spread to read); gross and net of
+  the maker fee where the series charges one. An empty side (the feed shows it as a 0-cent bid or
+  a 100-cent ask with no size) is missing. A market's time ends at its close, the ingest's logged
+  outages count for no one, and a trade whose last frame lies before an outage reads an **unknown**
+  book. M4's bar is $250 a day of half-spread in thin markets' uncontested trades, a tenth captured
   being the $25 floor.
 * **The surprise rate**, from the history to the cut (M3): per settled binary market the last trade
-  from 36 to 12 hours before its close; where a side then stood at 90 cents or more, whether the
-  market settled against it. The rate by category, by price bucket and by series with enough
-  markets, each with a cluster-bootstrap interval over events, against the price-implied rate (the
-  mean of one minus the price); a cell is judged only with ten events or more; the series whose
-  interval lies wholly above the implied rate are listed with their title and rules text, beside
-  the number that would clear by chance alone.
+  from 36 to 12 hours before its close (among trades in one millisecond, the highest price); where
+  a side then stood at 90 cents or more, whether the market settled against it. The rate by
+  category, by price bucket and by series with enough markets, each with a cluster-bootstrap
+  interval over events, against the price-implied rate (the mean of one minus the price); a cell
+  is judged only with ten events or more; the series whose interval lies wholly above the implied
+  rate are listed with their title and rules text, beside the number that would clear by chance
+  alone.
 
-Money is integer millionths of a dollar; sizes are hundredths of a contract; a trade's dollars are
-its yes price times its contracts, as in S3.1.
+Money is integer millionths of a dollar, scaled to a day by integer arithmetic; sizes are
+hundredths of a contract; a trade's dollars are its yes price times its contracts, as in S3.1.
 """
 
 from datetime import UTC, date, datetime, timedelta
@@ -51,11 +54,12 @@ from sparq_analytics.survey.dump import (
     cut_markets,
     trade_files,
 )
-from sparq_analytics.survey.lag import TIERS, _bucket, frames_of
+from sparq_analytics.survey.lag import TIERS, _a_day, _bucket, _trades_of, frames_of, gaps_of
 from sparq_analytics.survey.queue import span
 
 MS_PER_DAY = 24 * MS_PER_HOUR
 THIN_TIERS = (TIERS[0][1], TIERS[1][1])  # under 1,000 contracts a day
+UNKNOWN = "unknown"
 COMPETING_E6 = 200_000  # a spread of 20 cents: a quote within 10 cents of the mid on each side
 TAIL_E6 = 900_000  # a side at 90 cents or more the day before close
 DAY_BEFORE_FROM_MS, DAY_BEFORE_TO_MS = 36 * MS_PER_HOUR, 12 * MS_PER_HOUR
@@ -69,22 +73,26 @@ BUCKETS: tuple[tuple[int | None, str], ...] = (
 HALF_SPREAD_BAR_E6 = 250 * E6
 RESAMPLES, TAIL, SEED = 2_000, 0.025, 33
 CENTS_E6 = 10_000
-
-
-def _a_day(value: int | float, days: float) -> float:
-    return value / days
+TRADE_COLUMNS = ("ts_ms", "ticker", "yes_price_e6", "count_e2")
+Gaps = list[tuple[int, int]]
 
 
 # -- volume -------------------------------------------------------------------------------------
 
 
 def trade_days(kalshi: Path) -> list[date]:
-    """The days with a trade file, from the folder names."""
+    """The days with a trade file, from the folder names; refuses a gap, because a missing day
+    would read as a day without trades."""
     folder = kalshi / "trades"
     found = [p for p in folder.glob("date=*") if (p / "trades.parquet").exists()]
     days = sorted(date.fromisoformat(p.name[5:]) for p in found)
     if not days:
         raise SurveyDataError(f"no trade files under {folder}")
+    expected = (days[-1] - days[0]).days + 1
+    if len(days) != expected:
+        raise SurveyDataError(
+            f"{expected - len(days)} trade day(s) missing between {days[0]} and {days[-1]}"
+        )
     return days
 
 
@@ -97,31 +105,29 @@ def _series(kalshi: Path) -> pl.DataFrame:
 def tiered(markets: pl.DataFrame, window_start_ms: int, window_end_ms: int) -> pl.DataFrame:
     """Each market's contracts a day over its days open inside the window (whole days, at least
     one) and its tier; ``markets`` carries ``open_ms``, ``close_ms`` and ``contracts_e2`` (null
-    for a market that never traded, which is in the lowest tier)."""
-    # min_horizontal and max_horizontal skip nulls, so a missing open or close time is caught first
+    for a market that never traded, which is in the lowest tier). A market without an open or
+    close time has no life and the tier ``unknown``."""
+    # min_horizontal and max_horizontal skip nulls, so a missing time is caught first
     known = pl.col("open_ms").is_not_null() & pl.col("close_ms").is_not_null()
     life_ms = pl.when(known).then(
         pl.min_horizontal("close_ms", window_end_ms) - pl.max_horizontal("open_ms", window_start_ms)
     )
-    life_days = (life_ms / MS_PER_DAY).ceil().clip(lower_bound=1)
+    life_days = (-((-life_ms) // MS_PER_DAY)).clip(lower_bound=1)  # an exact ceiling
     a_day = pl.col("contracts_e2").fill_null(0) / 100 / life_days
-    # a market without an open or close time has no life: the lowest tier, not the bucket
-    # helper's fall-through into the highest
-    tier = pl.when(a_day.is_null()).then(pl.lit(TIERS[0][1])).otherwise(_bucket(a_day, TIERS))
+    tier = pl.when(a_day.is_null()).then(pl.lit(UNKNOWN)).otherwise(_bucket(a_day, TIERS))
     return markets.with_columns(contracts_a_day=a_day, tier=tier)
 
 
 def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
-    """The traded markets of the window by tier and category, and the silent ones."""
+    """The traded markets of the window by tier and category, the silent ones, and the traded
+    ones the market list lacks."""
     first, last = days[0], days[-1]
-    window_start_ms = int(
-        datetime.combine(first, datetime.min.time(), tzinfo=UTC).timestamp() * 1000
-    )
+    midnight = datetime.min.time()
+    window_start_ms = int(datetime.combine(first, midnight, tzinfo=UTC).timestamp() * 1000)
     window_end_ms = int(
-        datetime.combine(last + timedelta(days=1), datetime.min.time(), tzinfo=UTC).timestamp()
-        * 1000
-    )  # fmt: skip
-    window_days = (window_end_ms - window_start_ms) / MS_PER_DAY
+        datetime.combine(last + timedelta(days=1), midnight, tzinfo=UTC).timestamp() * 1000
+    )
+    window_days = len(days)  # contiguous: trade_days saw to that
     traded = (
         _scan(trade_files(kalshi, first, last))
         .group_by("ticker")
@@ -132,19 +138,23 @@ def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
         )
         .collect()
     )
-    markets = (
+    times_known = pl.col("open_ms").is_not_null() & pl.col("close_ms").is_not_null()
+    in_window = (pl.col("open_ms") < window_end_ms) & (pl.col("close_ms") > window_start_ms)
+    listed = (
         scan_markets(kalshi, ["ticker", "series_ticker", "open_time", "close_time"])
         .with_columns(
             open_ms=pl.col("open_time").dt.epoch("ms"), close_ms=pl.col("close_time").dt.epoch("ms")
         )
-        .filter((pl.col("open_ms") < window_end_ms) & (pl.col("close_ms") > window_start_ms))
+        .filter(in_window | ~times_known)
         .select("ticker", "series_ticker", "open_ms", "close_ms")
         .collect()
         .join(_series(kalshi).select("series_ticker", "category"), on="series_ticker", how="left")
-        .with_columns(pl.col("category").fill_null("unknown"))
     )
-    joined = tiered(markets.join(traded, on="ticker", how="left"), window_start_ms, window_end_ms)
+    joined = tiered(
+        listed.join(traded, on="ticker", how="full", coalesce=True), window_start_ms, window_end_ms
+    ).with_columns(pl.col("category").fill_null(UNKNOWN))
     active = joined.filter(pl.col("trades").is_not_null())
+    silent = joined.filter(pl.col("trades").is_null() & times_known)
     aggs = [
         pl.len().alias("markets"),
         pl.col("trades").sum().alias("trades"),
@@ -158,20 +168,20 @@ def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
             key = " | ".join(str(row[k]) for k in keys)
             out[key] = {
                 "markets": row["markets"],
-                "trades_a_day": _a_day(row["trades"], window_days),
-                "contracts_a_day": _a_day(row["contracts_e2"] / 100, window_days),
-                "dollars_e6_a_day": int(_a_day(row["dollars_e6"], window_days)),
+                "trades_a_day": row["trades"] / window_days,
+                "contracts_a_day": row["contracts_e2"] / 100 / window_days,
+                "dollars_e6_a_day": int(row["dollars_e6"] // window_days),
             }
         return out
 
-    silent = joined.filter(pl.col("trades").is_null())
     return {
         "first_day": first.isoformat(),
         "last_day": last.isoformat(),
         "days": window_days,
-        "trade_files": len(days),
-        "open_markets": joined.height,
+        "open_markets": joined.filter(times_known).height,
         "traded_markets": active.height,
+        "unlisted_traded_markets": active.filter(pl.col("series_ticker").is_null()).height,
+        "unknown_life_markets": active.filter(pl.col("tier") == UNKNOWN).height,
         "silent_markets": silent.height,
         "silent_by_category": {
             r["category"]: r["n"]
@@ -188,17 +198,36 @@ def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
 # -- spreads and the half-spread ----------------------------------------------------------------
 
 
-def _hour_spreads(book: pl.DataFrame, hour_start_ms: int, hour_end_ms: int) -> pl.DataFrame:
-    """Per market in one hour: the time two-sided, the time a side was missing, and the spread
-    integrated over the two-sided time; ``book`` holds the hour's frames with each market's
-    carried frame first."""
-    ordered = book.sort("ticker", "ts_ms")
-    spread = pl.col("yes_ask_e6") - pl.col("yes_bid_e6")
+def _outage_overlap(start: pl.Expr, end: pl.Expr, gaps: Gaps) -> pl.Expr:
+    """The time of ``[start, end)`` that falls inside a logged outage."""
+    if not gaps:
+        return pl.lit(0, dtype=pl.Int64)
+    return pl.sum_horizontal(
+        [
+            (pl.min_horizontal(end, g_end) - pl.max_horizontal(start, g_start)).clip(lower_bound=0)
+            for g_start, g_end in gaps
+        ]
+    )
+
+
+def _hour_spreads(
+    book: pl.DataFrame, hour_start_ms: int, hour_end_ms: int, closes: pl.DataFrame, gaps: Gaps
+) -> pl.DataFrame:
+    """Per market in one hour: the time two-sided, the time in all, and the spread integrated
+    over the two-sided time; ``book`` holds the hour's frames with each market's carried frame
+    first. A market's time ends at its close, and outage time counts for no one."""
+    ordered = book.join(closes, on="ticker", how="left").sort("ticker", "ts_ms")
+    next_ms = pl.col("ts_ms").shift(-1).over("ticker").fill_null(hour_end_ms)
     timed = ordered.with_columns(
         from_ms=pl.max_horizontal("ts_ms", hour_start_ms),
-        to_ms=pl.col("ts_ms").shift(-1).over("ticker").fill_null(hour_end_ms),
-        spread_e6=spread,
-    ).with_columns(dur_ms=(pl.col("to_ms") - pl.col("from_ms")).clip(lower_bound=0))
+        to_ms=pl.min_horizontal(next_ms, pl.col("close_ms").fill_null(hour_end_ms)),
+        spread_e6=pl.col("yes_ask_e6") - pl.col("yes_bid_e6"),
+    ).with_columns(
+        dur_ms=(
+            (pl.col("to_ms") - pl.col("from_ms")).clip(lower_bound=0)
+            - _outage_overlap(pl.col("from_ms"), pl.col("to_ms"), gaps)
+        ).clip(lower_bound=0)
+    )
     two_sided = pl.col("spread_e6").is_not_null()
     return timed.group_by("ticker").agg(
         pl.col("dur_ms").sum().alias("dur_ms"),
@@ -207,29 +236,11 @@ def _hour_spreads(book: pl.DataFrame, hour_start_ms: int, hour_end_ms: int) -> p
     )
 
 
-def _trades(live: Path, hour: datetime) -> pl.DataFrame:
-    """One hour's trades with their price, block trades left out (they are negotiated, not taken
-    at the quote); an empty frame when the hour has no file."""
-    path = live / "trade" / f"{hour.strftime('%Y-%m-%dT%H')}.parquet"
-    columns = {
-        "ts_ms": pl.Int64,
-        "ticker": pl.String,
-        "yes_price_e6": pl.Int64,
-        "count_e2": pl.Int64,
-    }
-    if not path.exists():
-        return pl.DataFrame(schema=columns)
-    return (
-        pl.read_parquet(path, columns=[*columns, "is_block_trade"])
-        .filter(pl.col("is_block_trade") == 0)
-        .drop("is_block_trade")
-        .with_columns(pl.col("yes_price_e6").cast(pl.Int64))
-    )
-
-
-def _hour_trades(trades: pl.DataFrame, book: pl.DataFrame, info: pl.DataFrame) -> pl.DataFrame:
+def _hour_trades(
+    trades: pl.DataFrame, book: pl.DataFrame, info: pl.DataFrame, gaps: Gaps
+) -> pl.DataFrame:
     """Each trade of the hour with the quoted spread just before it, its half-spread dollars and
-    its maker fee."""
+    its maker fee; a trade whose last frame lies before an outage reads an unknown book."""
     right = book.select(
         frame_ms=pl.col("ts_ms"),
         ticker=pl.col("ticker"),
@@ -247,25 +258,37 @@ def _hour_trades(trades: pl.DataFrame, book: pl.DataFrame, info: pl.DataFrame) -
             strategy="backward",
             check_sortedness=False,
         )  # fmt: skip
-        .drop("k", "frame_ms")
+        .drop("k")
+    )
+    frame, trade = pl.col("frame_ms"), pl.col("ts_ms")
+    through_outage = pl.any_horizontal(
+        [pl.lit(False)] + [(frame < g_start) & (trade >= g_start) for g_start, _ in gaps]
     )
     spread = pl.col("ask0") - pl.col("bid0")
-    joined = joined.with_columns(spread_e6=spread).with_columns(
-        state=pl.when(pl.col("spread_e6").is_null())
+    state = (
+        pl.when(frame.is_null() | through_outage)
+        .then(pl.lit(UNKNOWN))
+        .when(spread.is_null())
         .then(pl.lit("one_sided"))
-        .when(pl.col("spread_e6") <= COMPETING_E6)
+        .when(spread <= COMPETING_E6)
         .then(pl.lit("contested"))
-        .otherwise(pl.lit("uncontested")),
-        half_e6=(pl.col("count_e2") * (pl.col("spread_e6") // 2)) // 100,
+        .otherwise(pl.lit("uncontested"))
+    )
+    joined = joined.with_columns(spread_e6=spread, state=state).with_columns(
+        half_e6=pl.when(pl.col("state").is_in(["contested", "uncontested"])).then(
+            (pl.col("count_e2") * (pl.col("spread_e6") // 2)) // 100
+        )
     )
     share = pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
     joined = joined.join(info, on="ticker", how="left").with_columns(share=share)
+    readable = pl.col("half_e6").is_not_null()
     fee = maker_fee_expr(
         pl.col("multiplier_e6"), pl.col("share"), pl.col("count_e2"), pl.col("yes_price_e6")
     )
-    return joined.with_columns(fee_e6=pl.when(pl.col("share").is_not_null()).then(fee)).select(
-        "ticker", "state", "count_e2", "half_e6", "fee_e6"
-    )
+    return joined.with_columns(
+        fee_e6=pl.when(readable & pl.col("share").is_not_null()).then(fee),
+        fee_unknown=readable & pl.col("share").is_null(),
+    ).select("ticker", "state", "count_e2", "half_e6", "fee_e6", "fee_unknown")
 
 
 def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
@@ -273,7 +296,6 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
     the competition at the trade."""
     start, end = span(live)
     hours = int((end - start) / timedelta(hours=1))  # at least one: span() saw to that
-    days = hours / 24
     markets = pl.read_parquet(
         live / "markets.parquet",
         columns=["ticker", "series_ticker", "category", "open_ms", "close_ms"],
@@ -287,10 +309,12 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
     span_ms = (int(start.timestamp() * 1000), int(end.timestamp() * 1000))
     info = (
         tiered(markets.join(contracts, on="ticker", how="left"), *span_ms)
-        .with_columns(pl.col("category").fill_null("unknown"))
+        .with_columns(pl.col("category").fill_null(UNKNOWN))
         .select("ticker", "series_ticker", "category", "tier")
         .join(fees, on="series_ticker", how="left")
     )
+    closes = markets.select("ticker", "close_ms")
+    gaps: Gaps = [(r["start_ms"], r["end_ms"]) for r in gaps_of(live, end).to_dicts()]
     spread_sums: list[pl.DataFrame] = []
     trade_sums: list[pl.DataFrame] = []
     carried: pl.DataFrame | None = None
@@ -299,16 +323,19 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
         hour_start_ms = int(hour.timestamp() * 1000)
         frames = frames_of(path).drop("carried", "mid_e6")
         book = pl.concat([carried, frames]) if carried is not None else frames
-        spread_sums.append(_hour_spreads(book, hour_start_ms, hour_start_ms + MS_PER_HOUR))
-        trades = _trades(live, hour)
+        spread_sums.append(
+            _hour_spreads(book, hour_start_ms, hour_start_ms + MS_PER_HOUR, closes, gaps)
+        )
+        trades = _trades_of(live, [hour], TRADE_COLUMNS)
         if trades.height:
-            trade_sums.append(_hour_trades(trades, book, info))
+            trade_sums.append(_hour_trades(trades, book.sort("ts_ms"), info, gaps))
         carried = (
             book.sort("ticker", "ts_ms")
             .group_by("ticker", maintain_order=True)
             .last()
             .select(frames.columns)
         )
+    tiers = info.select("ticker", "tier", "category")
     spreads = (
         pl.concat(spread_sums)
         .group_by("ticker")
@@ -317,10 +344,12 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
             mean_spread_e6=pl.when(pl.col("two_sided_ms") > 0).then(
                 pl.col("spread_dur") / pl.col("two_sided_ms")
             ),
-            two_sided_share=pl.col("two_sided_ms") / pl.col("dur_ms"),
+            two_sided_share=pl.when(pl.col("dur_ms") > 0).then(
+                pl.col("two_sided_ms") / pl.col("dur_ms")
+            ),
         )
-        .join(info.select("ticker", "tier", "category"), on="ticker", how="left")
-        .with_columns(pl.col("tier").fill_null("unknown"), pl.col("category").fill_null("unknown"))
+        .join(tiers, on="ticker", how="left")
+        .with_columns(pl.col("tier").fill_null(UNKNOWN), pl.col("category").fill_null(UNKNOWN))
     )  # a market with frames but no row in the market list has no tier and no category
 
     def spread_cells(keys: list[str]) -> dict[str, dict[str, Any]]:
@@ -351,6 +380,7 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
         "count_e2": pl.Int64,
         "half_e6": pl.Int64,
         "fee_e6": pl.Int64,
+        "fee_unknown": pl.Boolean,
     }
     through = pl.concat(trade_sums) if trade_sums else pl.DataFrame(schema=empty)
     per_market = (
@@ -360,10 +390,10 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
             pl.col("count_e2").sum().alias("contracts_e2"),
             pl.col("half_e6").sum().alias("half_e6"),
             pl.col("fee_e6").sum().alias("fee_e6"),
-            pl.col("fee_e6").is_null().sum().alias("fee_unknown"),
+            pl.col("fee_unknown").sum().alias("fee_unknown"),
         )
-        .join(info.select("ticker", "tier", "category"), on="ticker", how="left")
-        .with_columns(pl.col("tier").fill_null("unknown"), pl.col("category").fill_null("unknown"))
+        .join(tiers, on="ticker", how="left")
+        .with_columns(pl.col("tier").fill_null(UNKNOWN), pl.col("category").fill_null(UNKNOWN))
     )
 
     def half_cells(frame: pl.DataFrame, keys: list[str]) -> dict[str, dict[str, Any]]:
@@ -382,12 +412,11 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
         )
         out = {}
         for r in rows:
-            gross = int(_a_day(r["half_e6"], days))
-            fee = int(_a_day(r["fee_e6"], days))
+            gross, fee = _a_day(r["half_e6"], hours), _a_day(r["fee_e6"], hours)
             out[" | ".join(str(r[k]) for k in keys)] = {
                 "markets": r["markets"],
-                "trades_a_day": _a_day(r["trades"], days),
-                "contracts_a_day": _a_day(r["contracts_e2"] / 100, days),
+                "trades_a_day": r["trades"] * 24 / hours,
+                "contracts_a_day": r["contracts_e2"] / 100 * 24 / hours,
                 "half_spread_e6_a_day": gross,
                 "fee_e6_a_day": fee,
                 "net_e6_a_day": gross - fee,
@@ -403,6 +432,7 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
         "start": start.isoformat(),
         "end": end.isoformat(),
         "hours": hours,
+        "outages": len(gaps),
         "markets_with_frames": spreads.height,
         "spreads_by_tier": spread_cells(["tier"]),
         "spreads_by_tier_and_category": spread_cells(["tier", "category"]),
@@ -419,8 +449,9 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
 
 
 def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
-    """Each cut market's last trade from 36 to 12 hours before its close, with its side in the
-    tail (90 cents or more) where there is one, and the counts of markets left out."""
+    """Each cut market's last trade from 36 to 12 hours before its close (among trades in one
+    millisecond, the highest price), with its side in the tail (90 cents or more) where there is
+    one, and the counts of markets left out."""
     markets = cut_markets(kalshi, cut)
     files = trade_files(kalshi, HISTORY_START, cut)
     t = pl.col("t_ms")
@@ -432,7 +463,7 @@ def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
         .filter((t >= window_from) & (t < window_to))
         .group_by("ticker")
         .agg(
-            pl.col("yes_price_e6").sort_by("t_ms").last().alias("price_e6"),
+            pl.col("yes_price_e6").sort_by(["t_ms", "yes_price_e6"]).last().alias("price_e6"),
             pl.col("t_ms").max().alias("priced_ms"),
         )
         .collect()
@@ -477,7 +508,8 @@ def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
 
 
 def _rate(frame: pl.DataFrame) -> dict[str, Any]:
-    """A cell's surprise rate with its interval over events, against the implied rate."""
+    """A cell's surprise rate with its interval over events, against the implied rate; judged
+    only with enough events."""
     by_event = (
         frame.group_by("event_ticker")
         .agg(
@@ -577,4 +609,4 @@ def combine(
             "half_spread": live["clears"],
             "surprise_series": [s["series"] for s in surprise_reading["clearing_series"]],
         },
-    }  # fmt: skip
+    }

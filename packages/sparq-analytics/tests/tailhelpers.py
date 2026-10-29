@@ -12,10 +12,12 @@ worked out by hand. Prices are yes prices in millionths; counts are hundredths o
 * ``V4`` (``KXC``, Politics): closed 09-10, before the window: not counted as open.
 * ``S1`` to ``S6`` (open 09-10, close 09-15 20:00: 2 days of the window) and ``Z01`` to ``Z60``
   (open 09-14, same close): one contract a trade.
+* ``U1``: one trade, no row in the market list: tier and category "unknown".
 
 The volume by tier: "under 100" holds 67 markets (V1, S1 to S6, the 60 Z) with 72 trades and 75
-contracts over 3 days (25 a day) and $67.21 ($22.40 a day); "100 to 1,000" holds V2. 69 markets
-were open in the window, 68 traded, 1 (V3, Sports) was silent.
+contracts over 3 days (25 a day) and $67.21 ($22.40 a day); "100 to 1,000" holds V2; "unknown"
+holds U1. 69 listed markets were open in the window, 69 markets traded (U1 among them), 1 (V3,
+Sports) was silent.
 
 **The surprise reading** (cut 2026-09-16; a market's day-before price is its last trade from 36 to
 12 hours before its close):
@@ -38,25 +40,32 @@ an interval of width zero, so ``KXZ`` (60 markets, the only series with 50) clea
 with its title "Zed" and its rules; the "95 to 99" bucket is the sixty Z, "90 to 95" is S1, S2 and
 S3 (1 of 3), "99 and more" is S6.
 
-**Live** (hour files from 2026-10-25 00:00, two hours, with an empty hour before):
+**Live** (hour files from 2026-10-25 00:00, two hours, with an empty hour before; the ticker feed
+was out from 01:30 to 01:45, which counts for no one):
 
-* ``L1`` (``KXA``, Sports): 00:00 bid 40 ask 44 (a 4-cent spread); 00:30 bid 30 ask 60 (30 cents);
+* ``L1`` (``KXM``, Sports, maker fees): 00:00 bid 40 ask 44 (a 4-cent spread); 00:30 bid 30 ask 60
+  (30 cents);
   01:00 bid 50 with the ask side empty (the feed shows a 100-cent ask of no size).
   Time-weighted: 30 minutes at 4 cents and 30 at 30, so a mean spread of 17
-  cents while two-sided, and two-sided half the time. Trades: 00:10 a yes taker of 1 contract at
+  cents while two-sided, and two-sided 60 of 105 minutes (the outage's 15 count for no one).
+  Trades: 00:10 a yes taker of 1 contract at
   44, when the spread was 4 cents (**contested**; half-spread 2 cents times 1 contract, $0.02);
   00:40 a no taker of 2 at 30 (30 cents, **uncontested**; 15 cents times 2, $0.30); 01:10 a yes
   taker of 0.5 at 50 with one side missing (**one-sided**, no half-spread to read). The live
   tiers follow the history's rule: contracts over the days open inside the span, at least one
-  day, so 3.5 contracts are 3.5 a day: "under 100", thin. No maker fee in ``KXA``.
-* ``L2`` (``KXM``, Sports, maker fees): 48/52 throughout (4 cents, two-sided all along). Trade
+  day, so 3.5 contracts are 3.5 a day: "under 100", thin. The contested trade pays a maker fee of
+  $0.004312 (7% of a quarter of 1 × 0.44 × 0.56), the uncontested one $0.00735; the one-sided trade
+  pays none, having no half-spread.
+* ``L2`` (``KXM``, Sports, maker fees; closes at 01:00, so its carried frame earns no time in the
+  second hour): 48/52 throughout (4 cents, two-sided all along). Trade
   00:20 a yes taker of 10 contracts at 52: contested, half-spread $0.20, maker fee $0.04368 (7% of
   a quarter of 10 × 0.52 × 0.48). 10 a day: "under 100", thin.
 * ``L9``: frames but no row in the market list: tier and category "unknown".
 * ``L3`` (``KXB``, Crypto): 10/90 throughout (80 cents). Trade 00:15 a yes taker of 100,000
-  contracts at 90: uncontested, half-spread $40,000. 100,000 a day: "10,000 and more".
+  contracts at 90: uncontested, half-spread $40,000; 01:50 a yes taker of 10 whose last frame lies
+  before the outage: an **unknown** book, nothing to read. 100,010 a day: "10,000 and more".
 
-Scaled to a day (twelve times the two hours): contested $2.64 gross, $0.52 of fees; uncontested
+Scaled to a day (twelve times the two hours): contested $2.64 gross, $0.58 of fees; uncontested
 $480,003.60 over all tiers but only $3.60 in the thin tiers (L1), far below the $250 bar.
 """
 
@@ -147,6 +156,7 @@ TRADES: list[tuple[str, datetime, str, int, int]] = [
     ("S4", at(0, 20), "yes", 500_000, 100),
     ("S5", at(1, 15), "yes", 950_000, 100),
     ("S6", at(0, 20), "yes", 990_000, 100),
+    ("U1", at(1, 12), "yes", 500_000, 100),  # traded, but the market list lacks it
     *[(f"Z{i:02d}", at(0, 20), "yes", 950_000, 100) for i in range(1, 61)],
 ]
 
@@ -199,8 +209,9 @@ LIVE_TRADES = [
     _trade(lm(1, 10), "L1", 500_000, 50, "yes"),
     _trade(lm(0, 20), "L2", 520_000, 1_000, "yes"),
     _trade(lm(0, 15), "L3", 900_000, 10_000_000, "yes"),
+    _trade(lm(1, 50), "L3", 900_000, 1_000, "yes"),  # after the outage, on a stale book
 ]
-LIVE_SERIES = {"L1": "KXA", "L2": "KXM", "L3": "KXB"}
+LIVE_SERIES = {"L1": "KXM", "L2": "KXM", "L3": "KXB"}
 CATEGORY = {"KXA": "Sports", "KXM": "Sports", "KXB": "Crypto"}
 FEES = pl.DataFrame(
     {
@@ -231,7 +242,7 @@ def write_tail_live(root: Path, trades: bool = True) -> Path:
                 "event_ticker": f"{s}-E",
                 "category": CATEGORY[s],
                 "open_ms": lm(0, 0) - 86_400_000,
-                "close_ms": lm(0, 0) + 86_400_000,
+                "close_ms": lm(1, 0) if m == "L2" else lm(0, 0) + 86_400_000,
                 "strike_type": None,
                 "floor_strike": None,
                 "cap_strike": None,
@@ -241,5 +252,8 @@ def write_tail_live(root: Path, trades: bool = True) -> Path:
         ],
         schema=MARKET_SCHEMA,
     ).write_parquet(live / "markets.parquet")
-    pl.DataFrame([], schema=GAP_SCHEMA).write_parquet(live / "gaps.parquet")
+    pl.DataFrame(
+        [{"kind": "ticker", "start_ms": lm(1, 30), "end_ms": lm(1, 45), "reason": "lost"}],
+        schema=GAP_SCHEMA,
+    ).write_parquet(live / "gaps.parquet")
     return live

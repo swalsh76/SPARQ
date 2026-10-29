@@ -39,7 +39,7 @@ dollar; sizes are hundredths of a contract; responses are millionths per contrac
 cent) and shown in cents.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -49,7 +49,7 @@ import polars as pl
 from sparq_core.fees import QUADRATIC_FAMILY
 from sparq_core.fixedpoint import E6
 
-from sparq_analytics.live.source import HOUR, hour_files, hour_name, hour_of
+from sparq_analytics.live.source import HOUR, TRADE_SCHEMA, hour_files, hour_name, hour_of
 from sparq_analytics.study.bootstrap import Estimate, cluster_bootstrap
 from sparq_analytics.study.feecalc import taker_fee_expr
 from sparq_analytics.survey.dump import MS_PER_HOUR, SurveyDataError
@@ -396,18 +396,16 @@ def gaps_of(live: Path, end: datetime) -> pl.DataFrame:
     )
 
 
-def _trades_of(live: Path, hours: list[datetime]) -> pl.DataFrame:
+def _trades_of(
+    live: Path,
+    hours: list[datetime],
+    columns: Sequence[str] = ("ts_ms", "ticker", "count_e2", "taker_side"),
+) -> pl.DataFrame:
+    """The hours' trades with ``columns``, block trades left out (they are negotiated, not taken
+    at the resting quote); an empty frame when no hour has a file."""
     paths = [p for p in (live / "trade" / f"{hour_name(h)}.parquet" for h in hours) if p.exists()]
-    columns = ["ts_ms", "ticker", "count_e2", "taker_side"]
     if not paths:
-        schema = {
-            "ts_ms": pl.Int64,
-            "ticker": pl.String,
-            "count_e2": pl.Int64,
-            "taker_side": pl.String,
-        }
-        return pl.DataFrame(schema=schema)
-    # a block trade is negotiated, not taken at the resting quote
+        return pl.DataFrame(schema={c: TRADE_SCHEMA[c] for c in columns})
     return pl.concat(
         [
             pl.read_parquet(p, columns=[*columns, "is_block_trade"])

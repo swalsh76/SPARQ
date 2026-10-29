@@ -4,7 +4,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from sparq_analytics.survey import tail
+from sparq_analytics.survey import lag, tail
 from sparq_analytics.survey.cli import main
 from sparq_analytics.survey.dump import SurveyDataError
 from sparq_analytics.survey.queue import fee_terms
@@ -20,6 +20,10 @@ def test_trade_days_come_from_the_folder(tmp_path: Path) -> None:
     (tmp_path / "empty" / "trades").mkdir(parents=True)
     with pytest.raises(SurveyDataError, match="no trade files"):
         tail.trade_days(tmp_path / "empty")
+    # a missing day in the middle would read as a day without trades: refused
+    (kalshi / "trades" / "date=2026-09-15" / "trades.parquet").unlink()
+    with pytest.raises(SurveyDataError, match="1 trade day\\(s\\) missing"):
+        tail.trade_days(kalshi)
 
 
 def test_volume_by_tier_and_category(tmp_path: Path) -> None:
@@ -29,8 +33,9 @@ def test_volume_by_tier_and_category(tmp_path: Path) -> None:
         "2026-09-14", "2026-09-16", 3.0,
     )  # fmt: skip
     assert (reading["open_markets"], reading["traded_markets"], reading["silent_markets"]) == (
-        69, 68, 1,
+        69, 69, 1,
     )  # fmt: skip
+    assert (reading["unlisted_traded_markets"], reading["unknown_life_markets"]) == (1, 1)  # U1
     assert reading["silent_by_category"] == {"Sports": 1}  # V3; V4 closed before the window
     thin = reading["by_tier"]["under 100"]
     assert thin["markets"] == 67 and thin["trades_a_day"] == 24.0  # 72 trades over 3 days
@@ -44,7 +49,9 @@ def test_volume_by_tier_and_category(tmp_path: Path) -> None:
         "under 100 | Politics",
         "under 100 | Sports",
         "100 to 1,000 | Crypto",
+        "unknown | unknown",
     }
+    assert cells["unknown | unknown"]["dollars_e6_a_day"] == 166_666  # U1: $0.50 over 3 days
     sports = cells["under 100 | Sports"]  # V1, S1, S2, S3, S6
     assert (sports["markets"], sports["dollars_e6_a_day"]) == (5, 2_920_000)
     assert sports["contracts_a_day"] == pytest.approx(13 / 3)
@@ -54,14 +61,14 @@ def test_volume_by_tier_and_category(tmp_path: Path) -> None:
 def test_spreads_by_tier(tmp_path: Path) -> None:
     live = write_tail_live(tmp_path)
     reading = tail.live_reading(live, FEES)
-    assert (reading["hours"], reading["markets_with_frames"]) == (2, 4)
+    assert (reading["hours"], reading["markets_with_frames"], reading["outages"]) == (2, 4, 1)
     spreads = reading["spreads_by_tier"]
     # L1: 30 minutes at 4 cents, 30 at 30, then an hour with the ask side empty (a 100-cent ask
     # of no size, as the feed shows it); L2: 4 cents all along; both in the lowest tier
     assert spreads["under 100"] == {
         "markets": 2,
         "median_spread_cents": 10.5,
-        "two_sided_share": 0.75,
+        "two_sided_share": pytest.approx(11 / 14),  # L1 60 of 105 minutes, L2 all of its 60
     }
     assert spreads["10,000 and more"] == {
         "markets": 1,
@@ -83,16 +90,25 @@ def test_half_spread_by_state_and_the_thin_bar(tmp_path: Path) -> None:
         "trades_a_day": 24.0,
         "contracts_a_day": 132.0,
         "half_spread_e6_a_day": 2_640_000,
-        "fee_e6_a_day": 524_160,  # L2's maker fee of 43,680 on its trade
-        "net_e6_a_day": 2_115_840,
+        "fee_e6_a_day": 575_904,  # L2's maker fee of 43,680 and L1's of 4,312
+        "net_e6_a_day": 2_064_096,
         "fee_unknown_trades": 0,
     }
     uncontested = by_state["uncontested"]  # L1's 2 contracts at 30 cents, L3's 100,000 at 80
     assert (uncontested["markets"], uncontested["half_spread_e6_a_day"]) == (2, 480_003_600_000)
-    assert uncontested["contracts_a_day"] == 1_200_024.0 and uncontested["fee_e6_a_day"] == 0
+    assert uncontested["contracts_a_day"] == 1_200_024.0
+    assert uncontested["fee_e6_a_day"] == 88_200  # L1's 7,350 on its 2 contracts at 30
     one_sided = by_state["one_sided"]
     assert (one_sided["markets"], one_sided["half_spread_e6_a_day"]) == (1, 0)
     assert one_sided["contracts_a_day"] == 6.0
+    assert one_sided["fee_e6_a_day"] == 0  # no half-spread to read, no fee charged
+    unknown = by_state["unknown"]  # L3's trade after the outage, its frame before it
+    assert (unknown["markets"], unknown["trades_a_day"], unknown["contracts_a_day"]) == (
+        1,
+        12.0,
+        120.0,
+    )
+    assert unknown["half_spread_e6_a_day"] == 0
     thin = reading["half_spread_thin_by_state"]
     assert thin["contested"]["half_spread_e6_a_day"] == 2_640_000
     assert thin["uncontested"]["half_spread_e6_a_day"] == 3_600_000  # L1 alone: L3 is not thin
@@ -193,7 +209,7 @@ def test_a_market_without_a_life_is_in_the_lowest_tier() -> None:
     rows = {r["ticker"]: (r["contracts_a_day"], r["tier"]) for r in tiers.to_dicts()}
     assert rows["A"] == (500.0, "100 to 1,000")  # one day of life
     assert rows["B"] == (0.0, "under 100")  # never traded, two days inside the window
-    assert rows["C"] == (None, "under 100")  # no life to speak of
+    assert rows["C"] == (None, "unknown")  # no life to speak of
 
 
 def test_a_judged_cell_need_not_clear() -> None:
@@ -213,8 +229,17 @@ def test_a_judged_cell_need_not_clear() -> None:
 
 def test_an_hour_without_a_trade_file_has_no_trades(tmp_path: Path) -> None:
     live = write_tail_live(tmp_path)
-    missing = tail._trades(live, BASE_TIME + 5 * HOUR)
+    missing = lag._trades_of(live, [BASE_TIME + 5 * HOUR], tail.TRADE_COLUMNS)
     assert missing.is_empty() and missing.columns == ["ts_ms", "ticker", "yes_price_e6", "count_e2"]
+
+
+def test_outage_time_is_taken_out_of_a_frame_s_duration() -> None:
+    spans = pl.DataFrame({"start": [0, 0, 50], "end": [100, 100, 60]})
+    none = spans.with_columns(out=tail._outage_overlap(pl.col("start"), pl.col("end"), []))
+    assert none["out"].to_list() == [0, 0, 0]
+    gaps = [(10, 20), (90, 200)]  # ten inside, ten at the end; the third span misses both
+    some = spans.with_columns(out=tail._outage_overlap(pl.col("start"), pl.col("end"), gaps))
+    assert some["out"].to_list() == [20, 20, 0]
 
 
 def test_surprise_refuses_a_world_without_a_tail(tmp_path: Path) -> None:
@@ -239,7 +264,7 @@ def test_tail_command_writes_the_readings(
     for name in ("tail-volume.json", "tail-live.json", "tail-surprise.json", "tail.json"):
         assert json.loads((out / name).read_text(encoding="utf-8"))
     result = json.loads((out / "tail.json").read_text(encoding="utf-8"))
-    assert result["volume"]["traded_markets"] == 68 and result["live"]["hours"] == 2
+    assert result["volume"]["traded_markets"] == 69 and result["live"]["hours"] == 2
     assert main([*argv, "--cut", "2026-10-11"]) == 1  # past the held-out cut (M3)
     assert "held out" in capsys.readouterr().err
     assert main(["tail", "--live", str(live), "--out", str(out)]) == 1
