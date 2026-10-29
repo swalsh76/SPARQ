@@ -1,0 +1,30 @@
+{
+  "slice": "S4.1",
+  "test": "S4.2",
+  "approved": "2026-10-29",
+  "approved_by": "the owner (\"rules approved\")",
+  "fit_part": "live frames 2026-10-24T21 to 2026-10-29T04 UTC, 2026-10-28 dropped; mid-marked (docs/research/paper-quoter.md at commit 0a66bfb)",
+  "shared": {
+    "scope": "thin markets (under 1,000 contracts a day over their days open in the span), every category unless the rule names one, mid or standing price between 3 and 97 cents, markets closing within 7 days of the quote",
+    "close_within_ms": 604800000,
+    "regime_e6": [30000, 970000],
+    "inside_e6": 50000,
+    "empty_side_e6": 200000,
+    "quote_life": "from the frame to the market's next frame or its close",
+    "fill_rule": "a taker trade strictly after the frame and strictly beyond the paper quote fills it for the smaller of the size and the trade's size; one fill a quote and side; block trades never",
+    "marks": ["settlement", "mid_1h"],
+    "bar": {
+      "settlement_net_e6_a_day_lower_bound": 25000000,
+      "mid_1h_net_e6_a_day": "positive",
+      "interval": "cluster bootstrap over (event, day), 2.5% each side, 2,000 resamples"
+    },
+    "test_part": "the live days after this registration, at least seven whole UTC days with the ingest up; a day with a logged outage over ten minutes leaves the part; read once, outcomes included",
+    "outage_day_ms": 600000
+  },
+  "rules": [
+    {"id": "R1", "state": "uncontested", "categories": "all", "size_e2": 1000},
+    {"id": "R2", "state": "uncontested", "categories": "all", "size_e2": 5000},
+    {"id": "R3", "state": "uncontested", "categories": ["Sports"], "size_e2": 1000},
+    {"id": "R4", "state": "one_sided", "categories": "all", "size_e2": 1000}
+  ]
+}

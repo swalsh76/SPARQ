@@ -693,4 +693,51 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 - Two runs of one commit on one span differed by a move, found only because the review's fixes forced a rerun on an unchanged span: every sort that decides which frame is previous, last or standing is stable now (LESSONS).
 - Kalshi's listed close time is not always the last trade: a few hundred trades in 28 markets over the span printed after it. A review fix had made them read an unknown book; the merge review pointed out that Kalshi extends close times when an event runs long, so the standing quote is the right reading, and the fix was reverted.
 
-**Decisions (owner, pending).** Whether the survey outputs stay on the analytics node (recommended: keep, as S2's did); the S4 proposal (§6.4).
+**Decisions (owner, 2026-10-29).** PR #23 merged and S4 approved as proposed ("merge PR#23 and begin S4"), with the three open questions answered: the fit part stays mid-marked, every category is registered, the sizes stand. The survey outputs stay on the analytics node (the recommendation, not objected to).
+
+## S4. A paper quoter in the thin tail (approved 2026-10-29)
+
+### S4.1 The paper quoter on the fit part (2026-10-29 UTC, done; PR #24; the rules registered)
+
+**Built.** `python -m sparq_analytics.paper fit --kalshi DIR --live DIR --out DIR [--hours N]` (`paper/quoter.py`, `cli.py`), writing `paper-fills.parquet` and `paper.json`.
+- *Scope and quotes* (T2, T3): for every frame of a thin market (S3.3's tiers over the span, every category) whose mid or standing price is between 3 and 97 cents and whose book is uncontested (spread over 20 cents) or one-sided, a paper bid and ask k cents inside the standing quotes (5 and 10), or 20 cents from the standing quote on an empty side, of S contracts (10 and 50), standing from the frame to the market's next frame or its close.
+- *Fills* (T4): each trade matched to the paper quotes at its market's last frame strictly before it; a yes taker above the paper ask or a no taker below the paper bid fills it for the smaller of S and the trade's size; the first such trade a quote and side; block trades never.
+- *Marks* (T5): the mid 10 minutes and 1 hour after the fill (null past the copied frames or the market's close), the market's last two-sided mid in the span (censored when the market is still open at the span's end), the maker fee from the series' terms (unknown without them: the fill is marked but not netted); whether the market traded again.
+- *Days* (T6): a UTC day touched by an outage over ten minutes is dropped, and the book is not carried across it.
+- *Figures:* by rule (state, k, S), by rule and category and by rule and tier: fills, markets, contracts, quote rows, quote-hours a day, fills a quote-hour, the hours to close, the censored and never-traded-again shares, the fee, and at each mark the marked fills, gross, net, netted contracts, cents a contract and (by rule and by rule and category, at 1 hour and the close) the (event, day) cluster-bootstrap interval of the net a day.
+- The tail module's outage-overlap helper is public, since the quoter reuses it; the quoter also reuses S3's frame and trade readers, span, gap log, tiers, fee expressions and bootstrap.
+
+**Verified (local).** 10 tests on a hand-built world (`paperhelpers.py`: five markets over two hours, one contested, one busy, one in the certainty regime, one one-sided, one closing mid-span; an outage; a three-day variant with a dropped day), every figure worked out by hand in its docstring: the dropped days, the scope, the quotes' prices and windows, the fills (the first trade beyond a quote; none after it died, after the close, or on a filled quote), the marks and their nulls, the summary by rule (fills, contracts, quote time, fees, gross and net at each mark, cents a contract, intervals), the reset of the book across a dropped day, the netting of fee-unknown fills and the censored flag, the command's files and exit codes. 7 planted bugs, all caught. The paper package at 100% branch coverage; ruff and mypy clean.
+
+**Verified (analytics node, real data).** `live extract` grew the copies to 2026-10-29 04:00 (the fit part's end; the ingest's gap log holds 31 outages). `paper fit` runs in about a minute; a six-hour smoke run first, then the span, at `d74dce8`, `3d3079d` and `0a66bfb` (the figures; the earlier runs marked some fills against a mid seen before them, item 1 under Review). Results in `docs/research/paper-quoter.md`:
+
+| | |
+|---|---|
+| Span | 2026-10-24 21:00 to 2026-10-29 04:00 UTC, 103 hours, 79 kept (2026-10-28 dropped: a four-hour outage) |
+| Scope | 36 M frames carried a paper quote (two values of k each); 136,162 fills on 26,800 thin markets |
+| Uncontested, 5 cents inside, 10 contracts | 62,405 fills, 11,523 quotes standing at once, 0.069 fills a quote-hour; net a day $13,534 at 10 minutes, $9,804 at 1 hour, **$12,297 at the close mark** (lower bound $10,972), 15.2 cents a contract; the 10-cent variant $8,246 (10.1 cents); the 50-contract variant $32,248 (16.3 cents) |
+| One-sided, 5 cents, 10 contracts | 5,447 fills; $871 a day at the close mark (lower $597), 11.8 cents; $60 a day in markets closing within 48 hours |
+| By category | every category positive at the close mark but Elections and Companies (tiny); Sports 71% of fills, $6,685 a day, 13.9 cents, closing within the hour; the long-dated categories 86 to 91% censored |
+| Reservations | 29% of fills censored and those read twice as rich (19.7 against 9.0 cents a contract); in markets closing within 48 hours the headline rule reads $4,385 a day; a mid of a wide book as fair value; the taker's reaction unmodelled; about $115,000 of collateral standing for the 10-contract rule |
+
+**Against the slice's gate:** the owner approves the rules. Proposed (write-up): R1 uncontested, every category, 10 contracts; R2 the same at 50; R3 uncontested, Sports alone, 10; R4 one-sided, every category, 10; all 5 cents inside and only markets closing within 7 days of the quote, so the test reads a settlement.
+
+**Review (PLAN Q8).** `5928f55`, `e853e2e`, `d97052c` (docs). `d74dce8` reviewed at low effort: two findings, fixed in `d93113b`: a market without a listed close read as not censored; fills in series without fee terms left the net while their contracts stayed in the divisor of the cents a contract (the net and the cents are over the fills whose fee is known, with the netted contracts reported). `d93113b` carried a test that failed (its edit script had stopped at the test file while the shell ran on; fixed in `3d3079d`, with the summary test). `d93113b..3d3079d` at low effort: no findings. The merge review, at medium effort over the branch against `main`, found 10 issues, all fixed in `0a66bfb` (reviewed at low effort: no findings):
+1. The close mark was each market's last two-sided mid over the whole span, so a fill could be marked against a mid seen before it. **Fixed:** the mark must follow the fill; 8,486 uncontested fills and 1,522 one-sided ones lost their close mark, and the headline rule's close mark went from $15,982 to $12,297 a day.
+2. The one-fill-a-quote rule held within an hour only; a quote carried across the hour boundary could fill again. **Fixed:** the filled keys are carried and anti-joined (two fills fewer on the real frames).
+3. Cells quoted but never filled vanished from the figures. **Fixed:** the cells are built from the quote time (Companies' one-sided books: 151 quote-hours a day, no fill).
+4. The hour before a dropped day read the dropped day's first hour for its marks. **Fixed:** no mark from an hour that is not kept; test.
+5. The maker-share and fee-terms expressions were spelled a third time. **Fixed:** `maker_share_expr` and `fee_terms_known` in `study.feecalc`, used by queue, tail and the quoter.
+6. The close mark and the last trade re-read every file after the loop, with the empty-side rule re-implemented. **Fixed:** both accumulate hour by hour from the frames and trades already read.
+7. The empty seed book parsed the first hour file for its schema. **Fixed:** `lag.empty_frames`.
+8. The bootstrap re-filtered the whole fills frame once a cell, size and mark. **Fixed:** one partition a cell.
+9. PLAN's S4 row said "S4.1 planned" against the S4.1 row's "done", and the resume point named two branches for the node's clone. **Fixed.**
+10. The paper command line imported the survey command line's private `_need` and copied its error tuple. **Fixed:** `need` and `ERRORS` are public and shared.
+
+**Problems and fixes.**
+- A `&&` chain is one line, again: the python edit of the tests failed and the next line committed and pushed a failing test; one commit later it was right. Scripts that edit and then commit now run as one chained command or not at all.
+- The test harness keyed fills by market, k and side, which collapses two fills of one market on different days; keyed by the frame too.
+- The 6-hour smoke run took six seconds: the paper quoter is light (one join a frame, one a trade).
+- The first runs marked a fill against the market's last two-sided mid in the span even when that mid was seen before the fill (a one-sided book's only mid, or a market that went one-sided for good); the merge review caught it, and the close mark now needs a frame at or after the fill. The headline figure fell by a quarter.
+
+**Decisions (owner, 2026-10-29).** The four rules approved as proposed ("rules approved, merge PR24") and registered in `docs/research/paper-rules.json` (sha256 `6c7a87357267…`, pinned by `test_the_registered_rules_are_pinned`); the test part is the live days after the registration.

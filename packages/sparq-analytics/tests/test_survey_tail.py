@@ -250,10 +250,10 @@ def test_an_hour_without_a_trade_file_has_no_trades(tmp_path: Path) -> None:
 
 def test_outage_time_is_taken_out_of_a_frame_s_duration() -> None:
     spans = pl.DataFrame({"start": [0, 0, 50], "end": [100, 100, 60]})
-    none = spans.with_columns(out=tail._outage_overlap(pl.col("start"), pl.col("end"), []))
+    none = spans.with_columns(out=tail.outage_overlap(pl.col("start"), pl.col("end"), []))
     assert none["out"].to_list() == [0, 0, 0]
     gaps = [(10, 20), (90, 200)]  # ten inside, ten at the end; the third span misses both
-    some = spans.with_columns(out=tail._outage_overlap(pl.col("start"), pl.col("end"), gaps))
+    some = spans.with_columns(out=tail.outage_overlap(pl.col("start"), pl.col("end"), gaps))
     assert some["out"].to_list() == [20, 20, 0]
 
 
