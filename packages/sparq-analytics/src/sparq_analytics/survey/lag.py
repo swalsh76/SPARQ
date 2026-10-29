@@ -32,12 +32,13 @@ at that moment, the watched market ``b`` is read:
   with that lag known, since a quote that moved in the same second as ``a`` was never there to
   hit.
 
-An event is excluded when a logged outage falls between the earlier of ``a``'s previous frame
-and ``b``'s last frame and ten minutes after the move, since the move or the quote may then be
-older than it looks. The figures a day scale the span's sums by its hours; they are also broken
-down by ``b``'s activity tier (contracts a day in the span), by ``b``'s category and by the size
-of ``a``'s move. Money is integer millionths of a dollar; sizes are hundredths of a contract;
-responses are millionths per contract (10,000 to a cent) and shown in cents.
+An event is excluded when a logged outage falls between the earlier of the frame ``a``'s move is
+measured from (its previous two-sided frame) and ``b``'s last frame, and ten minutes after the
+move, since the move or the quote may then be older than it looks. The figures a day scale the
+span's sums by its hours; they are also broken down by ``b``'s activity tier (contracts a day in
+the span), by ``b``'s category and by the size of ``a``'s move. Money is integer millionths of a
+dollar; sizes are hundredths of a contract; responses are millionths per contract (10,000 to a
+cent) and shown in cents.
 """
 
 from collections.abc import Callable, Sequence
@@ -59,6 +60,7 @@ from sparq_analytics.survey.dump import (
     MS_PER_HOUR,
     RESAMPLES,
     TAIL,
+    UNKNOWN,
     SurveyDataError,
 )
 from sparq_analytics.survey.queue import FRAME_COLUMNS, gaps_of, span
@@ -177,9 +179,10 @@ def events_of(found: pl.DataFrame, pairs: pl.DataFrame, info: pl.DataFrame) -> p
 
 
 def with_gaps(events: pl.DataFrame, gaps: pl.DataFrame) -> pl.DataFrame:
-    """``in_gap``: an outage overlaps the event's window, from the earlier of ``a``'s previous
-    frame and ``b``'s last frame before the move (the move, or the quote, may then be older than
-    it looks) to ten minutes after the move; ``gap_1h``: the same window to an hour after."""
+    """``in_gap``: an outage overlaps the event's window, from the earlier of the frame ``a``'s
+    move is measured from (``t_prev``, its previous two-sided frame) and ``b``'s last frame before
+    the move (the move, or the quote, may then be older than it looks) to ten minutes after the
+    move; ``gap_1h``: the same window to an hour after."""
     if gaps.is_empty():
         return events.with_columns(in_gap=pl.lit(False), gap_1h=pl.lit(False))
     t = pl.col("t")
@@ -389,12 +392,10 @@ def bucket(value: pl.Expr, buckets: tuple[tuple[int | None, str], ...]) -> pl.Ex
 
 
 def market_info(markets: pl.DataFrame, tiers: pl.DataFrame, fees: pl.DataFrame) -> pl.DataFrame:
-    """Each market's series, category (``unknown`` when the list gives none), close, tier (the
+    """Each market's series, category (``UNKNOWN`` when the list gives none), close, tier (the
     lowest when it never traded) and fee terms."""
     return (
-        markets.select(
-            "ticker", "series_ticker", pl.col("category").fill_null("unknown"), "close_ms"
-        )
+        markets.select("ticker", "series_ticker", pl.col("category").fill_null(UNKNOWN), "close_ms")
         .join(tiers, on="ticker", how="left")
         .with_columns(pl.col("tier").fill_null(TIERS[0][1]))
         .join(fees, on="series_ticker", how="left")

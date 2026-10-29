@@ -53,6 +53,7 @@ from sparq_analytics.survey.dump import (
     MS_PER_HOUR,
     RESAMPLES,
     TAIL,
+    UNKNOWN,
     SurveyDataError,
     cut_markets,
     scan_trades,
@@ -63,7 +64,6 @@ from sparq_analytics.survey.lag import TIERS, a_day, bucket, frames_of, trades_o
 from sparq_analytics.survey.queue import gaps_of, span
 
 THIN_TIERS = (TIERS[0][1], TIERS[1][1])  # under 1,000 contracts a day
-UNKNOWN = "unknown"
 COMPETING_E6 = 200_000  # a spread of 20 cents: a quote within 10 cents of the mid on each side
 TAIL_E6 = 900_000  # a side at 90 cents or more the day before close
 DAY_BEFORE_FROM_MS, DAY_BEFORE_TO_MS = 36 * MS_PER_HOUR, 12 * MS_PER_HOUR
@@ -336,14 +336,12 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
             trade_sums.append(
                 _hour_trades(trades, book.sort("ts_ms", maintain_order=True), info, gaps)
             )
-        carried = (  # a market closed by the next hour has no time left and no trade to read
+        # a closed market's carried frame costs memory only: its time ends at its close above,
+        # and a trade printed after the listed close (Kalshi extends closes) still reads its quote
+        carried = (
             book.sort("ticker", "ts_ms", maintain_order=True)
             .group_by("ticker", maintain_order=True)
             .last()
-            .join(closes, on="ticker", how="left")
-            .filter(
-                pl.col("close_ms").is_null() | (pl.col("close_ms") > hour_start_ms + MS_PER_HOUR)
-            )
             .select(frames.columns)
         )
     tiers = info.select("ticker", "tier", "category")

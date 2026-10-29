@@ -36,6 +36,7 @@ MS_PER_DAY = 24 * MS_PER_HOUR
 BAR_E6 = 25 * E6  # M4: $25 a day, S3.1's bar within a category and S3.2's for a relation type
 RESAMPLES, TAIL = 2_000, 0.025  # the bootstrap's draws, and each side's tail of a 95% interval
 SERIES_RENAMES = {"ticker": "series_ticker", "fee_multiplier_e6": "multiplier_e6"}
+UNKNOWN = "unknown"  # a category or tier the data does not name
 
 
 def hours(ms: pl.Expr) -> pl.Expr:
@@ -81,7 +82,7 @@ def cut_markets(kalshi: Path, cut: date = CUT) -> pl.DataFrame:
     return (
         markets.join(series, on="series_ticker", how="left")
         .with_columns(
-            pl.col("category").fill_null("unknown"),
+            pl.col("category").fill_null(UNKNOWN),
             close_ms=pl.col("close_time").dt.epoch("ms"),
             settlement_ms=pl.col("settlement_ts").dt.epoch("ms"),
         )

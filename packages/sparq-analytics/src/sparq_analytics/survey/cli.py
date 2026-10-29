@@ -45,6 +45,14 @@ class UsageError(Exception):
     """A bad or incomplete command line."""
 
 
+APPLIES = {"cut": ("dump", "tail"), "only": ("dump",), "hours": ("lag",)}
+
+
+def _for(flag: str, text: str) -> str:
+    """A flag's help, naming the commands it applies to."""
+    return f"{', '.join(APPLIES[flag])}: {text}"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m sparq_analytics.survey", description=__doc__.split("\n")[0]
@@ -54,14 +62,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--live", type=Path, help="the live copies' folder")
     parser.add_argument("--out", type=Path, help="where the results go")
     parser.add_argument(
-        "--cut", type=date.fromisoformat, help=f"dump, tail: the last day read for outcomes ({CUT})"
+        "--cut",
+        type=date.fromisoformat,
+        help=_for("cut", f"the last day read for outcomes (default {CUT})"),
     )
-    parser.add_argument("--only", choices=("history", "live"), help="dump: one reading alone")
-    parser.add_argument("--hours", type=int, help="lag: read only the span's first N hours")
+    parser.add_argument(
+        "--only", choices=("history", "live"), help=_for("only", "one reading alone")
+    )
+    parser.add_argument(
+        "--hours", type=int, help=_for("hours", "read only the span's first N hours")
+    )
     return parser
-
-
-APPLIES = {"cut": ("dump", "tail"), "only": ("dump",), "hours": ("lag",)}
 
 
 def _check(args: argparse.Namespace) -> None:
@@ -69,6 +80,10 @@ def _check(args: argparse.Namespace) -> None:
     for flag, commands in APPLIES.items():
         if getattr(args, flag) is not None and args.command not in commands:
             raise UsageError(f"--{flag} does not apply to {args.command}")
+
+
+def _cut(args: argparse.Namespace) -> date:
+    return CUT if args.cut is None else args.cut
 
 
 def _need(value: Path | None, name: str) -> Path:
@@ -87,7 +102,7 @@ def _dump(args: argparse.Namespace) -> int:
     past: dict[str, Any] | None = None
     frames: dict[str, Any] | None = None
     if args.only != "live":
-        past, regimes = history(kalshi, CUT if args.cut is None else args.cut)
+        past, regimes = history(kalshi, _cut(args))
         _write(out, "dump-history.json", past)
         regimes.write_parquet(out / "dump-regimes.parquet")
     if args.only != "history":
@@ -132,7 +147,7 @@ def _tail(args: argparse.Namespace) -> int:
     _write(out, "tail-volume.json", volume)
     live_reading = tail.live_reading(live, fee_terms(kalshi))
     _write(out, "tail-live.json", live_reading)
-    surprise = tail.surprise(kalshi, CUT if args.cut is None else args.cut)
+    surprise = tail.surprise(kalshi, _cut(args))
     _write(out, "tail-surprise.json", surprise)
     result = tail.combine(volume, live_reading, surprise)
     _write(out, "tail.json", result)

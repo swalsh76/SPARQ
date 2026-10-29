@@ -34,6 +34,7 @@ from sparq_analytics.survey.dump import (
     CENTS,
     CERTAIN_E6,
     MS_PER_HOUR,
+    UNKNOWN,
     SurveyDataError,
     hours,
     series_table,
@@ -323,7 +324,7 @@ def with_fills(
     frame = (
         found.join(markets.select("ticker", "series_ticker", "category"), on="ticker", how="left")
         .join(fees, on="series_ticker", how="left")
-        .with_columns(pl.col("category").fill_null("unknown"), share=share)
+        .with_columns(pl.col("category").fill_null(UNKNOWN), share=share)
     )
     columns = []
     for size_e2 in BID_SIZES_E2:
