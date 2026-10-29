@@ -3,6 +3,7 @@
     python -m sparq_analytics.survey dump --kalshi DIR --live DIR --out DIR [--cut DAY]
                                           [--only history|live]
     python -m sparq_analytics.survey lag  --kalshi DIR --live DIR --out DIR [--hours N]
+    python -m sparq_analytics.survey tail --kalshi DIR --live DIR --out DIR [--cut DAY]
 
 Run it on the analytics node. ``--kalshi`` is the history download's ``kalshi`` folder, ``--live``
 the live copies' folder (``live extract``), ``--out`` where the results go. ``dump`` (S3.1) reads
@@ -14,7 +15,10 @@ dollars a day a 99-cent bid would make, writing ``dump-history.json``, ``dump-re
 list, runs the event study over the live frames (the first ``--hours`` of the span when asked) and
 writes ``lag-pairs.parquet``, ``lag-coverage.json``, an hour file of events each under
 ``lag-events`` and ``lag.json`` (its figures by kind printed); ``--kalshi`` supplies the series'
-fee terms. Exit codes: 0 fine, 1 bad command line or data.
+fee terms. ``tail`` (S3.3) reads the volume tiers from the history's trade files, the spreads and
+the half-spread dollars from the live frames and trades, and the surprise rate from the history to
+``--cut``, writing ``tail-volume.json``, ``tail-live.json``, ``tail-surprise.json`` and
+``tail.json`` (its verdicts printed). Exit codes: 0 fine, 1 bad command line or data.
 """
 
 import argparse
@@ -29,7 +33,7 @@ import polars as pl
 
 from sparq_analytics.live.source import LiveSourceError
 from sparq_analytics.study.dataset import StudyDataError
-from sparq_analytics.survey import lag
+from sparq_analytics.survey import lag, tail
 from sparq_analytics.survey.dump import CUT, SurveyDataError, history
 from sparq_analytics.survey.implied import combine
 from sparq_analytics.survey.queue import fee_terms, live_reading
@@ -44,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m sparq_analytics.survey", description=__doc__.split("\n")[0]
     )
-    parser.add_argument("command", choices=("dump", "lag"))
+    parser.add_argument("command", choices=("dump", "lag", "tail"))
     parser.add_argument("--kalshi", type=Path, help="the history download's kalshi folder")
     parser.add_argument("--live", type=Path, help="the live copies' folder")
     parser.add_argument("--out", type=Path, help="where the results go")
@@ -107,7 +111,31 @@ def _lag(args: argparse.Namespace) -> int:
     return 0
 
 
-HANDLERS = {"dump": _dump, "lag": _lag}
+def _tail(args: argparse.Namespace) -> int:
+    kalshi, live = _need(args.kalshi, "--kalshi"), _need(args.live, "--live")
+    out = _need(args.out, "--out")
+    out.mkdir(parents=True, exist_ok=True)
+    volume = tail.volume(kalshi, tail.trade_days(kalshi))
+    _write(out, "tail-volume.json", volume)
+    live_reading = tail.live_reading(live, fee_terms(kalshi))
+    _write(out, "tail-live.json", live_reading)
+    surprise = tail.surprise(kalshi, args.cut)
+    _write(out, "tail-surprise.json", surprise)
+    result = tail.combine(volume, live_reading, surprise)
+    _write(out, "tail.json", result)
+    thin = live_reading["thin_uncontested_half_spread_e6_a_day"]
+    shown = {
+        "cleared": result["cleared"],
+        "thin_uncontested_half_spread_e6_a_day": thin,
+        "surprise_total": surprise["total"],
+        "surprise_by_category": surprise["by_category"],
+        "clearing_series": surprise["clearing_series"],
+    }  # fmt: skip
+    print(json.dumps(shown, indent=2, default=str))
+    return 0
+
+
+HANDLERS = {"dump": _dump, "lag": _lag, "tail": _tail}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

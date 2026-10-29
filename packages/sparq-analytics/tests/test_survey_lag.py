@@ -59,6 +59,7 @@ def test_moves_need_two_cents_of_mid_and_an_unopposed_quote(tmp_path: Path) -> N
         [
             _f(lt(0, 0), "X", 20, 22, 10),
             _f(lt(0, 10), "X", 20, None, 10),
+            _f(lt(0, 15), "X", 0, 22, 0, 10),  # an empty bid, as the feed shows it
             _f(lt(0, 20), "X", 30, 32, 10),
         ],
         schema=TICKER_SCHEMA,

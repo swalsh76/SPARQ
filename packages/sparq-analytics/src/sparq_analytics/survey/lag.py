@@ -7,8 +7,9 @@ and the ask not moving against each other (a pure widening is not a move). For e
 at that moment, the watched market ``b`` is read:
 
 * its quote just before the move (its last frame strictly before; **unknown** when none was seen,
-  **one-sided** when a side is missing, **extreme** when the mid is at 3 cents or less or 97 or
-  more, which is S3.1's certainty regime: those events take no further part);
+  **one-sided** when a side is missing, which the feed shows as a 0-cent bid or a 100-cent ask
+  with no size, **extreme** when the mid is at 3 cents or less or 97 or more, which is S3.1's
+  certainty regime: those events take no further part);
 * its **response** at 1 s, 10 s, 1 min, 10 min and 1 h: the change of its mid, counted positive
   in the direction the pair expects (``a``'s direction times the pair's sign; ``a``'s direction
   alone for an unsigned kind); null past ``b``'s close, past the copied frames, or where a logged
@@ -38,7 +39,7 @@ dollar; sizes are hundredths of a contract; responses are millionths per contrac
 cent) and shown in cents.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,7 @@ import polars as pl
 from sparq_core.fees import QUADRATIC_FAMILY
 from sparq_core.fixedpoint import E6
 
-from sparq_analytics.live.source import HOUR, hour_files, hour_name, hour_of
+from sparq_analytics.live.source import HOUR, TRADE_SCHEMA, hour_files, hour_name, hour_of
 from sparq_analytics.study.bootstrap import Estimate, cluster_bootstrap
 from sparq_analytics.study.feecalc import taker_fee_expr
 from sparq_analytics.survey.dump import MS_PER_HOUR, SurveyDataError
@@ -83,9 +84,15 @@ _STATE_FRAME = ("yes_bid_e6", "yes_ask_e6", "yes_bid_size_e2", "yes_ask_size_e2"
 
 
 def _with_mid(frames: pl.DataFrame) -> pl.DataFrame:
-    two_sided = pl.col("yes_bid_e6").is_not_null() & pl.col("yes_ask_e6").is_not_null()
-    mid = (pl.col("yes_bid_e6") + pl.col("yes_ask_e6")) // 2
-    return frames.with_columns(mid_e6=pl.when(two_sided).then(mid))
+    """The frames with an empty side read as missing (the feed shows it as a 0-cent bid or a
+    100-cent ask with no size, never as a null) and the mid where both sides stand."""
+    bid = pl.when(pl.col("yes_bid_size_e2") > 0).then(pl.col("yes_bid_e6"))
+    ask = pl.when(pl.col("yes_ask_size_e2") > 0).then(pl.col("yes_ask_e6"))
+    return frames.with_columns(yes_bid_e6=bid, yes_ask_e6=ask).with_columns(
+        mid_e6=pl.when(
+            pl.col("yes_bid_e6").is_not_null() & pl.col("yes_ask_e6").is_not_null()
+        ).then((pl.col("yes_bid_e6") + pl.col("yes_ask_e6")) // 2)
+    )
 
 
 def frames_of(path: Path, carried: bool = False) -> pl.DataFrame:
@@ -389,18 +396,16 @@ def gaps_of(live: Path, end: datetime) -> pl.DataFrame:
     )
 
 
-def _trades_of(live: Path, hours: list[datetime]) -> pl.DataFrame:
+def _trades_of(
+    live: Path,
+    hours: list[datetime],
+    columns: Sequence[str] = ("ts_ms", "ticker", "count_e2", "taker_side"),
+) -> pl.DataFrame:
+    """The hours' trades with ``columns``, block trades left out (they are negotiated, not taken
+    at the resting quote); an empty frame when no hour has a file."""
     paths = [p for p in (live / "trade" / f"{hour_name(h)}.parquet" for h in hours) if p.exists()]
-    columns = ["ts_ms", "ticker", "count_e2", "taker_side"]
     if not paths:
-        schema = {
-            "ts_ms": pl.Int64,
-            "ticker": pl.String,
-            "count_e2": pl.Int64,
-            "taker_side": pl.String,
-        }
-        return pl.DataFrame(schema=schema)
-    # a block trade is negotiated, not taken at the resting quote
+        return pl.DataFrame(schema={c: TRADE_SCHEMA[c] for c in columns})
     return pl.concat(
         [
             pl.read_parquet(p, columns=[*columns, "is_block_trade"])
@@ -601,6 +606,7 @@ def _intervals(usable: pl.LazyFrame, hours: int, start_ms: int) -> dict[str, dic
             headline.sum().cast(pl.Float64).alias("num"),
             headline.count().cast(pl.Float64).alias("den"),
         )
+        .sort("kind", "group", "hour")  # a group-by's order is not fixed; the draws must be
         .collect()
     )
     nets = usable.filter(pl.col("counted") & pl.col("net_e6").is_not_null())
