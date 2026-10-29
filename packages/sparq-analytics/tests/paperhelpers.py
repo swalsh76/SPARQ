@@ -22,7 +22,8 @@ P3):
 * ``P5`` (``KXP5``, Sports, plain quadratic): 00:00 bid 20 ask 50 (uncontested), 00:41 bid 20 ask
   60 (uncontested; paper quotes again, for the four minutes to the close), **closes at 00:45**.
   Paper bids at 00:00: 25 and 30. 00:30 a no taker, 1 contract at 22, fills both bids; 00:50 a yes
-  taker at 49 comes after the close, when no quote stands.
+  taker at 49 comes after the close, when no quote stands. **Settled yes** at 00:50 (the only
+  settled market): a bid filled at 25 earns 75 cents a contract at settlement.
 * ``P6`` (``KXP6``, Politics): 00:00 bid 20 ask 60, uncontested, never traded: quoted (two hours
   less the outage's minute) and never filled.
 
@@ -161,4 +162,8 @@ def write_paper_live(root: Path, days: int = 1, gaps: list[dict[str, Any]] | Non
                 {"kind": "ticker", "start_ms": lm(29, 0), "end_ms": lm(30, 0), "reason": "lost"}
             )
     pl.DataFrame(gaps, schema=GAP_SCHEMA).write_parquet(live / "gaps.parquet")
+    pl.DataFrame(  # P5 settled yes at 00:50; the rest are still open
+        {"ticker": ["P5"], "result": ["yes"], "settled_ms": [lm(0, 50)]},
+        schema={"ticker": pl.String, "result": pl.String, "settled_ms": pl.Int64},
+    ).write_parquet(live / "settlements.parquet")
     return live

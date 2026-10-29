@@ -61,6 +61,13 @@ MARKET_SQL = (
     "THEN regexp_replace(m.rules_primary, '\\s+', ' ', 'g') END AS weather_rules "
     "FROM market m LEFT JOIN series s ON s.ticker = m.series_ticker"
 )
+# the settled markets' results and settlement times (the discovery pass keeps them current), for a
+# registered test that marks fills to settlement without an API call (S4, T1)
+SETTLE_SQL = (
+    "SELECT m.ticker, m.result, "
+    "floor(extract(epoch FROM m.settlement_ts) * 1000)::bigint AS settled_ms "
+    "FROM market m WHERE m.result IN ('yes', 'no')"
+)
 # the outages in which ticker frames were lost (trades are backfilled, frames cannot be); an open
 # one has no end yet
 GAP_SQL = (
@@ -102,6 +109,7 @@ MARKET_SCHEMA = {
     "weather_rules": pl.String,  # null outside Climate and Weather
 }
 GAP_SCHEMA = {"kind": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64, "reason": pl.String}
+SETTLE_SCHEMA = {"ticker": pl.String, "result": pl.String, "settled_ms": pl.Int64}
 TABLES = (("ticker", TICKER_SQL, TICKER_SCHEMA), ("trade", TRADE_SQL, TRADE_SCHEMA))
 
 
@@ -196,6 +204,7 @@ class ExtractReport:
     rows: dict[str, int]
     markets: int
     gaps: int
+    settlements: int
 
 
 async def extract(
@@ -226,7 +235,9 @@ async def extract(
     log(f"markets: {markets:,} rows")
     gaps = await _copy(conn, GAP_SQL, (), GAP_SCHEMA, folder / "gaps.parquet")
     log(f"ticker gaps: {gaps:,}")
-    return ExtractReport(copied, present, rows, markets, gaps)
+    settled = await _copy(conn, SETTLE_SQL, (), SETTLE_SCHEMA, folder / "settlements.parquet")
+    log(f"settlements: {settled:,}")
+    return ExtractReport(copied, present, rows, markets, gaps, settled)
 
 
 def hour_files(folder: Path, name: str, start: datetime, end: datetime) -> list[Path]:

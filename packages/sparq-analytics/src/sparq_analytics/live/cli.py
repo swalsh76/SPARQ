@@ -177,7 +177,8 @@ def _extract(args: argparse.Namespace) -> int:
     report = asyncio.run(run())
     print(
         f"copied {report.hours_copied} hour files, {report.hours_present} already there; "
-        f"rows {report.rows}; markets {report.markets:,}; ticker gaps {report.gaps:,}"
+        f"rows {report.rows}; markets {report.markets:,}; ticker gaps {report.gaps:,}; "
+        f"settlements {report.settlements:,}"
     )
     return 0
 
