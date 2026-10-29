@@ -1,0 +1,214 @@
+import json
+from datetime import date
+from pathlib import Path
+
+import polars as pl
+import pytest
+from sparq_analytics.survey import tail
+from sparq_analytics.survey.cli import main
+from sparq_analytics.survey.dump import SurveyDataError
+from sparq_analytics.survey.queue import fee_terms
+from surveyhelpers import BASE_TIME, HOUR
+from tailhelpers import FEES, write_tail_history, write_tail_live
+
+CUT = date(2026, 9, 16)
+
+
+def test_trade_days_come_from_the_folder(tmp_path: Path) -> None:
+    kalshi = write_tail_history(tmp_path)
+    assert tail.trade_days(kalshi) == [date(2026, 9, 14), date(2026, 9, 15), date(2026, 9, 16)]
+    (tmp_path / "empty" / "trades").mkdir(parents=True)
+    with pytest.raises(SurveyDataError, match="no trade files"):
+        tail.trade_days(tmp_path / "empty")
+
+
+def test_volume_by_tier_and_category(tmp_path: Path) -> None:
+    kalshi = write_tail_history(tmp_path)
+    reading = tail.volume(kalshi, tail.trade_days(kalshi))
+    assert (reading["first_day"], reading["last_day"], reading["days"]) == (
+        "2026-09-14", "2026-09-16", 3.0,
+    )  # fmt: skip
+    assert (reading["open_markets"], reading["traded_markets"], reading["silent_markets"]) == (
+        69, 68, 1,
+    )  # fmt: skip
+    assert reading["silent_by_category"] == {"Sports": 1}  # V3; V4 closed before the window
+    thin = reading["by_tier"]["under 100"]
+    assert thin["markets"] == 67 and thin["trades_a_day"] == 24.0  # 72 trades over 3 days
+    assert thin["contracts_a_day"] == 25.0 and thin["dollars_e6_a_day"] == 22_403_333
+    mid = reading["by_tier"]["100 to 1,000"]  # V2: 200 contracts in an hour-long market
+    assert (mid["markets"], mid["dollars_e6_a_day"]) == (1, 33_333_333)
+    assert mid["contracts_a_day"] == pytest.approx(200 / 3)
+    cells = reading["by_tier_and_category"]
+    assert set(cells) == {
+        "under 100 | Economics",
+        "under 100 | Politics",
+        "under 100 | Sports",
+        "100 to 1,000 | Crypto",
+    }
+    sports = cells["under 100 | Sports"]  # V1, S1, S2, S3, S6
+    assert (sports["markets"], sports["dollars_e6_a_day"]) == (5, 2_920_000)
+    assert sports["contracts_a_day"] == pytest.approx(13 / 3)
+    assert cells["under 100 | Economics"]["contracts_a_day"] == 20.0
+
+
+def test_spreads_by_tier(tmp_path: Path) -> None:
+    live = write_tail_live(tmp_path)
+    reading = tail.live_reading(live, FEES)
+    assert (reading["hours"], reading["markets_with_frames"]) == (2, 3)
+    spreads = reading["spreads_by_tier"]
+    # L1: 30 minutes at 4 cents, 30 at 30, then an hour one-sided
+    assert spreads["under 100"] == {
+        "markets": 1,
+        "median_spread_cents": 17.0,
+        "two_sided_share": 0.5,
+    }
+    assert spreads["100 to 1,000"] == {
+        "markets": 1,
+        "median_spread_cents": 4.0,
+        "two_sided_share": 1.0,
+    }
+    assert spreads["1,000 to 10,000"]["median_spread_cents"] == 80.0
+    assert reading["spreads_by_tier_and_category"]["under 100 | Sports"]["markets"] == 1
+
+
+def test_half_spread_by_state_and_the_thin_bar(tmp_path: Path) -> None:
+    live = write_tail_live(tmp_path)
+    reading = tail.live_reading(live, FEES)
+    by_state = reading["half_spread_by_state"]
+    assert by_state["contested"] == {  # L1's 1 contract at a 4-cent spread, L2's 10 at 4 cents
+        "markets": 2,
+        "trades_a_day": 24.0,
+        "contracts_a_day": 132.0,
+        "half_spread_e6_a_day": 2_640_000,
+        "fee_e6_a_day": 524_160,  # L2's maker fee of 43,680 on its trade
+        "net_e6_a_day": 2_115_840,
+        "fee_unknown_trades": 0,
+    }
+    uncontested = by_state["uncontested"]  # L1's 2 contracts at 30 cents, L3's 100 at 80
+    assert (uncontested["markets"], uncontested["half_spread_e6_a_day"]) == (2, 483_600_000)
+    assert uncontested["contracts_a_day"] == 1_224.0 and uncontested["fee_e6_a_day"] == 0
+    one_sided = by_state["one_sided"]
+    assert (one_sided["markets"], one_sided["half_spread_e6_a_day"]) == (1, 0)
+    assert one_sided["contracts_a_day"] == 6.0
+    thin = reading["half_spread_thin_by_state"]
+    assert thin["contested"]["half_spread_e6_a_day"] == 2_640_000
+    assert thin["uncontested"]["half_spread_e6_a_day"] == 3_600_000  # L1 alone: L3 is not thin
+    assert (
+        reading["half_spread_by_tier_and_state"]["1,000 to 10,000 | uncontested"][
+            "half_spread_e6_a_day"
+        ]
+        == 480_000_000
+    )
+    assert reading["half_spread_thin_by_category_and_state"]["Sports | contested"]["markets"] == 2
+    assert (reading["thin_uncontested_half_spread_e6_a_day"], reading["clears"]) == (
+        3_600_000,
+        False,
+    )
+
+
+def test_live_reading_without_trades(tmp_path: Path) -> None:
+    live = write_tail_live(tmp_path, trades=False)
+    reading = tail.live_reading(live, FEES)
+    assert reading["spreads_by_tier"]["under 100"]["median_spread_cents"] == 17.0  # all untraded
+    assert reading["half_spread_by_state"] == {} and reading["clears"] is False
+    assert reading["thin_uncontested_half_spread_e6_a_day"] == 0
+
+
+def test_day_before_takes_the_last_trade_in_the_window(tmp_path: Path) -> None:
+    kalshi = write_tail_history(tmp_path)
+    found, counts = tail.day_before(kalshi, CUT)
+    assert counts == {"markets": 70, "priced": 66, "unpriced": 4, "not_in_tail": 2, "in_tail": 64}
+    rows = {r["ticker"]: r for r in found.to_dicts()}
+    assert rows["S1"]["p_e6"] == 940_000  # not the 97 six hours out, nor the 85 forty hours out
+    assert (rows["S1"]["side"], rows["S1"]["surprise"], rows["S1"]["bucket"]) == (
+        "yes",
+        0,
+        "90 to 95",
+    )
+    assert (rows["S2"]["side"], rows["S2"]["surprise"]) == ("yes", 1)
+    assert (rows["S3"]["side"], rows["S3"]["p_e6"], rows["S3"]["surprise"]) == ("no", 920_000, 0)
+    assert (rows["S6"]["bucket"], rows["S6"]["implied"]) == ("99 and more", pytest.approx(0.01))
+    assert rows["Z07"]["event_ticker"] == "KXZ-E07" and rows["Z07"]["surprise"] == 1
+    assert "S4" not in rows and "S5" not in rows and "V1" not in rows
+
+
+def test_surprise_rates_and_the_clearing_series(tmp_path: Path) -> None:
+    kalshi = write_tail_history(tmp_path)
+    reading = tail.surprise(kalshi, CUT)
+    total = reading["total"]
+    assert (total["markets"], total["events"], total["surprises"]) == (64, 63, 61)
+    assert total["observed"] == pytest.approx(61 / 64) and total["implied"] == pytest.approx(
+        0.050625
+    )
+    sports = reading["by_category"]["Sports"]
+    assert (sports["markets"], sports["events"], sports["surprises"]) == (4, 3, 1)
+    assert (sports["observed"], sports["implied"]) == (0.25, pytest.approx(0.06))
+    assert sports["lower"] < 0.06 and sports["clears"] is False  # three events: wide
+    economics = reading["by_category"]["Economics"]
+    assert (economics["observed"], economics["lower"], economics["clears"]) == (1.0, 1.0, True)
+    assert economics["implied"] == pytest.approx(0.05)
+    buckets = reading["by_bucket"]
+    assert (buckets["90 to 95"]["markets"], buckets["90 to 95"]["surprises"]) == (3, 1)
+    assert buckets["90 to 95"]["implied"] == pytest.approx(0.23 / 3)
+    assert buckets["95 to 99"]["markets"] == 60 and buckets["99 and more"]["surprises"] == 0
+    assert list(reading["by_series"]) == ["KXZ"]  # KXS has 4 markets, under the 50
+    assert (reading["series_tested"], reading["expected_by_chance"]) == (1, 0.025)
+    [clearing] = reading["clearing_series"]
+    assert (clearing["series"], clearing["title"], clearing["category"], clearing["rules"]) == (
+        "KXZ", "Zed", "Economics", "Rules Z",
+    )  # fmt: skip
+    assert clearing["markets"] == 60 and clearing["clears"] is True
+    lowered = tail.surprise(kalshi, CUT, min_markets=4)
+    assert list(lowered["by_series"]) == ["KXS", "KXZ"] and lowered["series_tested"] == 2
+    assert lowered["by_series"]["KXS"]["observed"] == 0.25
+
+
+def test_a_tested_series_need_not_clear(tmp_path: Path) -> None:
+    kalshi = write_tail_history(tmp_path, only=("S1", "S2", "S3", "S6"))
+    reading = tail.surprise(kalshi, CUT, min_markets=4)
+    assert list(reading["by_series"]) == ["KXS"] and reading["by_series"]["KXS"]["clears"] is False
+    assert reading["clearing_series"] == [] and reading["expected_by_chance"] == 0.025
+
+
+def test_an_hour_without_a_trade_file_has_no_trades(tmp_path: Path) -> None:
+    live = write_tail_live(tmp_path)
+    missing = tail._trades(live, BASE_TIME + 5 * HOUR)
+    assert missing.is_empty() and missing.columns == ["ts_ms", "ticker", "yes_price_e6", "count_e2"]
+
+
+def test_surprise_refuses_a_world_without_a_tail(tmp_path: Path) -> None:
+    with pytest.raises(SurveyDataError, match="no trades from"):
+        tail.surprise(write_tail_history(tmp_path / "early"), date(2026, 9, 13))  # only V4 closes
+    kalshi = write_tail_history(tmp_path / "mid", only=("S4",))
+    with pytest.raises(SurveyDataError, match="90 cents"):
+        tail.surprise(kalshi, CUT)
+
+
+def test_tail_command_writes_the_readings(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    kalshi, live, out = write_tail_history(tmp_path), write_tail_live(tmp_path), tmp_path / "out"
+    assert fee_terms(kalshi).height == 7
+    argv = ["tail", "--kalshi", str(kalshi), "--live", str(live), "--out", str(out)]
+    assert main([*argv, "--cut", "2026-09-16"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["cleared"] == {"half_spread": False, "surprise_series": ["KXZ"]}
+    assert printed["thin_uncontested_half_spread_e6_a_day"] == 3_600_000
+    assert printed["surprise_total"]["surprises"] == 61
+    for name in ("tail-volume.json", "tail-live.json", "tail-surprise.json", "tail.json"):
+        assert json.loads((out / name).read_text(encoding="utf-8"))
+    result = json.loads((out / "tail.json").read_text(encoding="utf-8"))
+    assert result["volume"]["traded_markets"] == 68 and result["live"]["hours"] == 2
+    assert main([*argv, "--cut", "2026-10-11"]) == 1  # past the held-out cut (M3)
+    assert "held out" in capsys.readouterr().err
+    assert main(["tail", "--live", str(live), "--out", str(out)]) == 1
+    assert "--kalshi is required" in capsys.readouterr().err
+
+
+def test_fee_terms_cover_the_live_series(tmp_path: Path) -> None:
+    kalshi = write_tail_history(tmp_path)
+    terms = fee_terms(kalshi)
+    assert set(terms["series_ticker"]) >= {"KXA", "KXM", "KXB"}
+    assert (
+        terms.filter(pl.col("series_ticker") == "KXM")["fee_type"][0] == "quadratic_with_maker_fees"
+    )
