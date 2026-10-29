@@ -125,6 +125,21 @@ def test_half_spread_by_state_and_the_thin_bar(tmp_path: Path) -> None:
     )
 
 
+def test_a_series_without_a_multiplier_has_an_unknown_fee(tmp_path: Path) -> None:
+    live = write_tail_live(tmp_path)
+    fees = FEES.with_columns(
+        multiplier_e6=pl.when(pl.col("series_ticker") == "KXM")
+        .then(pl.lit(None, dtype=pl.Int64))
+        .otherwise("multiplier_e6")
+    )
+    by_state = tail.live_reading(live, fees)["half_spread_by_state"]
+    contested = by_state["contested"]  # L1's and L2's trades, both in KXM
+    assert (contested["fee_e6_a_day"], contested["fee_unknown_trades"]) == (0, 2)
+    assert contested["net_e6_a_day"] == contested["half_spread_e6_a_day"]
+    uncontested = by_state["uncontested"]  # L1's trade at 30 cents (KXM) and L3's (KXB, known)
+    assert (uncontested["fee_e6_a_day"], uncontested["fee_unknown_trades"]) == (0, 1)
+
+
 def test_live_reading_without_trades(tmp_path: Path) -> None:
     live = write_tail_live(tmp_path, trades=False)
     reading = tail.live_reading(live, FEES)
@@ -229,7 +244,7 @@ def test_a_judged_cell_need_not_clear() -> None:
 
 def test_an_hour_without_a_trade_file_has_no_trades(tmp_path: Path) -> None:
     live = write_tail_live(tmp_path)
-    missing = lag._trades_of(live, [BASE_TIME + 5 * HOUR], tail.TRADE_COLUMNS)
+    missing = lag.trades_of(live, [BASE_TIME + 5 * HOUR], tail.TRADE_COLUMNS)
     assert missing.is_empty() and missing.columns == ["ts_ms", "ticker", "yes_price_e6", "count_e2"]
 
 

@@ -238,3 +238,15 @@ def test_the_summary_excludes_left_censored_episodes_and_scales_fills_to_a_day(
         summarize(unknown, start, end)["by_category"]["Climate and Weather"]["fee_unknown_episodes"]
         == 1
     )
+    # as does a series without a multiplier
+    bare = fee_terms(kalshi).with_columns(
+        multiplier_e6=pl.when(pl.col("series_ticker") == "KXRAIN")
+        .then(pl.lit(None, dtype=pl.Int64))
+        .otherwise("multiplier_e6")
+    )
+    unknown = with_fills(raw, pl.read_parquet(live / "markets.parquet"), bare)
+    assert unknown.filter(pl.col("ticker") == "L2")["fee_onset_10000"].to_list() == [None]
+    assert (
+        summarize(unknown, start, end)["by_category"]["Climate and Weather"]["fee_unknown_episodes"]
+        == 1
+    )

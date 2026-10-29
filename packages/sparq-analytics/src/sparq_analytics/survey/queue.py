@@ -30,7 +30,14 @@ from sparq_core.fees import MAKER_SHARE_E2
 
 from sparq_analytics.live.source import HOUR, hour_files, hour_name, hour_of, last_hour_end
 from sparq_analytics.study.feecalc import maker_fee_expr
-from sparq_analytics.survey.dump import CENTS, CERTAIN_E6, MS_PER_HOUR, SurveyDataError, hours
+from sparq_analytics.survey.dump import (
+    CENTS,
+    CERTAIN_E6,
+    MS_PER_HOUR,
+    SurveyDataError,
+    hours,
+    series_table,
+)
 
 SIDES = ("yes", "no")
 BID_SIZES_E2 = (10_000, 100_000)  # 100 and 1,000 contracts a market
@@ -180,24 +187,29 @@ def hour_before(live: Path, found: pl.DataFrame) -> pl.DataFrame:
     return found.join(pl.concat(pieces), on=["ticker", "side", "start_ms"], how="left")
 
 
+def gaps_of(live: Path, end: datetime) -> pl.DataFrame:
+    """The ingest's logged outages of the ticker feed (``kind`` ``ticker`` or ``all``) as
+    ``start_ms`` and ``end_ms``, one still open at the span's ``end`` ending there; none without
+    a gap log."""
+    path = live / "gaps.parquet"
+    if not path.exists():
+        return pl.DataFrame(schema={"start_ms": pl.Int64, "end_ms": pl.Int64})
+    span_end_ms = int(end.timestamp() * 1000)
+    return (
+        pl.read_parquet(path)
+        .filter(pl.col("kind").is_in(["ticker", "all"]))
+        .select("start_ms", pl.col("end_ms").fill_null(span_end_ms))
+    )
+
+
 def mark_gaps(found: pl.DataFrame, live: Path, end: datetime) -> pl.DataFrame:
     """Each episode with ``in_gap``: whether an outage of the ticker feed (the ingest's gap log)
     overlaps it, in which case its frames may miss an end or a re-entry and its trades were
     backfilled; such episodes take no part in the figures."""
-    path = live / "gaps.parquet"
-    span_end_ms = int(end.timestamp() * 1000)
-    if not path.exists():
-        return found.with_columns(in_gap=pl.lit(False))
-    gaps = (
-        pl.read_parquet(path)
-        .filter(pl.col("kind").is_in(["ticker", "all"]))
-        .select(
-            pl.col("start_ms").alias("gap_start_ms"),
-            pl.col("end_ms").fill_null(span_end_ms).alias("gap_end_ms"),
-        )
-    )
+    gaps = gaps_of(live, end).rename({"start_ms": "gap_start_ms", "end_ms": "gap_end_ms"})
     if gaps.is_empty():
         return found.with_columns(in_gap=pl.lit(False))
+    span_end_ms = int(end.timestamp() * 1000)
     overlapping = (
         found.select("ticker", "side", "start_ms", "end_ms")
         .join(gaps, how="cross")
@@ -301,8 +313,11 @@ def with_fills(
     history's reversal dumps (for the onset) and false-regime dumps (for the hour before), the
     fill a reversal would have given each."""
     # the series' current terms: the live span is days old, so they are the terms in force; a
-    # fee type outside the quadratic family, or a series without terms, leaves the fee unknown
-    share = pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
+    # fee type outside the quadratic family, or a series without terms or without a multiplier,
+    # leaves the fee unknown
+    share = pl.when(pl.col("multiplier_e6").is_not_null()).then(
+        pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
+    )
     frame = (
         found.join(markets.select("ticker", "series_ticker", "category"), on="ticker", how="left")
         .join(fees, on="series_ticker", how="left")
@@ -422,6 +437,4 @@ def live_reading(
 
 def fee_terms(kalshi: Path) -> pl.DataFrame:
     """Each series' fee type and multiplier, from the history's series table."""
-    return pl.read_parquet(
-        kalshi / "series.parquet", columns=["ticker", "fee_type", "fee_multiplier_e6"]
-    ).rename({"ticker": "series_ticker", "fee_multiplier_e6": "multiplier_e6"})
+    return series_table(kalshi, ["fee_type", "fee_multiplier_e6"])

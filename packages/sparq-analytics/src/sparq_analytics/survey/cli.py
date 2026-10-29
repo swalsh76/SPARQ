@@ -18,7 +18,8 @@ writes ``lag-pairs.parquet``, ``lag-coverage.json``, an hour file of events each
 fee terms. ``tail`` (S3.3) reads the volume tiers from the history's trade files, the spreads and
 the half-spread dollars from the live frames and trades, and the surprise rate from the history to
 ``--cut``, writing ``tail-volume.json``, ``tail-live.json``, ``tail-surprise.json`` and
-``tail.json`` (its verdicts printed). Exit codes: 0 fine, 1 bad command line or data.
+``tail.json`` (its verdicts printed). A flag the command does not use is refused. Exit codes: 0
+fine, 1 bad command line or data.
 """
 
 import argparse
@@ -52,10 +53,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kalshi", type=Path, help="the history download's kalshi folder")
     parser.add_argument("--live", type=Path, help="the live copies' folder")
     parser.add_argument("--out", type=Path, help="where the results go")
-    parser.add_argument("--cut", type=date.fromisoformat, default=CUT)
-    parser.add_argument("--only", choices=("history", "live"))
+    parser.add_argument(
+        "--cut", type=date.fromisoformat, help=f"dump, tail: the last day read for outcomes ({CUT})"
+    )
+    parser.add_argument("--only", choices=("history", "live"), help="dump: one reading alone")
     parser.add_argument("--hours", type=int, help="lag: read only the span's first N hours")
     return parser
+
+
+APPLIES = {"cut": ("dump", "tail"), "only": ("dump",), "hours": ("lag",)}
+
+
+def _check(args: argparse.Namespace) -> None:
+    """A flag given to a command it means nothing to is refused, not ignored."""
+    for flag, commands in APPLIES.items():
+        if getattr(args, flag) is not None and args.command not in commands:
+            raise UsageError(f"--{flag} does not apply to {args.command}")
 
 
 def _need(value: Path | None, name: str) -> Path:
@@ -74,7 +87,7 @@ def _dump(args: argparse.Namespace) -> int:
     past: dict[str, Any] | None = None
     frames: dict[str, Any] | None = None
     if args.only != "live":
-        past, regimes = history(kalshi, args.cut)
+        past, regimes = history(kalshi, CUT if args.cut is None else args.cut)
         _write(out, "dump-history.json", past)
         regimes.write_parquet(out / "dump-regimes.parquet")
     if args.only != "history":
@@ -119,7 +132,7 @@ def _tail(args: argparse.Namespace) -> int:
     _write(out, "tail-volume.json", volume)
     live_reading = tail.live_reading(live, fee_terms(kalshi))
     _write(out, "tail-live.json", live_reading)
-    surprise = tail.surprise(kalshi, args.cut)
+    surprise = tail.surprise(kalshi, CUT if args.cut is None else args.cut)
     _write(out, "tail-surprise.json", surprise)
     result = tail.combine(volume, live_reading, surprise)
     _write(out, "tail.json", result)
@@ -141,6 +154,7 @@ HANDLERS = {"dump": _dump, "lag": _lag, "tail": _tail}
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        _check(args)
         return HANDLERS[args.command](args)
     except (
         UsageError,
