@@ -28,7 +28,7 @@ import polars as pl
 from numpy.typing import NDArray
 from sparq_core.fees import MAKER_SHARE_E2
 
-from sparq_analytics.live.source import HOUR, hour_files, hour_name, last_hour_end
+from sparq_analytics.live.source import HOUR, hour_files, hour_name, hour_of, last_hour_end
 from sparq_analytics.study.feecalc import maker_fee_expr
 from sparq_analytics.survey.dump import CENTS, CERTAIN_E6, MS_PER_HOUR, SurveyDataError, hours
 
@@ -53,7 +53,7 @@ def span(live: Path) -> tuple[datetime, datetime]:
         raise SurveyDataError(f"no hour files under {live}; run live extract")
     for name in names:
         if pl.scan_parquet(live / "ticker" / f"{name}.parquet").select(pl.len()).collect().item():
-            start = datetime.strptime(name + "+0000", "%Y-%m-%dT%H%z")
+            start = hour_of(name)
             if start < end:
                 return start, end
             break

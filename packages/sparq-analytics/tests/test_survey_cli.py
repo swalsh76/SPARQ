@@ -132,7 +132,7 @@ def test_lag_builds_the_pairs_runs_the_study_and_prints_the_kinds(
     coverage = json.loads((out / "lag-coverage.json").read_text(encoding="utf-8"))
     assert coverage["by_kind"]["horizons"]["pairs"] == 10
     result = json.loads((out / "lag.json").read_text(encoding="utf-8"))
-    assert result["coverage"] == coverage and result["events"] == 26
+    assert result["coverage"] == coverage and result["events"] == 28
     assert len(list((out / "lag-events").glob("*.parquet"))) == 2
     # the first hour alone
     assert main([*argv, "--hours", "1"]) == 0

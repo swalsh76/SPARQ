@@ -169,6 +169,11 @@ def hour_name(hour: datetime) -> str:
     return hour.strftime("%Y-%m-%dT%H")
 
 
+def hour_of(name: str) -> datetime:
+    """The hour an hour file's name stands for: the inverse of :func:`hour_name`."""
+    return datetime.strptime(name + "+0000", "%Y-%m-%dT%H%z")
+
+
 async def _copy(
     conn: Any, query: str, args: tuple[Any, ...], schema: dict[str, Any], target: Path
 ) -> int:
@@ -248,5 +253,5 @@ def last_hour_end(folder: Path) -> datetime | None:
         names = sorted(p.stem for p in (folder / name).glob("*.parquet"))
         if not names:
             return None
-        ends.append(datetime.strptime(names[-1] + "+0000", "%Y-%m-%dT%H%z") + HOUR)
+        ends.append(hour_of(names[-1]) + HOUR)
     return min(ends)

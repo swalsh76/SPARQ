@@ -2,8 +2,9 @@
 ingest's frames (PLAN §6.3, M2; no outcome is read).
 
 An **event** is a move of market ``a``: its mid (from a two-sided frame) changes by 2 cents or
-more from its previous two-sided frame, with the bid and the ask not moving against each other (a
-pure widening is not a move). For each pair valid at that moment, the watched market ``b`` is read:
+more from its previous two-sided frame (one-sided frames in between are skipped), with the bid
+and the ask not moving against each other (a pure widening is not a move). For each pair valid
+at that moment, the watched market ``b`` is read:
 
 * its quote just before the move (its last frame strictly before; **unknown** when none was seen,
   **one-sided** when a side is missing, **extreme** when the mid is at 3 cents or less or 97 or
@@ -13,18 +14,22 @@ pure widening is not a move). For each pair valid at that moment, the watched ma
   alone for an unsigned kind); null past ``b``'s close, past the copied frames, or where a logged
   outage of the ticker feed overlaps the hour;
 * its **first move**: the first frame at or after the move at which its mid differs from the mid
-  before, up to an hour (later counts as not moved), and whether that move agreed with the
-  expectation;
-* the trades in ``b`` inside that lag: the takers who hit ``b``'s stale quote on the expected side
-  (someone already taking it: **with**) and on the other side (**against**); while the quote stands
-  every trade is at it, so the taker's side says which side was hit;
+  before, up to an hour (later counts as not moved; the lag is **unknown** when the hour runs
+  past the copied frames or through an outage and no move was seen), and whether that move
+  agreed with the expectation;
+* the trades in ``b`` inside that lag (block trades left out): the takers who hit ``b``'s stale
+  quote on the expected side (someone already taking it: **with**) and on the other side
+  (**against**); while the quote stands every trade is at it, so the taker's side says which
+  side was hit;
 * for a signed kind, the **capacity** of the stale quote: the size shown on the side a taker would
   hit, times the 10-minute response, less the taker fee on that size at that price from the
   series' terms. Each stale quote is counted once, at the first move that left it stale (the same
-  ``b``, expected side and first move); the trades through it are counted once the same way. The
-  capacity is given for every stale quote, as M4 words it, and for the **reachable** ones, which
-  stood at least a second before ``b`` moved (SPARQ's scale), since a quote that moved in the
-  same second as ``a`` was never there to hit.
+  ``b``, expected side and first move, or, when no move came within the hour, the same quote
+  frame), provided its 10-minute response and its fee are known; the trades through it are
+  counted once the same way. The capacity is given for every stale quote, as M4 words it, and
+  for the **reachable** ones, which stood at least a second before ``b`` moved (SPARQ's scale)
+  with that lag known, since a quote that moved in the same second as ``a`` was never there to
+  hit.
 
 Events whose first ten minutes overlap a logged outage are excluded. The figures a day scale the
 span's sums by its hours; they are also broken down by ``b``'s activity tier (contracts a day in
@@ -43,7 +48,7 @@ import polars as pl
 from sparq_core.fees import QUADRATIC_FAMILY
 from sparq_core.fixedpoint import E6
 
-from sparq_analytics.live.source import HOUR, hour_files, hour_name
+from sparq_analytics.live.source import HOUR, hour_files, hour_name, hour_of
 from sparq_analytics.study.bootstrap import Estimate, cluster_bootstrap
 from sparq_analytics.study.feecalc import taker_fee_expr
 from sparq_analytics.survey.dump import MS_PER_HOUR, SurveyDataError
@@ -97,15 +102,20 @@ def empty_frames() -> pl.DataFrame:
 
 
 def moves(frames: pl.DataFrame) -> pl.DataFrame:
-    """Every move among ``frames`` (each market's carried frame first, so a move across the hour
-    boundary is seen and the carried frame itself is never a move)."""
+    """Every move among ``frames``: each two-sided frame against the market's previous two-sided
+    frame (each market's carried frames come first, so a move across the hour boundary is seen
+    and a carried frame itself is never a move)."""
 
     def change(column: str) -> pl.Expr:
         return pl.col(column) - pl.col(column).shift(1).over("ticker")
 
-    # the differences are taken before the filter, so each row sees its previous frame
-    ordered = frames.sort("ticker", "ts_ms").with_columns(
-        d_mid=change("mid_e6"), d_bid=change("yes_bid_e6"), d_ask=change("yes_ask_e6")
+    # the differences are taken before the move filter, so each row sees its previous frame
+    ordered = (
+        frames.filter(pl.col("mid_e6").is_not_null())
+        .sort("ticker", "ts_ms")
+        .with_columns(
+            d_mid=change("mid_e6"), d_bid=change("yes_bid_e6"), d_ask=change("yes_ask_e6")
+        )
     )
     d_mid = pl.col("d_mid")
     move = (d_mid.abs() >= MOVE_E6) & ((pl.col("d_bid") * pl.col("d_ask")) >= 0)
@@ -235,8 +245,12 @@ def with_responses(
     return out  # fmt: skip
 
 
-def with_first_move(events: pl.DataFrame, changes: pl.DataFrame) -> pl.DataFrame:
-    """``b``'s first mid change at or after the move, within an hour, and whether it agreed."""
+def with_first_move(
+    events: pl.DataFrame, changes: pl.DataFrame, loaded_end_ms: int
+) -> pl.DataFrame:
+    """``b``'s first mid change at or after the move, within an hour, and whether it agreed;
+    ``lag_known`` is false where none was seen and the hour ran past the copied frames or
+    through an outage."""
     right = changes.select(
         first_ms=pl.col("ts_ms"), b=pl.col("ticker"), mid_first=pl.col("mid_e6")
     ).sort("first_ms")
@@ -246,10 +260,12 @@ def with_first_move(events: pl.DataFrame, changes: pl.DataFrame) -> pl.DataFrame
     lag = pl.col("first_ms") - pl.col("t")
     within = lag <= HORIZONS_MS[LONGEST]
     agreement = (pl.col("mid_first") - pl.col("mid0")).sign() * pl.col("expected")
+    whole_hour = (pl.col("t") + HORIZONS_MS[LONGEST] <= loaded_end_ms) & ~pl.col("gap_1h")
     return joined.with_columns(
         first_ms=pl.when(within).then(pl.col("first_ms")),
         lag_ms=pl.when(within).then(lag).cast(pl.Int32),
         agreement=pl.when(within).then(agreement).cast(pl.Int8),
+        lag_known=within.fill_null(False) | whole_hour,
     ).drop("mid_first")
 
 
@@ -384,7 +400,15 @@ def _trades_of(live: Path, hours: list[datetime]) -> pl.DataFrame:
             "taker_side": pl.String,
         }
         return pl.DataFrame(schema=schema)
-    return pl.concat([pl.read_parquet(p, columns=columns) for p in paths])
+    # a block trade is negotiated, not taken at the resting quote
+    return pl.concat(
+        [
+            pl.read_parquet(p, columns=[*columns, "is_block_trade"])
+            .filter(pl.col("is_block_trade") == 0)
+            .drop("is_block_trade")
+            for p in paths
+        ]
+    )
 
 
 def study_hour(
@@ -395,10 +419,13 @@ def study_hour(
     gaps: pl.DataFrame,
     carried: pl.DataFrame,
     span_end: datetime,
-) -> tuple[pl.DataFrame, pl.DataFrame, int]:
+    current: pl.DataFrame | None = None,
+) -> tuple[pl.DataFrame, pl.DataFrame, int, pl.DataFrame | None]:
     """One hour's events, fully measured; the frames to carry into the next hour (each market's
-    last frame and last two-sided frame); and the hour's count of moves."""
-    current = frames_of(live / "ticker" / f"{hour_name(hour)}.parquet")
+    last frame and last two-sided frame); the hour's count of moves; and the following hour's
+    frames, read here for the horizons and handed on as the next hour's ``current``."""
+    if current is None:
+        current = frames_of(live / "ticker" / f"{hour_name(hour)}.parquet")
     next_path = live / "ticker" / f"{hour_name(hour + HOUR)}.parquet"
     following = frames_of(next_path) if next_path.exists() and hour + HOUR < span_end else None
     loaded_end = hour + (2 * HOUR if following is not None else HOUR)
@@ -410,11 +437,11 @@ def study_hour(
     )
     two_sided = book.filter(pl.col("mid_e6").is_not_null()).sort("ticker", "ts_ms")
     changes = two_sided.filter(pl.col("mid_e6") != pl.col("mid_e6").shift(1).over("ticker"))
-    trades = _trades_of(live, [hour, hour + HOUR])
+    trades = _trades_of(live, [hour] + ([hour + HOUR] if following is not None else []))
     events = with_gaps(events, gaps)
     events = with_state(events, book.sort("ts_ms"))
     events = with_responses(events, two_sided, int(loaded_end.timestamp() * 1000))
-    events = with_first_move(events, changes)
+    events = with_first_move(events, changes, int(loaded_end.timestamp() * 1000))
     events = with_through(events, trades)
     events = with_capacity(events).sort("t", "a", "b", "kind")
     ordered = with_carried.sort("ticker", "ts_ms")
@@ -425,7 +452,7 @@ def study_hour(
         .last()
     )
     new_carried = pl.concat([last, last_two_sided]).unique().with_columns(carried=pl.lit(True))
-    return events, new_carried.select(with_carried.columns), found.height
+    return events, new_carried.select(with_carried.columns), found.height, following
 
 
 def study_span(live: Path, hours: int | None = None) -> tuple[datetime, datetime]:
@@ -463,10 +490,13 @@ def run(
     info = market_info(markets, tiers_of(live, start, end), fees)
     gaps = gaps_of(live, end)
     carried = empty_frames()
+    current: pl.DataFrame | None = None
     total = 0
     for path in files:
-        hour = datetime.strptime(path.stem + "+0000", "%Y-%m-%dT%H%z")
-        events, carried, found = study_hour(hour, live, pairs, info, gaps, carried, end)
+        hour = hour_of(path.stem)
+        events, carried, found, current = study_hour(
+            hour, live, pairs, info, gaps, carried, end, current
+        )
         events.write_parquet(folder / path.name)
         total += found
         log(f"{path.stem}: {found:,} moves, {events.height:,} events")
@@ -497,7 +527,9 @@ def _cells(frame: pl.LazyFrame, keys: list[str], hours: int) -> list[dict[str, A
         pl.col("with_e2").filter(counted).sum().alias("through_with_e2"),
         pl.col("against_e2").filter(counted).sum().alias("through_against_e2"),
         pl.col("stale_size_e2").median().alias("stale_size_median_e2"),
-        (counted & pl.col("fee_e6").is_null()).sum().alias("fee_unknown"),
+        (pl.col("first_of_spell") & pl.col("signed") & pl.col("fee_e6").is_null())
+        .sum()
+        .alias("fee_unknown"),
     ]
     for prefix, flag in (("", counted), ("reachable_", reachable)):
         for money in ("gross_e6", "fee_e6", "net_e6"):
@@ -628,11 +660,22 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
     ).collect().to_dicts()[0]  # fmt: skip
     usable = events.filter((pl.col("state") == "ok") & ~pl.col("in_gap"))
     # a stale quote's spell: the same watched market, side and first move; its first event counts
-    spells = ["kind", "b", "expected", "first_ms"]
+    # (a quote that never answered within the hour is told apart by its frame); its first event
+    # counts when the 10-minute response and the fee are known
+    usable = usable.with_columns(
+        spell_frame=pl.when(pl.col("first_ms").is_null()).then(pl.col("b_ts0"))
+    )
+    spells = ["kind", "b", "expected", "first_ms", "spell_frame"]
     firsts = usable.group_by(spells).agg(pl.col("t").min().alias("t_first"))
+    first = (pl.col("t") == pl.col("t_first")).fill_null(False)
+    measurable = pl.col(f"r_{HEADLINE}").is_not_null() & (
+        ~pl.col("signed") | pl.col("fee_e6").is_not_null()
+    )
     usable = usable.join(firsts, on=spells, how="left", nulls_equal=True).with_columns(
-        counted=(pl.col("t") == pl.col("t_first")).fill_null(False),
-        reachable=pl.col("lag_ms").is_null() | (pl.col("lag_ms") >= REACH_MS),
+        first_of_spell=first,
+        counted=first & measurable,
+        reachable=pl.col("lag_known")
+        & (pl.col("lag_ms").is_null() | (pl.col("lag_ms") >= REACH_MS)),
         move=_bucket(pl.col("a_move_e6"), MOVE_BUCKETS),
     )
     by_kind = {row["kind"]: row for row in _cells(usable, ["kind"], hours)}
@@ -647,7 +690,7 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
             for r in _cells(
                 usable.filter(pl.col("signed")), ["kind", "series_a", "series_b"], hours
             )
-            if r["capacity"] is not None
+            if r["capacity"] is not None and r["capacity"]["reachable_quotes_a_day"] > 0
         ),
         key=lambda r: -r["capacity"]["reachable_net_e6_a_day"],
     )[:SPOTS]
@@ -670,6 +713,7 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
         "moves": moves_total,
         **counts,
         "usable_events": usable.select(pl.len()).collect().item(),
+        "lag_unknown": usable.select((~pl.col("lag_known")).sum()).collect().item(),
         "by_kind": by_kind,
         "by_tier": {f"{r['kind']} | {r['tier_b']}": {k: r[k] for k in keep} for r in by_tier},
         "by_category": {

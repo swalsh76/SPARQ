@@ -42,22 +42,26 @@ change of 2 cents or more between two-sided frames, bid and ask not opposed):
   ``AAA6``: 00:00 30/32 (40/40); 00:50 20/22 (**−10**). ``BBB2``: 00:00 70/72 (30/30).
 * ``200`` (total): 00:00 50/52; 00:35 54/56 (**+4**, no partner). The prop and ``KXC-E5-X``
   likewise move once with no partner (00:36, 00:37). ``O1`` to ``O4``: one frame each.
-* ``B0``: 00:00 5/7 (10/10). ``B1``: 00:00 20/22 (10/10); 00:40 24/26 (**+4**). ``B2``: 00:00
-  30/32 (20/20); 00:40:20 27/29 (**−3**).
+* ``B0``: 00:00 5/7 (10/10); 00:40:10 5/7 (20/20: the size alone, no move). ``B1``: 00:00 20/22
+  (10/10); 00:40 24/26 (**+4**); 00:41 26/28 (**+2**). ``B2``: 00:00 30/32 (20/20); 00:40:20
+  27/29 (**−3**).
 * ``W1``: 00:00 10/12 (5/5); 00:45 14/16 (**+4**). ``W2``: 00:00 40/42 (5/5). ``R1``: 00:00
   80/82 (9/9); 00:45 82/84 (**+2**, the same millisecond as W1's).
 
-17 moves; 3 without a partner (the total, the prop, the custom market).
+18 moves; 3 without a partner (the total, the prop, the custom market).
 
 **Trades:** ``T2`` 00:20:02 a yes taker 300 at 32, 00:20:03 a no taker 100 at 30, 01:12 a yes
-taker 500 at 35, 01:26 a yes taker 50 at 38; ``BBB`` 00:25:00.200 a no taker 150 at 36; ``T3``
+taker 500 at 35, 01:13 a **block** of 1,000 at 35 (never at the resting quote: left out),
+01:26 a yes taker 50 at 38; ``BBB`` 00:25:00.200 a no taker 150 at 36; ``T3``
 00:35 a yes taker 200 at 26. Over the two hours that is 114 contracts a day for ``T2`` (tier "100
 to 1,000"), 24 for ``T3``, 18 for ``BBB`` and 0 for the rest (tier "under 100").
 
 **A ticker gap 01:30 to 01:31.** Events whose first ten minutes overlap it are excluded (T2's
-move at 01:25, two events); events whose hour overlaps it lose their 1-hour response.
+move at 01:25, two events); events whose hour overlaps it lose their 1-hour response, and
+where no first move was seen their lag is unknown (AAA6→AAA, B1→B0 at 00:40 and at 00:41,
+B1→B2 at 00:41, W1→W2, R1→W2), so they are not reachable.
 
-**The 26 event rows** (A's move → B), of which 21 are usable:
+**The 28 event rows** (A's move → B), of which 23 are usable:
 
 1. 00:05 M1→T1 (horizons): T1 has no frame yet: **unknown**.
 2. 00:20 T1→T2 (thresholds, expected +): queue 31 before; 32 at 5 s, 34 at 60 s: responses 0,
@@ -97,7 +101,11 @@ move at 01:25, two events); events whose hour overlaps it lose their 1-hour resp
 15. 00:40 B1→B0 (brackets, no sign, A's direction +): B0 at 6 never moves; 1-hour null (gap).
 16. 00:40 B1→B2 (brackets): B2 at 31 before, 28 at 20 s: 0, 0, −3, −3, null; first move at 20 s,
     against A's direction.
-17. 00:40:20 B2→B1 (brackets): B1 at 25 (its 00:40 frame) never moves again.
+17. 00:40:20 B2→B1 (brackets, A's direction −): B1 at 25 (its 00:40 frame), 27 at 00:41:
+    responses 0, 0, −2, −2, null; first move at 40 s, against.
+17b. 00:41 B1→B0 (brackets): B0 at 6 again, but from its 00:40:10 frame: a second stale quote
+    of B0's, counted apart from row 15's. 17c. 00:41 B1→B2 (brackets): B2 at 28 (its 00:40:20
+    frame), never moves again; a stale quote apart from row 16's, which ended at 00:40:20.
 18. 00:45 W1→W2 (brackets): W2 at 41 never moves.
 19. 00:45 W1→R1 (weather): R1 at 81 before (its 00:00 frame), 83 at the same millisecond: +2 at
     every horizon but the hour (gap); first move at 0 ms, agreeing.
@@ -111,7 +119,11 @@ move at 01:25, two events); events whose hour overlaps it lose their 1-hour resp
     1, 500). The same stale quote as row 11: **not counted**.
 25. 01:25 T2→T1 and 26. T2→T3: **in the gap**.
 
-By kind, usable events: thresholds 5, outcomes 2, game 3, horizons 4, brackets 4, weather 3.
+By kind, usable events: thresholds 5, outcomes 2, game 3, horizons 4, brackets 6, weather 3.
+Stale quotes: thresholds 4 (row 24 shares row 11's), outcomes 2, game 3, horizons 2 (rows 6
+and 13 share row 3's), brackets 6, weather 3. Reachable: every threshold quote; of the
+outcomes only row 9 (BBB answered within a second); of the game rows 8 and 10 (row 23's hour
+meets the gap with no move seen: its lag is unknown); both horizon quotes.
 Capacity a day (the span is two hours, so twelve times the sums): thresholds gross 864,000, fee
 1,138,476, net −274,476 on 4 quotes counted (48 a day); outcomes net +821,688; game −281,940;
 horizons −1,352,064. Nothing clears $25 a day.
@@ -316,8 +328,10 @@ FRAMES = [
     _f(lt(0, 37), "KXC-E5-X", 54, 56, 10),
     *[_f(lt(0, 0), f"O{i}", 20, 22, 10) for i in range(1, 5)],
     _f(lt(0, 0), "B0", 5, 7, 10),
+    _f(lt(0, 40, 10), "B0", 5, 7, 20),
     _f(lt(0, 0), "B1", 20, 22, 10),
     _f(lt(0, 40), "B1", 24, 26, 10),
+    _f(lt(0, 41), "B1", 26, 28, 10),
     _f(lt(0, 0), "B2", 30, 32, 20),
     _f(lt(0, 40, 20), "B2", 27, 29, 20),
     _f(lt(0, 0), "W1", 10, 12, 5),
@@ -331,6 +345,7 @@ TRADES = [
     _trade(lt(0, 20, 3), "T2", c(30), 100, "no"),
     _trade(lt(1, 12), "T2", c(35), 500, "yes"),
     _trade(lt(1, 26), "T2", c(38), 50, "yes"),
+    {**_trade(lt(1, 13), "T2", c(35), 1_000, "yes"), "is_block_trade": 1},
     _trade(lt(0, 25, 0, 200), f"{G}-BBB", c(36), 150, "no"),
     _trade(lt(0, 35), "T3", c(26), 200, "yes"),
 ]
