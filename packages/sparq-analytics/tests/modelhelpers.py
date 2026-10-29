@@ -17,15 +17,16 @@ says upper 78 for a cap of 79 (bounds disagree); ``H4`` answers ``knyc`` in lowe
 number as text (agrees); ``H5`` names CLIMIA where the text names none and its series' code is
 CLINYC (a wrong inference, bounds right); ``H6`` right (no strike type, so no bounds to compare);
 ``H7`` answers "I cannot tell" (unparsed); ``H8`` returns an empty content with ``finish_reason``
-``length`` (the reasoning spent the budget); ``R1`` right; ``R2`` names CLINYC for a CLIMIA text (site disagrees, bounds right);
-``O1`` right; ``O2`` says lower 77 for a floor of 76 (bounds disagree).
+``length`` (the reasoning spent the budget); ``R1`` right; ``R2`` names CLINYC for a CLIMIA text
+(site disagrees, bounds right); ``O1`` right; ``O2`` says lower 77 for a floor of 76 (bounds
+disagree).
 
 **Expected figures (S2's window):** highs: 8 markets, 6 parsed (0.75), 1 truncated; the site over
 the 7 that name one (H1, H2, H3, H4, H6, H7, H8): 5 agree; the bounds over the 7 with a strike type
 (all but H6): 4 agree (H1, H2, H4, H5); 1 market names no site and the model answered the wrong
 code (H5); 3 disagreements to show (H3, H7, H8). Rain: 2 markets, both parsed, the site 1 of 2,
-the bounds 2 of 2, 1 disagreement (R2). All 10 parse at 0.8, below the 0.995 bar, so nothing passes. The earlier
-sample: 2 markets, the site 2 of 2, the bounds 1 of 2.
+the bounds 2 of 2, 1 disagreement (R2). All 10 parse at 0.8, below the 0.995 bar, so nothing
+passes. The earlier sample: 2 markets, the site 2 of 2, the bounds 1 of 2.
 """
 
 from pathlib import Path
