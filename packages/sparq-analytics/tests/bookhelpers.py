@@ -167,6 +167,10 @@ def markets() -> pl.DataFrame:
                 "category": "Sports",
                 "open_ms": BASE - 86_400_000,
                 "close_ms": BASE + 86_400_000,
+                "strike_type": "greater",
+                "floor_strike": "1.5",
+                "cap_strike": None,
+                "weather_rules": None,
             }
             for m, s in series.items()
         ],

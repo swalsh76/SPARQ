@@ -2,6 +2,7 @@
 
     python -m sparq_analytics.survey dump --kalshi DIR --live DIR --out DIR [--cut DAY]
                                           [--only history|live]
+    python -m sparq_analytics.survey lag  --kalshi DIR --live DIR --out DIR [--hours N]
 
 Run it on the analytics node. ``--kalshi`` is the history download's ``kalshi`` folder, ``--live``
 the live copies' folder (``live extract``), ``--out`` where the results go. ``dump`` (S3.1) reads
@@ -9,7 +10,11 @@ the certainty dump and the 99 regimes from the history (markets closing on or be
 never after 2026-10-10), the queue at 99 cents from the live frames, and combines them into the
 dollars a day a 99-cent bid would make, writing ``dump-history.json``, ``dump-regimes.parquet``,
 ``dump-live.json``, ``dump-episodes.parquet`` and ``dump.json`` (printed). ``--only history`` or
-``--only live`` does one reading. Exit codes: 0 fine, 1 bad command line or data.
+``--only live`` does one reading. ``lag`` (S3.2) builds the relation pairs from the live market
+list, runs the event study over the live frames (the first ``--hours`` of the span when asked) and
+writes ``lag-pairs.parquet``, ``lag-coverage.json``, an hour file of events each under
+``lag-events`` and ``lag.json`` (its figures by kind printed); ``--kalshi`` supplies the series'
+fee terms. Exit codes: 0 fine, 1 bad command line or data.
 """
 
 import argparse
@@ -24,9 +29,11 @@ import polars as pl
 
 from sparq_analytics.live.source import LiveSourceError
 from sparq_analytics.study.dataset import StudyDataError
+from sparq_analytics.survey import lag
 from sparq_analytics.survey.dump import CUT, SurveyDataError, history
 from sparq_analytics.survey.implied import combine
 from sparq_analytics.survey.queue import fee_terms, live_reading
+from sparq_analytics.survey.relations import pairs
 
 
 class UsageError(Exception):
@@ -37,12 +44,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m sparq_analytics.survey", description=__doc__.split("\n")[0]
     )
-    parser.add_argument("command", choices=("dump",))
+    parser.add_argument("command", choices=("dump", "lag"))
     parser.add_argument("--kalshi", type=Path, help="the history download's kalshi folder")
     parser.add_argument("--live", type=Path, help="the live copies' folder")
     parser.add_argument("--out", type=Path, help="where the results go")
     parser.add_argument("--cut", type=date.fromisoformat, default=CUT)
     parser.add_argument("--only", choices=("history", "live"))
+    parser.add_argument("--hours", type=int, help="lag: read only the span's first N hours")
     return parser
 
 
@@ -78,7 +86,28 @@ def _dump(args: argparse.Namespace) -> int:
     return 0
 
 
-HANDLERS = {"dump": _dump}
+def _lag(args: argparse.Namespace) -> int:
+    kalshi, live = _need(args.kalshi, "--kalshi"), _need(args.live, "--live")
+    out = _need(args.out, "--out")
+    out.mkdir(parents=True, exist_ok=True)
+    start, end = lag.study_span(live, args.hours)
+    markets = pl.read_parquet(live / "markets.parquet")
+    built, coverage = pairs(markets, lag.active_tickers(live, start, end))
+    built.write_parquet(out / "lag-pairs.parquet")
+    _write(out, "lag-coverage.json", coverage)
+    _, _, found = lag.run(
+        live, built, markets, fee_terms(kalshi), out, hours=args.hours,
+        log=lambda line: print(line, file=sys.stderr),
+    )  # fmt: skip
+    result = lag.summarize(out, start, end, found)
+    result["coverage"] = coverage
+    _write(out, "lag.json", result)
+    shown = {k: result[k] for k in ("by_kind", "cleared", "cleared_reachable")}
+    print(json.dumps(shown, indent=2))
+    return 0
+
+
+HANDLERS = {"dump": _dump, "lag": _lag}
 
 
 def main(argv: Sequence[str] | None = None) -> int:

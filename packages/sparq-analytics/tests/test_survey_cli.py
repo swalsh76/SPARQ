@@ -5,6 +5,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from laghelpers import write_lag_kalshi, write_lag_world
 from sparq_analytics.survey.cli import main
 from sparq_analytics.survey.implied import combine
 from surveyhelpers import write_history, write_live
@@ -115,6 +116,30 @@ def test_a_category_without_a_history_regime_has_no_dollars() -> None:
     alone = combine({"by_category": {"Culture": past}}, {"by_category": {"Culture": bare}})
     assert alone["by_category"]["Culture"]["loss_e6_onset_10000"] is None
     assert alone["by_category"]["Culture"]["dollars_a_day_e6_onset_10000"] is None
+
+
+def test_lag_builds_the_pairs_runs_the_study_and_prints_the_kinds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    kalshi, live, out = write_lag_kalshi(tmp_path), write_lag_world(tmp_path), tmp_path / "out"
+    argv = ["lag", "--kalshi", str(kalshi), "--live", str(live), "--out", str(out)]
+    assert main(argv) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["cleared"] == []
+    assert printed["by_kind"]["thresholds"]["events"] == 5
+    assert printed["by_kind"]["outcomes"]["capacity"]["net_e6_a_day"] == 821_688
+    assert pl.read_parquet(out / "lag-pairs.parquet").height == 35
+    coverage = json.loads((out / "lag-coverage.json").read_text(encoding="utf-8"))
+    assert coverage["by_kind"]["horizons"]["pairs"] == 10
+    result = json.loads((out / "lag.json").read_text(encoding="utf-8"))
+    assert result["coverage"] == coverage and result["events"] == 28
+    assert len(list((out / "lag-events").glob("*.parquet"))) == 2
+    # the first hour alone
+    assert main([*argv, "--hours", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["by_kind"]["thresholds"]["events"] == 4
+    assert len(list((out / "lag-events").glob("*.parquet"))) == 1
+    assert main(["lag", "--kalshi", str(kalshi), "--out", str(out)]) == 1
+    assert "--live is required" in capsys.readouterr().err
 
 
 def test_running_the_package_runs_the_command_line(monkeypatch: pytest.MonkeyPatch) -> None:

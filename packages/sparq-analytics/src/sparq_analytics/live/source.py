@@ -49,10 +49,16 @@ TRADE_SQL = (
     "yes_price_e6, count_e2, taker_side, is_block_trade::int AS is_block_trade "
     "FROM trade WHERE created_time >= $1 AND created_time < $2"
 )
+# the strike fields say what a market is about (S3.2's relation groups); the rules text is
+# copied for weather markets only, flattened to one line, because the station a weather
+# market reports is named nowhere else
 MARKET_SQL = (
     "SELECT m.ticker, m.series_ticker, m.event_ticker, s.category, "
     "floor(extract(epoch FROM m.open_time) * 1000)::bigint AS open_ms, "
-    "floor(extract(epoch FROM m.close_time) * 1000)::bigint AS close_ms "
+    "floor(extract(epoch FROM m.close_time) * 1000)::bigint AS close_ms, "
+    "m.strike_type, m.floor_strike, m.cap_strike, "
+    "CASE WHEN s.category = 'Climate and Weather' "
+    "THEN regexp_replace(m.rules_primary, '\\s+', ' ', 'g') END AS weather_rules "
     "FROM market m LEFT JOIN series s ON s.ticker = m.series_ticker"
 )
 # the outages in which ticker frames were lost (trades are backfilled, frames cannot be); an open
@@ -90,6 +96,10 @@ MARKET_SCHEMA = {
     "category": pl.String,
     "open_ms": pl.Int64,
     "close_ms": pl.Int64,
+    "strike_type": pl.String,
+    "floor_strike": pl.String,  # a level, not a price: text of any precision (sparq_core.models)
+    "cap_strike": pl.String,
+    "weather_rules": pl.String,  # null outside Climate and Weather
 }
 GAP_SCHEMA = {"kind": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64, "reason": pl.String}
 TABLES = (("ticker", TICKER_SQL, TICKER_SCHEMA), ("trade", TRADE_SQL, TRADE_SCHEMA))
@@ -157,6 +167,11 @@ def whole_hours(start: datetime, end: datetime, now: datetime) -> list[datetime]
 
 def hour_name(hour: datetime) -> str:
     return hour.strftime("%Y-%m-%dT%H")
+
+
+def hour_of(name: str) -> datetime:
+    """The hour an hour file's name stands for: the inverse of :func:`hour_name`."""
+    return datetime.strptime(name + "+0000", "%Y-%m-%dT%H%z")
 
 
 async def _copy(
@@ -238,5 +253,5 @@ def last_hour_end(folder: Path) -> datetime | None:
         names = sorted(p.stem for p in (folder / name).glob("*.parquet"))
         if not names:
             return None
-        ends.append(datetime.strptime(names[-1] + "+0000", "%Y-%m-%dT%H%z") + HOUR)
+        ends.append(hour_of(names[-1]) + HOUR)
     return min(ends)

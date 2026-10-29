@@ -241,6 +241,10 @@ def write_live(root: Path) -> Path:
                 "category": CATEGORY[s],
                 "open_ms": BASE - 86_400_000,
                 "close_ms": BASE + 86_400_000,
+                "strike_type": "greater",
+                "floor_strike": "0.5",
+                "cap_strike": None,
+                "weather_rules": None,
             }
             for m, s in LIVE_SERIES.items()
         ],
