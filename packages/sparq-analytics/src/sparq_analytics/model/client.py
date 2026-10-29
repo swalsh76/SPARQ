@@ -35,6 +35,7 @@ RETRIES = 3  # attempts at a refused connection or a busy answer
 BUSY = frozenset({429, 502, 503, 504})  # the node asks to be tried again
 RETRY_WAIT_S = 2.0
 TIMEOUT_S = 300.0
+CONNECT_TIMEOUT_S = 10.0  # a node that is down is noticed in seconds, not minutes
 MAX_TOKENS = 2_000
 SETTINGS_KEYS = ("url", "key", "model")
 
@@ -82,9 +83,10 @@ def load_settings(path: Path | None = None) -> ModelSettings:
     missing = [name for name in SETTINGS_KEYS if not data.get(name)]
     if missing:
         raise ModelError(f"{where} lacks {', '.join(missing)}")
-    return ModelSettings(
-        url=str(data["url"]).rstrip("/"), key=str(data["key"]), model=data["model"]
-    )
+    odd = [name for name in SETTINGS_KEYS if not isinstance(data[name], str)]
+    if odd:
+        raise ModelError(f"{where} needs text for {', '.join(odd)}")
+    return ModelSettings(url=data["url"].rstrip("/"), key=data["key"], model=data["model"])
 
 
 class ModelClient:
@@ -100,7 +102,8 @@ class ModelClient:
         self.settings = settings
         self.cache = cache
         self.sleep = sleep
-        self._http = httpx.Client(timeout=TIMEOUT_S, transport=transport)
+        timeout = httpx.Timeout(TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
+        self._http = httpx.Client(timeout=timeout, transport=transport)
 
     def chat(self, prompt: str, max_tokens: int = MAX_TOKENS) -> Reply:
         """The model's answer to ``prompt`` at temperature 0, from the cache when asked before."""
@@ -147,15 +150,19 @@ class ModelClient:
                 raise
             staging.unlink(missing_ok=True)
 
-    def _send(self, request: dict[str, Any]) -> httpx.Response:
+    def _send(self, request: dict[str, Any]) -> tuple[httpx.Response, float]:
+        """The answer and the seconds its last attempt took (the waits between attempts are
+        not the model's)."""
         headers = {"Authorization": f"Bearer {self.settings.key}"}
         url = f"{self.settings.url}/chat/completions"
         for attempt in range(1, RETRIES + 1):
+            started = time.monotonic()
             try:
                 response = self._http.post(url, json=request, headers=headers)
-            except httpx.ConnectError:
+            except (httpx.ConnectError, httpx.ConnectTimeout):
                 if attempt == RETRIES:
-                    raise ModelError(f"the model node refused {RETRIES} connections") from None
+                    message = f"the model node took no connection in {RETRIES} tries"
+                    raise ModelError(message) from None
                 self.sleep(RETRY_WAIT_S)
                 continue
             except httpx.HTTPError as error:
@@ -164,12 +171,11 @@ class ModelClient:
             if response.status_code in BUSY and attempt < RETRIES:
                 self.sleep(RETRY_WAIT_S)
                 continue
-            return response
+            return response, time.monotonic() - started
         raise ModelError("no attempt was made")  # pragma: no cover - RETRIES is at least 1
 
     def _ask(self, request: dict[str, Any]) -> Reply:
-        started = time.monotonic()
-        response = self._send(request)
+        response, seconds = self._send(request)
         if response.status_code != 200:
             raise ModelError(f"the model node answered {response.status_code}")
         try:
@@ -181,7 +187,7 @@ class ModelClient:
                 content=message.get("content") or "",
                 reasoning=message.get("reasoning_content") or "",
                 completion_tokens=tokens,
-                seconds=time.monotonic() - started,
+                seconds=seconds,
                 truncated=choice.get("finish_reason") == "length",
             )
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):

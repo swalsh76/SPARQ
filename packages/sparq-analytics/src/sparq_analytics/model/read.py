@@ -307,10 +307,16 @@ def run_read(
 
 def rate(frame: pl.DataFrame, flag: str) -> dict[str, Any]:
     """The share of rows where ``flag`` is true (nulls are not in the base), with the lower bound
-    of a cluster bootstrap over events."""
+    of a cluster bootstrap over events. With no disagreement the bootstrap has no width and clears
+    the bar whatever the sample, so the exact lower end is reported beside it (``exact_events``,
+    ``exact_markets``): the share below which seeing no miss would have under ``TAIL`` chance,
+    taking each event, or each market, as one trial. The bar itself is not changed by them."""
     base = frame.filter(pl.col(flag).is_not_null())
     if base.is_empty():
-        return {"n": 0, "agree": 0, "rate": None, "lower": None, "events": 0, "clears": False}
+        return {
+            "n": 0, "agree": 0, "rate": None, "lower": None, "events": 0, "clears": False,
+            "exact_events": None, "exact_markets": None,
+        }  # fmt: skip
     by_event = (
         base.group_by("event_ticker")
         .agg(
@@ -329,12 +335,15 @@ def rate(frame: pl.DataFrame, flag: str) -> dict[str, Any]:
         ).lower_e6
     agree = int(base[flag].sum())
     share = agree / base.height
+    perfect = agree == base.height
     return {
         "n": base.height,
         "agree": agree,
         "rate": share,
         "lower": lower,
         "events": by_event.height,
+        "exact_events": TAIL ** (1 / by_event.height) if perfect else None,
+        "exact_markets": TAIL ** (1 / base.height) if perfect else None,
         "clears": bool(
             by_event.height >= MIN_EVENTS
             and lower is not None

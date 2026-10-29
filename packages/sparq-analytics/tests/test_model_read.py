@@ -13,6 +13,7 @@ from modelhelpers import MARKETS, model_transport, write_reading_kalshi
 from sparq_analytics.model import cli, read
 from sparq_analytics.model.client import ModelClient, ModelError, ModelSettings, Reply
 from sparq_analytics.model.prompts import READ_WEATHER
+from sparq_analytics.survey.dump import TAIL
 from sparq_analytics.weather.stations import WeatherDataError
 
 SETTINGS = ModelSettings(url="http://model-node.test/v1", key="sk-test-key", model="small-model")
@@ -176,14 +177,18 @@ def test_the_clearing_bar_needs_a_high_rate_and_a_high_lower_bound() -> None:
 
     perfect = read.rate(frame([True] * 400), "flag")
     assert (perfect["rate"], perfect["lower"], perfect["clears"]) == (1.0, 1.0, True)
+    assert perfect["exact_events"] == pytest.approx(TAIL ** (1 / 50))  # 50 events
+    assert perfect["exact_markets"] == pytest.approx(TAIL ** (1 / 400))  # 400 markets
     weak = read.rate(frame([True] * 396 + [False] * 4), "flag")  # 99%
     assert weak["rate"] == 0.99 and weak["lower"] is not None and weak["lower"] <= 0.99
+    assert weak["exact_events"] is None and weak["exact_markets"] is None  # the bootstrap speaks
     low = read.rate(frame([True] * 90 + [False] * 10), "flag")
     assert not low["clears"]
     one_event = read.rate(frame([True] * 10, events=1), "flag")  # nothing to bootstrap
     assert (one_event["lower"], one_event["clears"]) == (None, False)
     empty = read.rate(frame([]), "flag")
-    assert empty == {"n": 0, "agree": 0, "rate": None, "lower": None, "events": 0, "clears": False}
+    assert empty["n"] == 0 and empty["rate"] is None and not empty["clears"]
+    assert empty["exact_events"] is None and empty["exact_markets"] is None
     few = read.rate(frame([True] * 400, events=9), "flag")  # perfect, but only nine events
     assert (few["rate"], few["lower"], few["events"], few["clears"]) == (1.0, 1.0, 9, False)
     assert read.rate(frame([True] * 400, events=10), "flag")["clears"]

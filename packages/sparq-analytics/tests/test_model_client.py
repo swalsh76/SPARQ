@@ -2,6 +2,7 @@ import json
 import os
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -161,7 +162,7 @@ def test_a_refused_connection_is_retried_and_a_slow_reply_is_not() -> None:
         attempts.append(1)
         raise httpx.ConnectError("refused", request=request)
 
-    with pytest.raises(ModelError, match="refused 3 connections"):
+    with pytest.raises(ModelError, match="took no connection in 3 tries"):
         ModelClient(SETTINGS, transport=httpx.MockTransport(down), sleep=waits.append).chat("q")
     assert len(attempts) == 3
 
@@ -253,3 +254,44 @@ def test_a_save_that_loses_the_race_is_not_an_error(
     path.unlink()  # but with nothing saved, the failure is real
     with pytest.raises(PermissionError):
         client._write("ab" + "0" * 62, {"q": 1}, reply)
+
+
+def test_a_connect_timeout_is_retried_like_a_refused_connection() -> None:
+    attempts: list[int] = []
+    waits: list[float] = []
+
+    def silent(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        raise httpx.ConnectTimeout("no answer", request=request)
+
+    client = ModelClient(SETTINGS, transport=httpx.MockTransport(silent), sleep=waits.append)
+    with pytest.raises(ModelError, match="took no connection in 3 tries"):
+        client.chat("q")
+    assert len(attempts) == model.RETRIES and waits == [model.RETRY_WAIT_S] * 2
+    timeout = ModelClient(SETTINGS)._http.timeout
+    assert timeout.connect == model.CONNECT_TIMEOUT_S and timeout.read == model.TIMEOUT_S
+
+
+def test_settings_that_are_not_text_are_refused(tmp_path: Path) -> None:
+    body = f'url = "http://x/v1"\nkey = "{KEY}"\nmodel = 5\n'
+    with pytest.raises(ModelError, match="needs text for model") as odd:
+        load_settings(write_settings(tmp_path / "odd.toml", body))
+    assert KEY not in str(odd.value)
+
+
+def test_the_seconds_are_the_last_attempts_and_not_the_waits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = iter([0.0, 5.0, 7.5])  # a busy attempt starts at 0; the answered one runs 5 to 7.5
+    monkeypatch.setattr(model, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    answers = iter([503, 200])
+
+    def busy(request: httpx.Request) -> httpx.Response:
+        if next(answers) != 200:
+            return httpx.Response(503, text="busy")
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    client = ModelClient(SETTINGS, transport=httpx.MockTransport(busy), sleep=lambda _: None)
+    assert client.chat("q").seconds == 2.5
