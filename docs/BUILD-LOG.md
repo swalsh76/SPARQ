@@ -658,7 +658,7 @@ The test world gained an outage, a market closing mid-span, a trade on a stale b
 | S3.1 the certainty dump and the 99-cent queue | **done, below the bar:** a 100-contract bid joining when the price reaches 99 loses in every category but Mentions (+$39 a day on 28 reversals in 65 days); the whole queue nets about $240,000 a day, 85% to crypto bots | #20 |
 | S3.2 where the book is slow | **done, below the bar:** no relation type clears; related markets answer within seconds, the 10-minute pass-through is 0.15 to 0.59 cents and hitting the stale quotes loses $1.3 M to $32 M a day a kind to fees (corrected in S3.3 and here; the conclusions never changed) | #21 |
 | S3.3 the thin tail and the surprise rate | **done, both bars cleared:** $499,284 a day of half-spread in thin markets' uncontested trades (Sports $403,571) against $250; 14 series of 313 judged clear the surprise bar, 7.8 by chance | #22 |
-| S3.c close-out | **done:** this entry, the verdict and the S4 proposal | S3C_PR |
+| S3.c close-out | **done:** this entry, the verdict and the S4 proposal | #23 |
 
 No order was sent in S3, and no key beyond the database role was used (M2). Every code slice passed format, lint, types, tests and the coverage gate in CI, and the survey package is 100% covered.
 
