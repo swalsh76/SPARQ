@@ -320,7 +320,8 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
             two_sided_share=pl.col("two_sided_ms") / pl.col("dur_ms"),
         )
         .join(info.select("ticker", "tier", "category"), on="ticker", how="left")
-    )
+        .with_columns(pl.col("tier").fill_null("unknown"), pl.col("category").fill_null("unknown"))
+    )  # a market with frames but no row in the market list has no tier and no category
 
     def spread_cells(keys: list[str]) -> dict[str, dict[str, Any]]:
         rows = (
@@ -362,6 +363,7 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
             pl.col("fee_e6").is_null().sum().alias("fee_unknown"),
         )
         .join(info.select("ticker", "tier", "category"), on="ticker", how="left")
+        .with_columns(pl.col("tier").fill_null("unknown"), pl.col("category").fill_null("unknown"))
     )
 
     def half_cells(frame: pl.DataFrame, keys: list[str]) -> dict[str, dict[str, Any]]:
@@ -476,9 +478,13 @@ def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
 
 def _rate(frame: pl.DataFrame) -> dict[str, Any]:
     """A cell's surprise rate with its interval over events, against the implied rate."""
-    by_event = frame.group_by("event_ticker").agg(
-        pl.col("surprise").sum().cast(pl.Float64).alias("num"),
-        pl.len().cast(pl.Float64).alias("den"),
+    by_event = (
+        frame.group_by("event_ticker")
+        .agg(
+            pl.col("surprise").sum().cast(pl.Float64).alias("num"),
+            pl.len().cast(pl.Float64).alias("den"),
+        )
+        .sort("event_ticker")  # a group-by's order is not fixed; the draws must be
     )
     estimate: Estimate = cluster_bootstrap(
         by_event["num"].to_numpy(),

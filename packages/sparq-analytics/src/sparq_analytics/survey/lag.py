@@ -608,6 +608,7 @@ def _intervals(usable: pl.LazyFrame, hours: int, start_ms: int) -> dict[str, dic
             headline.sum().cast(pl.Float64).alias("num"),
             headline.count().cast(pl.Float64).alias("den"),
         )
+        .sort("kind", "group", "hour")  # a group-by's order is not fixed; the draws must be
         .collect()
     )
     nets = usable.filter(pl.col("counted") & pl.col("net_e6").is_not_null())

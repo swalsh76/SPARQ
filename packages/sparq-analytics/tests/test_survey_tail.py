@@ -54,7 +54,7 @@ def test_volume_by_tier_and_category(tmp_path: Path) -> None:
 def test_spreads_by_tier(tmp_path: Path) -> None:
     live = write_tail_live(tmp_path)
     reading = tail.live_reading(live, FEES)
-    assert (reading["hours"], reading["markets_with_frames"]) == (2, 3)
+    assert (reading["hours"], reading["markets_with_frames"]) == (2, 4)
     spreads = reading["spreads_by_tier"]
     # L1: 30 minutes at 4 cents, 30 at 30, then an hour with the ask side empty (a 100-cent ask
     # of no size, as the feed shows it); L2: 4 cents all along; both in the lowest tier
@@ -68,7 +68,9 @@ def test_spreads_by_tier(tmp_path: Path) -> None:
         "median_spread_cents": 80.0,
         "two_sided_share": 1.0,
     }
-    assert set(spreads) == {"under 100", "10,000 and more"}
+    assert set(spreads) == {"under 100", "10,000 and more", "unknown"}
+    assert spreads["unknown"] == {"markets": 1, "median_spread_cents": 2.0, "two_sided_share": 1.0}
+    assert reading["spreads_by_tier_and_category"]["unknown | unknown"]["markets"] == 1
     assert reading["spreads_by_tier_and_category"]["under 100 | Sports"]["markets"] == 2
 
 

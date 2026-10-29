@@ -52,6 +52,7 @@ S3 (1 of 3), "99 and more" is S6.
 * ``L2`` (``KXM``, Sports, maker fees): 48/52 throughout (4 cents, two-sided all along). Trade
   00:20 a yes taker of 10 contracts at 52: contested, half-spread $0.20, maker fee $0.04368 (7% of
   a quarter of 10 × 0.52 × 0.48). 10 a day: "under 100", thin.
+* ``L9``: frames but no row in the market list: tier and category "unknown".
 * ``L3`` (``KXB``, Crypto): 10/90 throughout (80 cents). Trade 00:15 a yes taker of 100,000
   contracts at 90: uncontested, half-spread $40,000. 100,000 a day: "10,000 and more".
 
@@ -190,6 +191,7 @@ FRAMES = [
     _frame(lm(1, 0), "L1", 500_000, 10, 1_000_000, 0),  # an empty ask, as the feed shows it
     _frame(lm(0, 0), "L2", 480_000, 10, 520_000, 10),
     _frame(lm(0, 0), "L3", 100_000, 10, 900_000, 10),
+    _frame(lm(0, 0), "L9", 400_000, 10, 420_000, 10),  # frames, but no row in the market list
 ]
 LIVE_TRADES = [
     _trade(lm(0, 10), "L1", 440_000, 100, "yes"),
