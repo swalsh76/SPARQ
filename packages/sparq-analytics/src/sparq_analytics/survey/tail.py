@@ -217,7 +217,9 @@ def _hour_spreads(
     """Per market in one hour: the time two-sided, the time in all, and the spread integrated
     over the two-sided time; ``book`` holds the hour's frames with each market's carried frame
     first. A market's time ends at its close, and outage time counts for no one."""
-    ordered = book.join(closes, on="ticker", how="left").sort("ticker", "ts_ms")
+    ordered = book.join(closes, on="ticker", how="left").sort(
+        "ticker", "ts_ms", maintain_order=True
+    )  # stable: frames of one market in one millisecond keep the feed's order
     next_ms = pl.col("ts_ms").shift(-1).over("ticker").fill_null(hour_end_ms)
     timed = ordered.with_columns(
         from_ms=pl.max_horizontal("ts_ms", hour_start_ms),
@@ -248,7 +250,7 @@ def _hour_trades(
         ticker=pl.col("ticker"),
         bid0=pl.col("yes_bid_e6"),
         ask0=pl.col("yes_ask_e6"),
-    ).sort("frame_ms")
+    ).sort("frame_ms", maintain_order=True)
     joined = (
         trades.with_columns(k=pl.col("ts_ms") - 1)
         .sort("k")
@@ -331,9 +333,11 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
         )
         trades = trades_of(live, [hour], TRADE_COLUMNS)
         if trades.height:
-            trade_sums.append(_hour_trades(trades, book.sort("ts_ms"), info, gaps))
+            trade_sums.append(
+                _hour_trades(trades, book.sort("ts_ms", maintain_order=True), info, gaps)
+            )
         carried = (  # a market closed by the next hour has no time left and no trade to read
-            book.sort("ticker", "ts_ms")
+            book.sort("ticker", "ts_ms", maintain_order=True)
             .group_by("ticker", maintain_order=True)
             .last()
             .join(closes, on="ticker", how="left")

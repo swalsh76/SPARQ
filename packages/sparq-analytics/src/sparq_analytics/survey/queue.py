@@ -69,7 +69,9 @@ def span(live: Path) -> tuple[datetime, datetime]:
 
 def _reduce(path: Path) -> pl.DataFrame:
     """One hour's frames cut down to what finds every regime's onset and end."""
-    frames = pl.read_parquet(path, columns=FRAME_COLUMNS).sort("ticker", "ts_ms")
+    frames = pl.read_parquet(path, columns=FRAME_COLUMNS).sort(
+        "ticker", "ts_ms", maintain_order=True
+    )  # stable: frames of one market in one millisecond keep the feed's order
     in_yes = (pl.col("yes_bid_e6") >= CERTAIN_E6).fill_null(False)
     in_no = (pl.col("yes_ask_e6") <= CENTS).fill_null(False)
     frames = frames.with_columns(in_yes=in_yes, in_no=in_no)
@@ -98,7 +100,7 @@ def episodes(reduced: pl.DataFrame, start: datetime, end: datetime) -> pl.DataFr
             "ticker",
             pl.col(f"in_{side}").alias("inr"),
             pl.col(size).fill_null(0).alias("size_e2"),
-        ).sort("ticker", "ts_ms")
+        ).sort("ticker", "ts_ms", maintain_order=True)
         rows = rows.with_columns(
             onset=pl.col("inr") & ~pl.col("inr").shift(1).over("ticker").fill_null(False)
         ).with_columns(episode=pl.col("onset").cast(pl.Int32).cum_sum().over("ticker"))
@@ -160,7 +162,7 @@ def hour_before(live: Path, found: pl.DataFrame) -> pl.DataFrame:
                 )
             )
             continue
-        book = pl.concat(frames).sort("ts_ms")
+        book = pl.concat(frames).sort("ts_ms", maintain_order=True)
         joined = mine.sort("target_ms").join_asof(
             book, left_on="target_ms", right_on="ts_ms", by="ticker", strategy="backward",
             check_sortedness=False,

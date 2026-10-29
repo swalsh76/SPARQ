@@ -121,10 +121,12 @@ def moves(frames: pl.DataFrame) -> pl.DataFrame:
     def change(column: str) -> pl.Expr:
         return pl.col(column) - pl.col(column).shift(1).over("ticker")
 
-    # the differences are taken before the move filter, so each row sees its previous frame
+    # the differences are taken before the move filter, so each row sees its previous frame; the
+    # sorts are stable, so frames of one market in one millisecond keep the feed's order and a run
+    # reproduces to the unit
     ordered = (
         frames.filter(pl.col("mid_e6").is_not_null())
-        .sort("ticker", "ts_ms")
+        .sort("ticker", "ts_ms", maintain_order=True)
         .with_columns(
             d_mid=change("mid_e6"),
             d_bid=change("yes_bid_e6"),
@@ -206,7 +208,7 @@ def with_state(events: pl.DataFrame, book: pl.DataFrame) -> pl.DataFrame:
         bsz0=pl.col("yes_bid_size_e2"),
         asz0=pl.col("yes_ask_size_e2"),
         mid0=pl.col("mid_e6"),
-    ).sort("b_ts0")
+    ).sort("b_ts0", maintain_order=True)
     joined = (
         events.with_columns(k=pl.col("t") - 1)
         .sort("k")
@@ -239,7 +241,7 @@ def with_responses(
     """``b``'s mid change at each horizon, in the expected direction."""
     right = two_sided.select(
         ts_ms=pl.col("ts_ms"), b=pl.col("ticker"), mid_k=pl.col("mid_e6")
-    ).sort("ts_ms")
+    ).sort("ts_ms", maintain_order=True)
     out = events
     for name, delta in HORIZONS_MS.items():
         k = pl.col("k")
@@ -273,7 +275,7 @@ def with_first_move(
     through an outage."""
     right = changes.select(
         first_ms=pl.col("ts_ms"), b=pl.col("ticker"), mid_first=pl.col("mid_e6")
-    ).sort("first_ms")
+    ).sort("first_ms", maintain_order=True)
     joined = events.sort("t").join_asof(
         right, left_on="t", right_on="first_ms", by="b", strategy="forward", check_sortedness=False
     )  # fmt: skip
@@ -295,7 +297,7 @@ def with_through(events: pl.DataFrame, trades: pl.DataFrame) -> pl.DataFrame:
     yes = (pl.col("taker_side") == "yes").cast(pl.Int64)
     no = (pl.col("taker_side") == "no").cast(pl.Int64)
     cumulative = (
-        trades.sort("ticker", "ts_ms")
+        trades.sort("ticker", "ts_ms", maintain_order=True)
         .with_columns(
             yes_e2=(pl.col("count_e2") * yes).cum_sum().over("ticker"),
             no_e2=(pl.col("count_e2") * no).cum_sum().over("ticker"),
@@ -303,7 +305,7 @@ def with_through(events: pl.DataFrame, trades: pl.DataFrame) -> pl.DataFrame:
             no_n=no.cum_sum().over("ticker"),
         )
         .select("ts_ms", pl.col("ticker").alias("b"), "yes_e2", "no_e2", "yes_n", "no_n")
-        .sort("ts_ms")
+        .sort("ts_ms", maintain_order=True)
     )
     sums = ["yes_e2", "no_e2", "yes_n", "no_n"]
 
@@ -443,23 +445,29 @@ def study_hour(
     book = pl.concat([with_carried] + ([following] if following is not None else [])).drop(
         "carried"
     )
-    two_sided = book.filter(pl.col("mid_e6").is_not_null()).sort("ticker", "ts_ms")
+    two_sided = book.filter(pl.col("mid_e6").is_not_null()).sort(
+        "ticker", "ts_ms", maintain_order=True
+    )
     changes = two_sided.filter(pl.col("mid_e6") != pl.col("mid_e6").shift(1).over("ticker"))
     trades = trades_of(live, [hour] + ([hour + HOUR] if following is not None else []))
-    events = with_state(events, book.sort("ts_ms"))
+    events = with_state(events, book.sort("ts_ms", maintain_order=True))
     events = with_gaps(events, gaps)
     events = with_responses(events, two_sided, int(loaded_end.timestamp() * 1000))
     events = with_first_move(events, changes, int(loaded_end.timestamp() * 1000))
     events = with_through(events, trades)
     events = with_capacity(events).sort("t", "a", "b", "kind")
-    ordered = with_carried.sort("ticker", "ts_ms")
+    ordered = with_carried.sort("ticker", "ts_ms", maintain_order=True)
     last = ordered.group_by("ticker", maintain_order=True).last()
     last_two_sided = (
         ordered.filter(pl.col("mid_e6").is_not_null())
         .group_by("ticker", maintain_order=True)
         .last()
     )
-    new_carried = pl.concat([last, last_two_sided]).unique().with_columns(carried=pl.lit(True))
+    new_carried = (
+        pl.concat([last, last_two_sided])
+        .unique(maintain_order=True)
+        .with_columns(carried=pl.lit(True))
+    )
     return events, new_carried.select(with_carried.columns), found.height, following
 
 
