@@ -23,7 +23,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -232,22 +232,34 @@ def run_read(
     workers: int = 1,
     log: Callable[[str], None] = lambda _: None,
 ) -> list[dict[str, Any]]:
-    """Every market read through the model, ``workers`` at a time; stops when the node stops
-    answering (``ABORT_AFTER`` failures in a row)."""
-    rows = markets.to_dicts()
+    """Every market read through the model, ``workers`` at a time with at most twice that many
+    requests in flight (so a node that has stopped answering is noticed within a few calls); stops
+    when ``ABORT_AFTER`` requests in a row fail."""
+    rows = iter(markets.to_dicts())
+    total = markets.height
     done: list[dict[str, Any]] = []
     streak = 0
     pool = ThreadPoolExecutor(max_workers=workers)
+    pending: set[Future[dict[str, Any]]] = set()
+
+    def feed() -> None:
+        while len(pending) < 2 * workers and (row := next(rows, None)) is not None:
+            pending.add(pool.submit(read_one, client, row))
+
     try:
-        futures = [pool.submit(read_one, client, row) for row in rows]
-        for count, future in enumerate(as_completed(futures), start=1):
-            result = future.result()
-            done.append(result)
-            streak = streak + 1 if result["error"] else 0
-            if streak >= ABORT_AFTER:
-                raise ModelError(f"the model node stopped answering ({result['error']})")
-            if count % PROGRESS_EVERY == 0:
-                log(f"{count:,} of {len(rows):,} markets read")
+        feed()
+        while pending:
+            finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in finished:
+                pending.discard(future)
+                result = future.result()
+                done.append(result)
+                streak = streak + 1 if result["error"] else 0
+                if streak >= ABORT_AFTER:
+                    raise ModelError(f"the model node stopped answering ({result['error']})")
+                if len(done) % PROGRESS_EVERY == 0:
+                    log(f"{len(done):,} of {total:,} markets read")
+            feed()
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
     return sorted(done, key=lambda r: r["ticker"])

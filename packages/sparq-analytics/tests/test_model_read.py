@@ -195,7 +195,7 @@ def test_the_run_stops_when_the_node_stops_answering(tmp_path: Path) -> None:
     markets = pl.concat([window_and_older(write_reading_kalshi(tmp_path)).head(1)] * 25)
     with pytest.raises(ModelError, match="stopped answering"):
         read.run_read(client_for(calls, tmp_path, status=500), markets)
-    assert read.ABORT_AFTER <= len(calls) < 25
+    assert read.ABORT_AFTER <= len(calls) <= read.ABORT_AFTER + 2  # at most two in flight
     # a failure is a row with its error, not a crash, below the limit
     one = read.run_read(client_for([], tmp_path / "x", status=500), markets.head(3))
     assert [r["error"] for r in one] == ["the model node answered 500"] * 3
