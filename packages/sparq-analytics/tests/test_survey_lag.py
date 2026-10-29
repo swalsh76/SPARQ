@@ -266,10 +266,10 @@ def test_the_summary_by_kind(tmp_path: Path) -> None:
     assert (outcomes["reachable_net_e6_a_day"], outcomes["reachable_quotes_a_day"]) == (
         -37_704, 12,
     )  # fmt: skip
-    # B0 shows two stale quotes (its 00:40:10 frame re-quoted the size); B2 two (one ended at
-    # 00:40:20, one stood); B1 one; W2 one
+    # B0 one (its size was re-quoted, but both moves fell in one hour with no answer); B2 two
+    # (one ended at 00:40:20, one stood); B1 one (it answered at 00:41); W2 one
     assert (kinds["brackets"]["stale_quotes_a_day"], kinds["weather"]["stale_quotes_a_day"]) == (
-        72, 36,
+        60, 36,
     )  # fmt: skip
     assert kinds["outcomes"]["capacity"]["net_e6_a_day"] == 821_688
     assert kinds["outcomes"]["response_cents"]["1s"] == 2.0

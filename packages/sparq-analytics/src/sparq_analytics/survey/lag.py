@@ -24,8 +24,8 @@ at that moment, the watched market ``b`` is read:
 * for a signed kind, the **capacity** of the stale quote: the size shown on the side a taker would
   hit, times the 10-minute response, less the taker fee on that size at that price from the
   series' terms. Each stale quote is counted once, at the first move that left it stale (the same
-  ``b``, expected side and first move, or, when no move came within the hour, the same quote
-  frame), provided its 10-minute response and its fee are known; the trades through it are
+  ``b``, expected side and first move, or, when no move came within the hour, once an hour it
+  stood), provided its 10-minute response and its fee are known; the trades through it are
   counted once the same way. The capacity is given for every stale quote, as M4 words it, and
   for the **reachable** ones, which stood at least a second before ``b`` moved (SPARQ's scale)
   with that lag known, since a quote that moved in the same second as ``a`` was never there to
@@ -660,12 +660,13 @@ def summarize(out: Path, start: datetime, end: datetime, moves_total: int) -> di
     ).collect().to_dicts()[0]  # fmt: skip
     usable = events.filter((pl.col("state") == "ok") & ~pl.col("in_gap"))
     # a stale quote's spell: the same watched market, side and first move; its first event counts
-    # (a quote that never answered within the hour is told apart by its frame); its first event
-    # counts when the 10-minute response and the fee are known
+    # (a quote that never answered within the hour is counted once an hour it stood: that tells a
+    # market that re-quotes and stands again apart, without counting every size refresh); its
+    # first event counts when the 10-minute response and the fee are known
     usable = usable.with_columns(
-        spell_frame=pl.when(pl.col("first_ms").is_null()).then(pl.col("b_ts0"))
+        spell_hour=pl.when(pl.col("first_ms").is_null()).then(pl.col("hour"))
     )
-    spells = ["kind", "b", "expected", "first_ms", "spell_frame"]
+    spells = ["kind", "b", "expected", "first_ms", "spell_hour"]
     firsts = usable.group_by(spells).agg(pl.col("t").min().alias("t_first"))
     first = (pl.col("t") == pl.col("t_first")).fill_null(False)
     measurable = pl.col(f"r_{HEADLINE}").is_not_null() & (

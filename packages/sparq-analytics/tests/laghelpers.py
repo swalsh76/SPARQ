@@ -103,9 +103,10 @@ B1→B2 at 00:41, W1→W2, R1→W2), so they are not reachable.
     against A's direction.
 17. 00:40:20 B2→B1 (brackets, A's direction −): B1 at 25 (its 00:40 frame), 27 at 00:41:
     responses 0, 0, −2, −2, null; first move at 40 s, against.
-17b. 00:41 B1→B0 (brackets): B0 at 6 again, but from its 00:40:10 frame: a second stale quote
-    of B0's, counted apart from row 15's. 17c. 00:41 B1→B2 (brackets): B2 at 28 (its 00:40:20
-    frame), never moves again; a stale quote apart from row 16's, which ended at 00:40:20.
+17b. 00:41 B1→B0 (brackets): B0 at 6 again (its 00:40:10 frame re-quoted the size): the same
+    standing quote in the same hour as row 15's, counted once.
+17c. 00:41 B1→B2 (brackets): B2 at 28 (its 00:40:20 frame), never moves again; a stale quote
+    apart from row 16's, which ended at 00:40:20.
 18. 00:45 W1→W2 (brackets): W2 at 41 never moves.
 19. 00:45 W1→R1 (weather): R1 at 81 before (its 00:00 frame), 83 at the same millisecond: +2 at
     every horizon but the hour (gap); first move at 0 ms, agreeing.
@@ -121,9 +122,9 @@ B1→B2 at 00:41, W1→W2, R1→W2), so they are not reachable.
 
 By kind, usable events: thresholds 5, outcomes 2, game 3, horizons 4, brackets 6, weather 3.
 Stale quotes: thresholds 4 (row 24 shares row 11's), outcomes 2, game 3, horizons 2 (rows 6
-and 13 share row 3's), brackets 6, weather 3. Reachable: every threshold quote; of the
-outcomes only row 9 (BBB answered within a second); of the game rows 8 and 10 (row 23's hour
-meets the gap with no move seen: its lag is unknown); both horizon quotes.
+and 13 share row 3's), brackets 5 (rows 15 and 17b share one), weather 3. Reachable: every
+threshold quote; of the outcomes only row 9 (BBB answered within a second); of the game rows 8
+and 10 (row 23's hour meets the gap with no move seen: its lag is unknown); both horizon quotes.
 Capacity a day (the span is two hours, so twelve times the sums): thresholds gross 864,000, fee
 1,138,476, net −274,476 on 4 quotes counted (48 a day); outcomes net +821,688; game −281,940;
 horizons −1,352,064. Nothing clears $25 a day.
