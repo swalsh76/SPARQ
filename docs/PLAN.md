@@ -67,7 +67,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | **S1** | **Evidence for the quoter** (§6.1): S1.1 the pre-registered middle-tier test; S1.2 the shadow quoter; S1.3 the write path, risk layer and kill switch on demo; S1.4 the tiny live pilot | Each slice's gate in §6.1; a slice starts only when the one before it passes | approved 2026-10-25; **S1.1 NO-GO**; S1.2a done (go on); S1.1b's forward test dropped and S1.2 on hold (D13, 2026-10-27); **closed 2026-10-28 (D14, BUILD-LOG S1.c)** |
 | **S2** | **Weather against station observations** (§6.2): S2.1 sources, terms and the observation history; S2.2 exploration on the fit and validate parts; S2.3 the pre-registered test on the held-out part; S2.4 a live shadow run against the real books | Each slice's gate in §6.2 | **approved 2026-10-27**; S2.1 done; **S2.2 done: no rules, so S2's taker test closes without a test (W9, 2026-10-28)**; S2.3 and S2.4 not run; **closed 2026-10-28 (BUILD-LOG S2.c)** |
 | **S3** | **Three measurements of where the money is** (§6.3): S3.1 the certainty dump and the 99-cent queue; S3.2 where the book is slow; S3.3 the thin tail and the surprise rate; S3.c close-out | Each measurement against its bar in M4; the owner chooses after each | **approved 2026-10-28**; S3.1 and S3.2 below their bars; S3.3 clears both of its bars; **closed 2026-10-29 (BUILD-LOG S3.c)**; its one strand proposal is S4 |
-| **S4** | **A paper quoter in the thin tail** (§6.4): S4.1 the paper quoter on the fit part; S4.2 the registered test on new live days; S4.3 the shadow quoter, on a GO; S4.c close-out | T7's bar on the registered test; the owner approves the rules first | **proposed 2026-10-29, awaiting the owner's approval** |
+| **S4** | **A paper quoter in the thin tail** (§6.4): S4.1 the paper quoter on the fit part; S4.2 the registered test on new live days; S4.3 the shadow quoter, on a GO; S4.c close-out | T7's bar on the registered test; the owner approves the rules first | **approved 2026-10-29**; S4.1 planned |
 
 ### 6.1 S1 Evidence for the quoter: decisions and slices (approved 2026-10-25)
 
@@ -197,11 +197,11 @@ The question is whether the book still offers prices on the wrong side of a boun
 
 **Verdict (S3.c, 2026-10-29).** Three measurements, each read once against the bar set before it (M4). **S3.1, below the bar:** a bid joining the 99-cent queue when the price reaches 99 earns a cent on what the queue lets it fill and loses 99 cents on nearly its whole size when the side reverses, so it loses in every category but Mentions (+$39 a day on 28 reversals in 65 days, a lead to re-read with more live days; parked in §9); the whole queue's $240,000 a day goes 85% to the crypto bots already in it. **S3.2, below the bar:** related markets answer a 2-cent move within seconds, the 10-minute pass-through is a fraction of a cent, hitting the stale quotes at their shown size loses millions of dollars a day a kind to taker fees, and the quotes that stand a second move against the signal; the direction is parked in §9 with its numbers, and SPARQ's founding thesis, a fair value from related markets, does not hold at a 2-cent resolution on Kalshi's own books. **S3.3, both bars cleared:** thin markets' uncontested trades carry about $499,000 a day of half-spread (Sports $404,000) against the $250 bar, and 14 series of 313 judged clear the surprise bar where 7.8 would by chance (leads, parked in §9). Per M7 S3 makes one strand proposal, on the half-spread: **S4, a paper quoter in the thin tail (§6.4), awaiting the owner's approval.** What stays: `sparq_analytics.survey` on `main`, tested, and the live copies and survey outputs on the analytics node's data drive. The model node (M6) gets its own proposal after the owner's decision on S4.
 
-### 6.4 S4 A paper quoter in the thin tail (proposed 2026-10-29, awaiting the owner's approval)
+### 6.4 S4 A paper quoter in the thin tail (approved 2026-10-29)
 
 **Why this strand.** S3's one direction with money not already taken: in thin markets (under 1,000 contracts a day) the trades that cross a spread wider than 20 cents carry about $499,000 a day of half-spread, four fifths of it in Sports, with no quote within 10 cents of the mid to compete with (S3.3). Everything else S3 measured is taken or closed: the 99-cent queue is rationed by the bots ahead of it (S3.1), and related markets answer within seconds (S3.2). What S3.3 could not say is what a maker standing inside those spreads would keep: how often its quote is hit and by whom (in the middle tier a late joiner is picked off, S1.2a), and what the position is worth afterwards in a market that may never trade again before it settles. S4 measures that on paper, sends no order, and builds nothing that trades.
 
-**Decisions (proposed).**
+**Decisions (approved by the owner, 2026-10-29, as proposed, with the answers below).**
 
 | # | Decision |
 |---|---|
@@ -228,7 +228,7 @@ The question is whether the book still offers prices on the wrong side of a boun
 
 **Known weaknesses, stated before the reading.** The fill rule ignores the taker's reaction to a better quote (a tighter spread may draw more flow, or less). The fair value is the book's own mid, weak in a wide book. A position in a market that never trades again is marked to a mid that may not exist, so the test's settlement marking is the real reading, and the fit part can only choose which rules to register.
 
-**Open questions, answered by the owner (2026-10-29).** The fit part stays mid-marked, as proposed (M3's reserve is spent only by the registered test); **every category is registered**, not Sports alone (T2 reads as: every category is read and registered, Sports reported first); the sizes are 10 and 50 contracts, as proposed. The proposal itself awaits the owner's approval.
+**Open questions, answered by the owner (2026-10-29).** The fit part stays mid-marked, as proposed (M3's reserve is spent only by the registered test); **every category is registered**, not Sports alone (T2 reads as: every category is read and registered, Sports reported first); the sizes are 10 and 50 contracts, as proposed. The owner approved S4 on 2026-10-29 ("begin S4"); S4.1 starts with its own slice plan.
 
 ## 7. Risks
 
