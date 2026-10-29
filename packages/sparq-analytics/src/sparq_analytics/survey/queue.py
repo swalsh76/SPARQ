@@ -26,10 +26,9 @@ from typing import Any
 import numpy as np
 import polars as pl
 from numpy.typing import NDArray
-from sparq_core.fees import MAKER_SHARE_E2
 
 from sparq_analytics.live.source import HOUR, hour_files, hour_name, hour_of, last_hour_end
-from sparq_analytics.study.feecalc import maker_fee_expr
+from sparq_analytics.study.feecalc import maker_fee_expr, maker_share_expr
 from sparq_analytics.survey.dump import (
     CENTS,
     CERTAIN_E6,
@@ -318,9 +317,7 @@ def with_fills(
     # the series' current terms: the live span is days old, so they are the terms in force; a
     # fee type outside the quadratic family, or a series without terms or without a multiplier,
     # leaves the fee unknown
-    share = pl.when(pl.col("multiplier_e6").is_not_null()).then(
-        pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
-    )
+    share = maker_share_expr(pl.col("fee_type"), pl.col("multiplier_e6"))
     frame = (
         found.join(markets.select("ticker", "series_ticker", "category"), on="ticker", how="left")
         .join(fees, on="series_ticker", how="left")

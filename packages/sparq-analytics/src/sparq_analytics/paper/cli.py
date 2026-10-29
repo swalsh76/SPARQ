@@ -16,12 +16,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-import polars as pl
-
-from sparq_analytics.live.source import LiveSourceError
 from sparq_analytics.paper import quoter
-from sparq_analytics.survey.cli import UsageError, _need
-from sparq_analytics.survey.dump import SurveyDataError
+from sparq_analytics.survey.cli import ERRORS, need
 from sparq_analytics.survey.queue import fee_terms
 
 
@@ -38,8 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _fit(args: argparse.Namespace) -> int:
-    kalshi, live = _need(args.kalshi, "--kalshi"), _need(args.live, "--live")
-    out = _need(args.out, "--out")
+    kalshi, live = need(args.kalshi, "--kalshi"), need(args.live, "--live")
+    out = need(args.out, "--out")
     result = quoter.run(
         live, fee_terms(kalshi), out, hours=args.hours,
         log=lambda line: print(line, file=sys.stderr),
@@ -54,13 +50,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return _fit(args)
-    except (
-        UsageError,
-        SurveyDataError,
-        LiveSourceError,
-        ValueError,
-        OSError,
-        pl.exceptions.PolarsError,
-    ) as error:
+    except ERRORS as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

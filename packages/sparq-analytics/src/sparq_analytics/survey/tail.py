@@ -38,13 +38,12 @@ from typing import Any
 
 import numpy as np
 import polars as pl
-from sparq_core.fees import MAKER_SHARE_E2
 from sparq_core.fixedpoint import E6
 
 from sparq_analytics.live.source import hour_files, hour_of
 from sparq_analytics.study.bootstrap import Estimate, cluster_bootstrap
 from sparq_analytics.study.dataset import scan_markets
-from sparq_analytics.study.feecalc import maker_fee_expr
+from sparq_analytics.study.feecalc import fee_terms_known, maker_fee_expr, maker_share_expr
 from sparq_analytics.survey.dump import (
     CENTS,
     CUT,
@@ -283,10 +282,10 @@ def _hour_trades(
             (pl.col("count_e2") * (pl.col("spread_e6") // 2)) // 100
         )
     )
-    share = pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
+    share = maker_share_expr(pl.col("fee_type"), pl.col("multiplier_e6"))
     joined = joined.join(info, on="ticker", how="left").with_columns(share=share)
     readable = pl.col("half_e6").is_not_null()
-    terms = pl.col("share").is_not_null() & pl.col("multiplier_e6").is_not_null()
+    terms = fee_terms_known(pl.col("share"), pl.col("multiplier_e6"))
     fee = maker_fee_expr(
         pl.col("multiplier_e6"), pl.col("share"), pl.col("count_e2"), pl.col("yes_price_e6")
     )

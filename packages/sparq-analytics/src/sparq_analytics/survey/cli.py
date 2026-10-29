@@ -86,10 +86,22 @@ def _cut(args: argparse.Namespace) -> date:
     return CUT if args.cut is None else args.cut
 
 
-def _need(value: Path | None, name: str) -> Path:
+def need(value: Path | None, name: str) -> Path:
+    """The path of a required option, or a usage error naming it."""
     if value is None:
         raise UsageError(f"{name} is required")
     return value
+
+
+ERRORS = (  # what a command line reports as "error: ..." with exit code 1, for every study
+    UsageError,
+    SurveyDataError,
+    StudyDataError,
+    LiveSourceError,
+    ValueError,
+    OSError,
+    pl.exceptions.PolarsError,
+)
 
 
 def _write(out: Path, name: str, data: dict[str, Any]) -> None:
@@ -97,7 +109,7 @@ def _write(out: Path, name: str, data: dict[str, Any]) -> None:
 
 
 def _dump(args: argparse.Namespace) -> int:
-    kalshi, out = _need(args.kalshi, "--kalshi"), _need(args.out, "--out")
+    kalshi, out = need(args.kalshi, "--kalshi"), need(args.out, "--out")
     out.mkdir(parents=True, exist_ok=True)
     past: dict[str, Any] | None = None
     frames: dict[str, Any] | None = None
@@ -106,7 +118,7 @@ def _dump(args: argparse.Namespace) -> int:
         _write(out, "dump-history.json", past)
         regimes.write_parquet(out / "dump-regimes.parquet")
     if args.only != "history":
-        frames, episodes = live_reading(_need(args.live, "--live"), fee_terms(kalshi), past)
+        frames, episodes = live_reading(need(args.live, "--live"), fee_terms(kalshi), past)
         _write(out, "dump-live.json", frames)
         episodes.write_parquet(out / "dump-episodes.parquet")
     if past is not None and frames is not None:
@@ -119,8 +131,8 @@ def _dump(args: argparse.Namespace) -> int:
 
 
 def _lag(args: argparse.Namespace) -> int:
-    kalshi, live = _need(args.kalshi, "--kalshi"), _need(args.live, "--live")
-    out = _need(args.out, "--out")
+    kalshi, live = need(args.kalshi, "--kalshi"), need(args.live, "--live")
+    out = need(args.out, "--out")
     out.mkdir(parents=True, exist_ok=True)
     start, end = lag.study_span(live, args.hours)
     markets = pl.read_parquet(live / "markets.parquet")
@@ -140,8 +152,8 @@ def _lag(args: argparse.Namespace) -> int:
 
 
 def _tail(args: argparse.Namespace) -> int:
-    kalshi, live = _need(args.kalshi, "--kalshi"), _need(args.live, "--live")
-    out = _need(args.out, "--out")
+    kalshi, live = need(args.kalshi, "--kalshi"), need(args.live, "--live")
+    out = need(args.out, "--out")
     out.mkdir(parents=True, exist_ok=True)
     volume = tail.volume(kalshi, tail.trade_days(kalshi))
     _write(out, "tail-volume.json", volume)
@@ -171,14 +183,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         _check(args)
         return HANDLERS[args.command](args)
-    except (
-        UsageError,
-        SurveyDataError,
-        StudyDataError,
-        LiveSourceError,
-        ValueError,
-        OSError,
-        pl.exceptions.PolarsError,
-    ) as error:
+    except ERRORS as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

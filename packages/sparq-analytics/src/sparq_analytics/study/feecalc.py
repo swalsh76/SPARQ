@@ -7,6 +7,7 @@ against the scalar functions in the tests. The largest numerator allowed is abou
 """
 
 import polars as pl
+from sparq_core.fees import MAKER_SHARE_E2
 from sparq_core.fixedpoint import E6
 
 _I128 = pl.Int128
@@ -26,6 +27,19 @@ def _ceil_div(numerator: pl.Expr, denominator: int) -> pl.Expr:
 def taker_fee_expr(multiplier_e6: pl.Expr, count_e2: pl.Expr, price_e6: pl.Expr) -> pl.Expr:
     m, c, p = multiplier_e6.cast(_I128), count_e2.cast(_I128), price_e6.cast(_I128)
     return _ceil_div(m * _lit(7) * c * p * (_lit(E6) - p), _TAKER_DENOMINATOR)
+
+
+def maker_share_expr(fee_type: pl.Expr, multiplier_e6: pl.Expr) -> pl.Expr:
+    """The series' maker share in hundredths: null outside the quadratic family or without a
+    multiplier, so the fee is unknown rather than zero."""
+    return pl.when(multiplier_e6.is_not_null()).then(
+        fee_type.replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
+    )
+
+
+def fee_terms_known(share_e2: pl.Expr, multiplier_e6: pl.Expr) -> pl.Expr:
+    """Whether a maker fee can be computed from the series' terms."""
+    return share_e2.is_not_null() & multiplier_e6.is_not_null()
 
 
 def maker_fee_expr(

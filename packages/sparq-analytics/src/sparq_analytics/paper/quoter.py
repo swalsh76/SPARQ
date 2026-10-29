@@ -13,31 +13,32 @@ filled and kept:
 * **Fills** (T4): a taker trade strictly after the frame and before the quote dies fills it when its
   price is strictly beyond the paper quote (a yes taker above the paper ask, a no taker below the
   paper bid), for the smaller of ``S`` and the trade's size; one fill a paper quote and side at
-  most; block trades never.
+  most, across hours too; block trades never.
 * **Marks** (T5): the fill against the mid 10 minutes and 1 hour later (null past the copied
-  frames or the market's close) and against the market's last two-sided mid in the span (its
-  pre-close mid when it closed in the span, else **censored**), less the maker fee from the series'
-  terms (unknown without them). Whether the market traded again after the fill is noted.
-* **Days** (T6): a UTC day with a logged outage over ten minutes leaves the fit part; the figures a
-  day scale by the hours kept.
+  frames, the market's close or a dropped day) and against the market's last two-sided mid in the
+  kept hours at or after the fill (its pre-close mid when it closed in the span, else **censored**;
+  null when no two-sided frame followed the fill), less the maker fee from the series' terms
+  (unknown without them). Whether the market traded again after the fill is noted.
+* **Days** (T6): a UTC day with a logged outage over ten minutes leaves the fit part, the book is
+  not carried across it, and the figures a day scale by the hours kept.
 
 Money is integer millionths of a dollar; sizes are hundredths of a contract; the bootstrap
 clusters are (event, day).
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import polars as pl
-from sparq_core.fees import MAKER_SHARE_E2
 from sparq_core.fixedpoint import E6
 
 from sparq_analytics.live.source import HOUR, hour_files, hour_name, hour_of
 from sparq_analytics.study.bootstrap import cluster_bootstrap
-from sparq_analytics.study.feecalc import maker_fee_expr
+from sparq_analytics.study.feecalc import fee_terms_known, maker_fee_expr, maker_share_expr
 from sparq_analytics.survey.dump import (
     CENTS,
     MS_PER_HOUR,
@@ -46,8 +47,8 @@ from sparq_analytics.survey.dump import (
     UNKNOWN,
     SurveyDataError,
 )
-from sparq_analytics.survey.lag import EXTREME_E6, a_day, frames_of, trades_of
-from sparq_analytics.survey.queue import FRAME_COLUMNS, gaps_of, span
+from sparq_analytics.survey.lag import EXTREME_E6, a_day, empty_frames, frames_of, trades_of
+from sparq_analytics.survey.queue import gaps_of, span
 from sparq_analytics.survey.tail import COMPETING_E6, THIN_TIERS, outage_overlap, tiered
 
 INSIDE_E6 = (50_000, 100_000)  # k: 5 and 10 cents inside the standing quote
@@ -59,6 +60,7 @@ OUTAGE_DAY_MS = 600_000  # T6: a day with an outage over ten minutes leaves the 
 SEED = 34
 TRADE_COLUMNS = ("ts_ms", "ticker", "yes_price_e6", "count_e2", "taker_side")
 FILL_KEYS = ["ticker", "frame_ms", "k_e6", "side"]
+CELL_KEYS = ("state", "k_e6", "tier", "category")
 Gaps = list[tuple[int, int]]
 
 
@@ -97,9 +99,6 @@ def market_info(live: Path, fees: pl.DataFrame, start: datetime, end: datetime) 
         .collect()
     )
     span_ms = (int(start.timestamp() * 1000), int(end.timestamp() * 1000))
-    share = pl.when(pl.col("multiplier_e6").is_not_null()).then(
-        pl.col("fee_type").replace_strict(MAKER_SHARE_E2, default=None, return_dtype=pl.Int64)
-    )
     return (
         tiered(markets.join(contracts, on="ticker", how="left"), *span_ms)
         .with_columns(
@@ -107,7 +106,7 @@ def market_info(live: Path, fees: pl.DataFrame, start: datetime, end: datetime) 
             pl.col("event_ticker").fill_null(pl.col("ticker")),
         )
         .join(fees, on="series_ticker", how="left")
-        .with_columns(share=share)
+        .with_columns(share=maker_share_expr(pl.col("fee_type"), pl.col("multiplier_e6")))
         .select(
             "ticker", "series_ticker", "event_ticker", "category", "tier", "close_ms",
             "multiplier_e6", "share",
@@ -124,10 +123,9 @@ def paper_quotes(
     """The paper quotes standing in one hour: for every frame of a thin market whose book is
     uncontested or one-sided (and not in the certainty regime), one row a value of ``k`` with the
     paper bid and ask (null where a side cannot be quoted) and the window the quote stands in."""
-    ordered = (
-        book.join(info.filter(pl.col("tier").is_in(THIN_TIERS)), on="ticker", how="inner")
-        .sort("ticker", "ts_ms", maintain_order=True)
-    )  # fmt: skip
+    ordered = book.join(
+        info.filter(pl.col("tier").is_in(THIN_TIERS)), on="ticker", how="inner"
+    ).sort("ticker", "ts_ms", maintain_order=True)
     bid, ask = pl.col("yes_bid_e6"), pl.col("yes_ask_e6")
     next_ms = pl.col("ts_ms").shift(-1).over("ticker").fill_null(hour_end_ms)
     state = (
@@ -163,10 +161,11 @@ def paper_quotes(
     )  # fmt: skip
 
 
-def fills_of(trades: pl.DataFrame, quotes: pl.DataFrame) -> pl.DataFrame:
+def fills_of(trades: pl.DataFrame, quotes: pl.DataFrame, filled: pl.DataFrame) -> pl.DataFrame:
     """The fills: each trade is matched to the paper quotes placed at its market's last frame
     strictly before it; a yes taker above the paper ask fills the ask, a no taker below the paper
-    bid fills the bid; the first such trade a quote and side is the fill."""
+    bid fills the bid; the first such trade a quote and side is the fill, and a quote in
+    ``filled`` (filled in an earlier hour) is not filled again."""
     frames = quotes.select("ticker", "frame_ms").unique().sort("frame_ms", maintain_order=True)
     hit = (
         trades.with_columns(key=pl.col("ts_ms") - 1)
@@ -196,6 +195,7 @@ def fills_of(trades: pl.DataFrame, quotes: pl.DataFrame) -> pl.DataFrame:
         .sort("ts_ms", maintain_order=True)
         .group_by(FILL_KEYS, maintain_order=True)
         .first()
+        .join(filled, on=FILL_KEYS, how="anti")
     )
     return (
         first.rename(
@@ -237,15 +237,49 @@ def with_marks(fills: pl.DataFrame, two_sided: pl.DataFrame, loaded_end_ms: int)
 
 def quote_time(quotes: pl.DataFrame, gaps: Gaps) -> pl.DataFrame:
     """The paper quotes' standing time in the hour, outages taken out, by state, ``k``, tier and
-    category, with the number of quotes placed."""
+    category, with the number of quote rows."""
     dur = (
         pl.col("valid_to") - pl.col("valid_from")
         - outage_overlap(pl.col("valid_from"), pl.col("valid_to"), gaps)
     ).clip(lower_bound=0)  # fmt: skip
     return (
         quotes.with_columns(dur_ms=dur)
-        .group_by("state", "k_e6", "tier", "category")
+        .group_by(*CELL_KEYS)
         .agg(pl.len().alias("quotes"), pl.col("dur_ms").sum().alias("quote_ms"))
+    )
+
+
+@dataclass
+class Carry:
+    """What one hour hands the next: each market's last frame (the standing book), the paper
+    quotes filled so far (a quote carried across the hour is not filled again), each market's
+    last two-sided mid and its time (the close mark), and its last trade time."""
+
+    frames: pl.DataFrame
+    filled: pl.DataFrame
+    last_mid: pl.DataFrame
+    last_trade: pl.DataFrame
+
+
+def empty_carry() -> Carry:
+    return Carry(
+        frames=empty_frames(),
+        filled=pl.DataFrame(
+            schema={"ticker": pl.String, "frame_ms": pl.Int64, "k_e6": pl.Int64, "side": pl.String}
+        ),
+        last_mid=pl.DataFrame(
+            schema={"ticker": pl.String, "mid_close": pl.Int64, "last_frame_ms": pl.Int64}
+        ),
+        last_trade=pl.DataFrame(schema={"ticker": pl.String, "last_trade_ms": pl.Int64}),
+    )
+
+
+def _last(frame: pl.DataFrame, by_ms: str) -> pl.DataFrame:
+    """Each market's last row of ``frame`` by ``by_ms``."""
+    return (
+        frame.sort("ticker", by_ms, maintain_order=True)
+        .group_by("ticker", maintain_order=True)
+        .last()
     )
 
 
@@ -254,61 +288,42 @@ def study_hour(
     live: Path,
     info: pl.DataFrame,
     gaps: Gaps,
-    carried: pl.DataFrame,
+    carry: Carry,
     span_end: datetime,
     current: pl.DataFrame | None = None,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame | None]:
-    """One hour's fills with their 10-minute and 1-hour marks, its quote time, the frames to carry
-    (each market's last) and the following hour's frames, read for the marks."""
+    next_kept: bool = True,
+) -> tuple[pl.DataFrame, pl.DataFrame, Carry, pl.DataFrame | None]:
+    """One hour's fills with their 10-minute and 1-hour marks, its quote time, what the hour hands
+    the next, and the following hour's frames (read for the marks when that hour is kept)."""
     if current is None:
         current = frames_of(live / "ticker" / f"{hour_name(hour)}.parquet")
     next_path = live / "ticker" / f"{hour_name(hour + HOUR)}.parquet"
-    following = frames_of(next_path) if next_path.exists() and hour + HOUR < span_end else None
+    following = (
+        frames_of(next_path)
+        if next_kept and next_path.exists() and hour + HOUR < span_end
+        else None
+    )
     loaded_end = hour + (2 * HOUR if following is not None else HOUR)
     hour_start_ms, hour_end_ms = int(hour.timestamp() * 1000), int((hour + HOUR).timestamp() * 1000)
-    book = pl.concat([carried, current])
+    book = pl.concat([carry.frames, current])
     quotes = paper_quotes(book, info, hour_start_ms, hour_end_ms)
     trades = trades_of(live, [hour], TRADE_COLUMNS)
-    found = fills_of(trades, quotes)
+    found = fills_of(trades, quotes, carry.filled)
     two_sided = pl.concat([book] + ([following] if following is not None else [])).filter(
         pl.col("mid_e6").is_not_null()
     )
     found = with_marks(found, two_sided, int(loaded_end.timestamp() * 1000))
-    new_carried = (
-        book.sort("ticker", "ts_ms", maintain_order=True)
-        .group_by("ticker", maintain_order=True)
-        .last()
-        .select(book.columns)
-        .with_columns(carried=pl.lit(True))
+    seen = book.filter(pl.col("mid_e6").is_not_null()).select(
+        "ticker", mid_close=pl.col("mid_e6"), last_frame_ms=pl.col("ts_ms")
     )
-    return found, quote_time(quotes, gaps), new_carried, following
-
-
-def last_mids(files: list[Path]) -> pl.DataFrame:
-    """Each market's last two-sided mid in the kept hours and its time."""
-    bid_ok, ask_ok = pl.col("yes_bid_size_e2") > 0, pl.col("yes_ask_size_e2") > 0
-    return (
-        pl.scan_parquet(files)
-        .select(FRAME_COLUMNS)
-        .filter(bid_ok & ask_ok)
-        .with_columns(mid_e6=(pl.col("yes_bid_e6") + pl.col("yes_ask_e6")) // 2)
-        .group_by("ticker")
-        .agg(
-            pl.col("mid_e6").sort_by("ts_ms").last().alias("mid_close"),
-            pl.col("ts_ms").max().alias("last_frame_ms"),
-        )
-        .collect()
+    traded = trades.select("ticker", last_trade_ms=pl.col("ts_ms"))
+    handed = Carry(
+        frames=_last(book, "ts_ms").select(book.columns).with_columns(carried=pl.lit(True)),
+        filled=pl.concat([carry.filled, found.select(FILL_KEYS)]),
+        last_mid=_last(pl.concat([carry.last_mid, seen]), "last_frame_ms"),
+        last_trade=_last(pl.concat([carry.last_trade, traded]), "last_trade_ms"),
     )
-
-
-def last_trades(files: list[Path]) -> pl.DataFrame:
-    """Each market's last trade time in the kept hours."""
-    return (
-        pl.scan_parquet(files)
-        .group_by("ticker")
-        .agg(pl.col("ts_ms").max().alias("last_trade_ms"))
-        .collect()
-    )
+    return found, quote_time(quotes, gaps), handed, following
 
 
 def run(
@@ -331,37 +346,39 @@ def run(
         raise SurveyDataError("every hour of the span lies in a dropped day")
     gaps: Gaps = [(r["start_ms"], r["end_ms"]) for r in gap_frame.to_dicts()]
     info = market_info(live, fees, start, end)
-    carried = frames_of(files[0]).clear()
+    carry = empty_carry()
     current: pl.DataFrame | None = None
     fills: list[pl.DataFrame] = []
     times: list[pl.DataFrame] = []
     for i, path in enumerate(files):
         hour = hour_of(path.stem)
-        found, timed, carried, following = study_hour(hour, live, info, gaps, carried, end, current)
-        # across a dropped day the book is not carried (a day-old quote is no quote) and the
-        # following hour's frames are not the next kept hour's
-        consecutive = i + 1 < len(files) and hour_of(files[i + 1].stem) == hour + HOUR
-        current = following if consecutive else None
-        if not consecutive:
-            carried = carried.clear()
+        next_kept = i + 1 < len(files) and hour_of(files[i + 1].stem) == hour + HOUR
+        found, timed, carry, following = study_hour(
+            hour, live, info, gaps, carry, end, current, next_kept
+        )
+        current = following if next_kept else None
+        if not next_kept:  # across a dropped day the book is not carried: a day-old quote is none
+            carry = Carry(empty_frames(), carry.filled.clear(), carry.last_mid, carry.last_trade)
         fills.append(found)
         times.append(timed)
         log(f"{path.stem}: {found.height:,} fills")
     out.mkdir(parents=True, exist_ok=True)
-    trade_files = [live / "trade" / p.name for p in files if (live / "trade" / p.name).exists()]
     all_fills = (
         pl.concat(fills)
-        .join(last_mids(files), on="ticker", how="left")
-        .join(last_trades(trade_files), on="ticker", how="left")
+        .join(carry.last_mid, on="ticker", how="left")
+        .join(carry.last_trade, on="ticker", how="left")
         .with_columns(
+            # the close mark must follow the fill: a mid seen only before it marks nothing
+            mid_close=pl.when(pl.col("last_frame_ms") >= pl.col("fill_ms")).then(
+                pl.col("mid_close")
+            ),
             censored=pl.col("close_ms").is_null() | (pl.col("close_ms") > span_end_ms),
             traded_again=(pl.col("last_trade_ms") > pl.col("fill_ms")).fill_null(False),
         )
         .sort("fill_ms", "ticker", "k_e6", "side", maintain_order=True)
     )
     all_fills.write_parquet(out / "paper-fills.parquet")
-    kept = len(files)
-    return summarize(all_fills, pl.concat(times), start, end, kept, dropped)
+    return summarize(all_fills, pl.concat(times), start, end, len(files), dropped)
 
 
 # -- the figures -----------------------------------------------------------------------------------
@@ -370,7 +387,7 @@ def run(
 def _pnl(fills: pl.DataFrame) -> pl.DataFrame:
     """Per fill and size: the dollars against each mark, the maker fee and the net."""
     sign = pl.when(pl.col("side") == "bid").then(1).otherwise(-1)
-    terms = pl.col("share").is_not_null() & pl.col("multiplier_e6").is_not_null()
+    terms = fee_terms_known(pl.col("share"), pl.col("multiplier_e6"))
     columns = []
     for s in SIZES_E2:
         fill = pl.col(f"fill_e2_{s}")
@@ -424,61 +441,73 @@ def _interval(frame: pl.DataFrame, column: str, hours: int) -> dict[str, Any]:
 def _cells(
     fills: pl.DataFrame, times: pl.DataFrame, keys: list[str], hours: int, intervals: bool
 ) -> dict[str, dict[str, Any]]:
-    """The figures of each cell of ``keys`` (always including the rule: state, k and S)."""
-    out: dict[str, dict[str, Any]] = {}
-    time_keys = [k for k in keys if k in ("state", "k_e6", "tier", "category")]
-    timed = times.group_by(time_keys).agg(pl.col("quotes").sum(), pl.col("quote_ms").sum())
+    """The figures of each cell of ``keys`` (the rule, state and k, with a category or tier):
+    one entry a size, built from the quote time, so a cell quoted but never filled shows its
+    quote-hours and no fills."""
+    aggs = [
+        pl.len().alias("fills"),
+        pl.col("ticker").n_unique().alias("markets"),
+        pl.col("fee_unknown").sum().alias("fee_unknown"),
+        pl.col("censored").mean().alias("censored"),
+        (~pl.col("traded_again")).mean().alias("never_traded_again"),
+        pl.col("hours_to_close").median().alias("hours_to_close_median"),
+    ]
     for s in SIZES_E2:
-        aggs = [
-            pl.len().alias("fills"),
-            pl.col(f"fill_e2_{s}").sum().alias("contracts_e2"),
-            pl.col("ticker").n_unique().alias("markets"),
-            pl.col("fee_unknown").sum().alias("fee_unknown"),
-            pl.col("censored").mean().alias("censored"),
-            (~pl.col("traded_again")).mean().alias("never_traded_again"),
-            pl.col("hours_to_close").median().alias("hours_to_close_median"),
-            pl.col(f"fee_{s}").sum().alias("fee"),
-        ]
+        aggs.append(pl.col(f"fill_e2_{s}").sum().alias(f"contracts_{s}"))
+        aggs.append(pl.col(f"fee_{s}").sum().alias(f"fee_{s}"))
         for mark in MARKS:
-            aggs.append(pl.col(f"gross_{mark}_{s}").sum().alias(f"gross_{mark}"))
-            aggs.append(pl.col(f"net_{mark}_{s}").sum().alias(f"net_{mark}"))
-            aggs.append(pl.col(f"gross_{mark}_{s}").is_not_null().sum().alias(f"marked_{mark}"))
-            netted = pl.col(f"fill_e2_{s}").filter(pl.col(f"net_{mark}_{s}").is_not_null())
-            aggs.append(netted.sum().alias(f"netted_{mark}"))
-        rows = fills.group_by(keys).agg(aggs).join(timed, on=time_keys, how="left").sort(keys)
-        for r in rows.to_dicts():
-            quote_hours = (r["quote_ms"] or 0) / MS_PER_HOUR
-            contracts = r["contracts_e2"] / 100
-            cell = {
-                "fills": r["fills"],
-                "markets": r["markets"],
+            netted = pl.col(f"net_{mark}_{s}")
+            aggs.append(pl.col(f"gross_{mark}_{s}").sum().alias(f"gross_{mark}_{s}"))
+            aggs.append(netted.sum().alias(f"net_{mark}_{s}"))
+            aggs.append(pl.col(f"gross_{mark}_{s}").is_not_null().sum().alias(f"marked_{mark}_{s}"))
+            aggs.append(
+                pl.col(f"fill_e2_{s}")
+                .filter(netted.is_not_null())
+                .sum()
+                .alias(f"netted_{mark}_{s}")
+            )
+    timed = times.group_by(keys).agg(pl.col("quotes").sum(), pl.col("quote_ms").sum())
+    rows = (
+        timed.join(fills.group_by(keys).agg(aggs), on=keys, how="full", coalesce=True)
+        .sort(keys)
+        .to_dicts()
+    )
+    parts = fills.partition_by(keys, as_dict=True) if intervals else {}
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        sub = parts.get(tuple(r[k] for k in keys))
+        n_fills, quote_hours = r["fills"] or 0, (r["quote_ms"] or 0) / MS_PER_HOUR
+        for s in SIZES_E2:
+            contracts = (r[f"contracts_{s}"] or 0) / 100
+            cell: dict[str, Any] = {
+                "fills": n_fills,
+                "markets": r["markets"] or 0,
                 "contracts": contracts,
                 "quotes": r["quotes"] or 0,
                 "quote_hours_a_day": quote_hours * 24 / hours,
-                "fills_a_quote_hour": None if quote_hours == 0 else r["fills"] / quote_hours,
+                "fills_a_quote_hour": None if quote_hours == 0 else n_fills / quote_hours,
                 "hours_to_close_median": r["hours_to_close_median"],
                 "censored": r["censored"],
                 "never_traded_again": r["never_traded_again"],
-                "fee_unknown_fills": r["fee_unknown"],
-                "fee_e6_a_day": a_day(r["fee"], hours),
+                "fee_unknown_fills": r["fee_unknown"] or 0,
+                "fee_e6_a_day": a_day(r[f"fee_{s}"] or 0, hours),
                 "marks": {},
             }
             for mark in MARKS:
                 # the net, and the cents a contract, are over the marked fills whose fee is known
-                net, netted = r[f"net_{mark}"], r[f"netted_{mark}"] / 100
+                net_e6: int = r[f"net_{mark}_{s}"] or 0
+                over: float = (r[f"netted_{mark}_{s}"] or 0) / 100
                 entry: dict[str, Any] = {
-                    "marked_fills": r[f"marked_{mark}"],
-                    "gross_e6_a_day": a_day(r[f"gross_{mark}"], hours),
-                    "net_e6_a_day": a_day(net, hours),
-                    "netted_contracts": netted,
-                    "cents_a_contract": None if netted == 0 else net / netted / CENTS,
+                    "marked_fills": r[f"marked_{mark}_{s}"] or 0,
+                    "gross_e6_a_day": a_day(r[f"gross_{mark}_{s}"] or 0, hours),
+                    "net_e6_a_day": a_day(net_e6, hours),
+                    "netted_contracts": over,
+                    "cents_a_contract": None if over == 0 else net_e6 / over / CENTS,
                 }
-                if intervals and mark != "10m":
-                    sub = fills.filter(pl.all_horizontal([pl.col(k) == r[k] for k in keys]))
+                if sub is not None and mark != "10m":
                     entry["interval_e6_a_day"] = _interval(sub, f"net_{mark}_{s}", hours)
                 cell["marks"][mark] = entry
-            key = " | ".join(str(r[k]) for k in keys) + f" | {s // 100}"
-            out[key] = cell
+            out[" | ".join(str(r[k]) for k in keys) + f" | {s // 100}"] = cell
     return out
 
 
