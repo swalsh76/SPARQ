@@ -774,7 +774,7 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 ## S5. What a local language model can add (proposed 2026-10-29)
 
-### S5 proposal (PR #27, 2026-10-29 UTC, documents only; awaiting the owner's approval)
+### S5 proposal (PR #27, 2026-10-29 UTC, documents only; approved by the owner)
 
 **Built (documents only).** PLAN §6.5 (N1 to N9, S5.1 to S5.c), the S5 row in §6, the corrected model node entry in §9, and the CLAUDE.md status and resume point.
 
@@ -793,4 +793,4 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 - PLAN §9 had described the machine from Strata's own description (a 125B mixture-of-experts model); the probe found a much smaller model, and the entry now says what was measured.
 - The CLAUDE.md resume point had grown a single paragraph holding S3.c, S4.1, S4.2 and the pause; it is split into short bullets.
 
-**Decisions (owner, pending).** Approve S5 as proposed, S5.1 alone, or park the node; and whether N2's rule that no market text leaves the house stands for S5.2.
+**Decisions (owner, 2026-10-29).** "Approve as proposed": S5 with both measurements, and N2's rule that no market text leaves the house stands for S5.2. PR #27 awaits the owner's word to merge, then S5.1's slice plan.
