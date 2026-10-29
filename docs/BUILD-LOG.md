@@ -771,3 +771,19 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 - The smoke run's figures are the slice's real finding and were not expected before the test's window: the settlement marks turn the fit part's edge negative. The registered test runs as registered on 2026-11-13; the owner decides what else follows.
 
 **Decisions (owner, pending).** Whether to run the registered test on 2026-11-13 as registered (recommended: yes, it is one command, and the rules file stays pinned), and what S4 does after it.
+
+## S5. What a local language model can add (proposed 2026-10-29)
+
+### S5 proposal (2026-10-29 UTC, documents only; awaiting the owner's approval)
+
+**Built (documents only).** PLAN §6.5 (N1 to N9, S5.1 to S5.c), the S5 row in §6, the corrected model node entry in §9, and the CLAUDE.md status and resume point.
+
+**Verified.** The model node's endpoint was probed with a model listing and three small synthetic prompts (no Kalshi data): it serves one model, a 3-bit quantized Qwen-family reasoning model, at 50 to 95 tokens a second; the weather rules reading and the threshold direction were right, the rain-title check was doubtful. A reply's `content` is empty when the token budget is spent on the reasoning, which the client must leave room for. The key was read from the assistant's memory and never printed or written to the repository.
+
+**Review (PLAN Q8).** Documents only, so no test was run for this branch; the commit's diff is reviewed at low effort and the branch at medium effort before the merge: S5_REVIEW
+
+**Problems and fixes.**
+- PLAN §9 had described the machine from Strata's own description (a 125B mixture-of-experts model); the probe found a much smaller model, and the entry now says what was measured.
+- The CLAUDE.md resume point had grown a single paragraph holding S3.c, S4.1, S4.2 and the pause; it is split into short bullets.
+
+**Decisions (owner, pending).** Approve S5 as proposed, S5.1 alone, or park the node; and whether N2's rule that no market text leaves the house stands for S5.2.
