@@ -27,7 +27,6 @@ engineered for.
 
 import hashlib
 import json
-import re
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import date, timedelta
@@ -72,7 +71,8 @@ MARKET_COLUMNS = [
     "rules_primary",
 ]
 UNNAMED = ("declined", "right", "wrong", "other", "unmapped", "unparsed")
-OBJECT = re.compile(r"\{.*?\}", re.S)
+STRIKES = ("greater", "less", "between")  # the strike types a reply can be compared on
+KEYS = {"site", "direction", "lower", "upper"}
 READ_WEATHER_HASH = hashlib.sha256(READ_WEATHER.encode()).hexdigest()
 ROW_SCHEMA = {
     "ticker": pl.String,
@@ -150,13 +150,17 @@ def sample(markets: pl.DataFrame, limit: int | None) -> pl.DataFrame:
 
 
 def parse_reply(content: str) -> dict[str, Any] | None:
-    """The JSON object in a reply (it may sit in a code fence or after a line of prose), or None."""
-    for found in OBJECT.finditer(content):
+    """The JSON object in a reply (it may sit in a code fence, after a line of prose or hold other
+    objects), or None."""
+    decoder = json.JSONDecoder()
+    for start, char in enumerate(content):
+        if char != "{":
+            continue
         try:
-            value = json.loads(found.group(0))
+            value, _ = decoder.raw_decode(content, start)
         except ValueError:
             continue
-        if isinstance(value, dict) and {"site", "direction", "lower", "upper"} <= value.keys():
+        if isinstance(value, dict) and value.keys() >= KEYS:
             return value
     return None
 
@@ -185,7 +189,7 @@ def bounds_agree(
 ) -> bool:
     """Whether the answer's direction and numbers are the strike fields' (a greater market has only
     its floor, a less market only its cap)."""
-    if answer["direction"] != strike_type:
+    if str(answer["direction"]).strip().lower() != strike_type:
         return False
     lower, upper = number(answer["lower"]), number(answer["upper"])
     if strike_type == "greater":
@@ -240,7 +244,7 @@ def read_one(client: ModelClient, row: dict[str, Any]) -> dict[str, Any]:
         reply, error = Reply("", "", 0, 0.0, False), str(problem)
     answer = parse_reply(reply.content)
     named = row["site"] is not None
-    known = row["strike_type"] is not None
+    known = row["strike_type"] in STRIKES
     answered = site_of(answer["site"]) if answer is not None else None
     return base | {
         "error": error,
@@ -370,7 +374,7 @@ def figures(frame: pl.DataFrame) -> dict[str, Any]:
         "unnamed_answers": {
             kind: int((unnamed["unnamed_answer"] == kind).sum()) for kind in UNNAMED
         },
-        "no_strike_type": int(frame["strike_type"].is_null().sum()),
+        "no_strike_type": int((~frame["strike_type"].is_in(STRIKES).fill_null(False)).sum()),
         "disagreements": bad.height,
         "examples": examples,
     }
@@ -399,7 +403,9 @@ def summarize(rows: list[dict[str, Any]], wall_seconds: float) -> dict[str, Any]
         "calls": spent.height,
         "cached": int(frame["cached"].sum()),
         "wall_seconds": wall_seconds,
-        "markets_a_minute": None if wall_seconds <= 0 else frame.height / (wall_seconds / 60),
+        "markets_a_minute": (
+            spent.height / (wall_seconds / 60) if wall_seconds > 0 and spent.height else None
+        ),
         "tokens_a_second": (
             int(spent["tokens"].sum()) / float(spent["seconds"].sum())
             if spent.height and float(spent["seconds"].sum()) > 0

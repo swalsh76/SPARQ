@@ -1,4 +1,5 @@
 import json
+import os
 import runpy
 import sys
 from datetime import date
@@ -10,7 +11,7 @@ import polars as pl
 import pytest
 from modelhelpers import MARKETS, model_transport, write_reading_kalshi
 from sparq_analytics.model import cli, read
-from sparq_analytics.model.client import ModelClient, ModelError, ModelSettings
+from sparq_analytics.model.client import ModelClient, ModelError, ModelSettings, Reply
 from sparq_analytics.model.prompts import READ_WEATHER
 from sparq_analytics.weather.stations import WeatherDataError
 
@@ -297,3 +298,73 @@ def test_a_series_has_one_code_only_when_its_named_markets_agree() -> None:
         }
     )
     assert read.series_sites(markets).to_dicts() == [{"series": "A", "series_site": "CLINYC"}]
+
+
+def test_a_reply_with_other_objects_inside_it_is_still_read() -> None:
+    obj = '{"site": "CLINYC", "direction": "greater", "lower": 5, "upper": null}'
+    nested = (
+        '{"site": "CLINYC", "direction": "less", "lower": null, "upper": 5, "note": {"x": "}"}}'
+    )
+    found = read.parse_reply("Answer: " + nested)  # braces inside the object
+    assert found is not None and found["upper"] == 5
+    assert read.parse_reply('{"x": 1} then ' + obj) == json.loads(obj)  # an earlier, other object
+
+
+def test_the_direction_is_compared_without_case_or_spaces() -> None:
+    reply = {"site": None, "direction": " Greater ", "lower": 86, "upper": None}
+    assert read.bounds_agree("greater", 86.0, None, reply)
+
+
+class StubClient:
+    """A client that answers every prompt the same way, for one market's row."""
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    def chat(self, prompt: str) -> Reply:
+        return Reply(self.content, "", 5, 1.0, False)
+
+
+def row_for(strike_type: str, site: str | None) -> dict[str, Any]:
+    return {
+        "ticker": "Z1", "event_ticker": "E", "group": "highs", "sample": "window",
+        "site": site, "series_site": site, "strike_type": strike_type,
+        "floor": 5.0, "cap": None, "rules": "text",
+    }  # fmt: skip
+
+
+def test_a_strike_type_the_reply_cannot_state_is_no_ground_truth() -> None:
+    reply = '{"site": "CLINYC", "direction": "greater", "lower": 5, "upper": null}'
+    result = read.read_one(StubClient(reply), row_for("greater_or_equal", "CLINYC"))  # type: ignore[arg-type]
+    assert result["bounds_agree"] is None and result["site_agree"] is True
+    frame = read.frame_of([result])
+    assert read.figures(frame)["no_strike_type"] == 1
+    assert read.rate(frame, "bounds_agree")["n"] == 0
+
+
+def test_the_speed_counts_only_the_calls_made() -> None:
+    reply = '{"site": null, "direction": "greater", "lower": 5, "upper": null}'
+    fresh = read.read_one(StubClient(reply), row_for("greater", None))  # type: ignore[arg-type]
+    assert read.summarize([fresh], 30.0)["markets_a_minute"] == 2.0
+    cached = fresh | {"cached": True}
+    assert read.summarize([cached], 0.1)["markets_a_minute"] is None  # nothing was asked
+
+
+def test_ping_closes_its_client_when_the_node_is_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = tmp_path / "model.toml"
+    settings.write_text('url = "http://x/v1"\nkey = "sk-k"\nmodel = "m"\n', encoding="utf-8")
+    if os.name == "posix":
+        settings.chmod(0o600)
+    built: list[ModelClient] = []
+
+    def down(s: ModelSettings, cache: Path | None) -> ModelClient:
+        refuse = httpx.MockTransport(lambda request: httpx.Response(500, text="no"))
+        built.append(ModelClient(s, transport=refuse))
+        return built[-1]
+
+    monkeypatch.setattr(cli, "make_client", down)
+    assert cli.main(["ping", "--settings", str(settings)]) == 1
+    assert "answered 500" in capsys.readouterr().err
+    assert built[0]._http.is_closed

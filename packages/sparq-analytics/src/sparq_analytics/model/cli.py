@@ -64,8 +64,10 @@ def make_client(settings: ModelSettings, cache: Path | None) -> ModelClient:
 def _ping(args: argparse.Namespace) -> int:
     client = make_client(load_settings(args.settings), None)
     started = time.monotonic()
-    reply = client.chat("Reply with exactly one word: ping", max_tokens=600)
-    client.close()
+    try:
+        reply = client.chat("Reply with exactly one word: ping", max_tokens=600)
+    finally:
+        client.close()
     print(
         json.dumps(
             {

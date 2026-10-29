@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from pathlib import Path
 
 import httpx
@@ -123,6 +124,15 @@ def test_failures_say_what_happened_without_the_key() -> None:
     with pytest.raises(ModelError, match="answered 500") as refused:
         fail(500).chat("q")
     assert KEY not in str(refused.value)
+    seen: list[int] = []
+
+    def count(request: httpx.Request) -> httpx.Response:
+        seen.append(1)
+        return httpx.Response(500, text="no")
+
+    with pytest.raises(ModelError, match="answered 500"):
+        ModelClient(SETTINGS, transport=httpx.MockTransport(count)).chat("q")
+    assert len(seen) == 1  # a plain failure is not asked again
     for body in ("not json", '{"choices": []}', '{"choices": [{"message": 5}]}'):
         transport = httpx.MockTransport(lambda request, b=body: httpx.Response(200, text=b))
         with pytest.raises(ModelError, match="not a chat completion"):
@@ -164,3 +174,82 @@ def test_a_refused_connection_is_retried_and_a_slow_reply_is_not() -> None:
     with pytest.raises(ModelError, match="did not answer \\(ReadTimeout\\)"):
         ModelClient(SETTINGS, transport=httpx.MockTransport(slow)).chat("q")
     assert len(attempts) == 1  # a slow reply is not sent again
+
+
+def test_a_busy_node_is_asked_again_a_few_times() -> None:
+    answers = iter([503, 429, 200])
+    waits: list[float] = []
+
+    def busy(request: httpx.Request) -> httpx.Response:
+        status = next(answers)
+        if status != 200:
+            return httpx.Response(status, text="busy")
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+        )
+
+    client = ModelClient(SETTINGS, transport=httpx.MockTransport(busy), sleep=waits.append)
+    assert client.chat("q").content == "ok" and waits == [model.RETRY_WAIT_S] * 2
+    calls: list[int] = []
+
+    def always(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(503, text="busy")
+
+    with pytest.raises(ModelError, match="answered 503"):
+        ModelClient(SETTINGS, transport=httpx.MockTransport(always), sleep=waits.append).chat("q")
+    assert len(calls) == model.RETRIES
+
+
+def test_a_damaged_cache_file_is_a_miss_and_is_rewritten(tmp_path: Path) -> None:
+    calls: list[httpx.Request] = []
+    client = ModelClient(SETTINGS, cache=tmp_path, transport=answering(calls))
+    client.chat("q", 100)
+    [saved] = list(tmp_path.rglob("*.json"))
+    for damage in ("{not json", '{"reply": {"content": "x"}}', "[]", ""):
+        saved.write_text(damage, encoding="utf-8")
+        assert client.chat("q", 100).content == "pong"  # asked again, not an error
+        assert json.loads(saved.read_text(encoding="utf-8"))["reply"]["content"] == "pong"
+    assert len(calls) == 5
+
+
+def test_workers_writing_the_same_reply_do_not_collide(tmp_path: Path) -> None:
+    calls: list[httpx.Request] = []
+    client = ModelClient(SETTINGS, cache=tmp_path, transport=answering(calls))
+    failures: list[Exception] = []
+    gate = threading.Barrier(8)
+
+    def work() -> None:
+        gate.wait()
+        try:
+            client.chat("same text", 100)
+        except Exception as error:  # noqa: BLE001 - the test reports whatever a worker raised
+            failures.append(error)
+
+    threads = [threading.Thread(target=work) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert failures == []
+    assert len(list(tmp_path.rglob("*.json"))) == 1 and not list(tmp_path.rglob("*.part"))
+
+
+def test_a_save_that_loses_the_race_is_not_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = ModelClient(SETTINGS, cache=tmp_path, transport=answering([]))
+    reply = model.Reply("x", "", 1, 0.1, False)
+    path = tmp_path / "ab" / ("ab" + "0" * 62 + ".json")
+    path.parent.mkdir(parents=True)
+    path.write_text("{}", encoding="utf-8")  # another worker's copy is already there
+
+    def refused(self: Path, target: Path) -> Path:
+        raise PermissionError("another worker has it open")
+
+    monkeypatch.setattr(Path, "replace", refused)
+    client._write("ab" + "0" * 62, {"q": 1}, reply)  # the copy that is there stands
+    assert not list(tmp_path.rglob("*.part"))
+    path.unlink()  # but with nothing saved, the failure is real
+    with pytest.raises(PermissionError):
+        client._write("ab" + "0" * 62, {"q": 1}, reply)

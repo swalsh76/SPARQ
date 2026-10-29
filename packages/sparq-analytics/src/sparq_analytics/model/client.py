@@ -13,8 +13,8 @@ budget, temperature), so a rerun costs nothing and gives the same figures. The e
 **reasoning model**: its thinking is spent from the same token budget as its answer, so a budget
 that is too small returns an empty ``content`` (``truncated``), which the caller treats as no
 answer.
-A refused connection is retried a few times; a slow or failed reply is not (the caller
-records it and moves on).
+A refused connection, or an answer that asks to be tried again (429, 502, 503, 504), is retried
+a few times; a slow or failed reply is not (the caller records it and moves on).
 """
 
 import hashlib
@@ -22,6 +22,7 @@ import json
 import os
 import time
 import tomllib
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -30,7 +31,8 @@ from typing import Any
 import httpx
 
 DEFAULT_CONFIG = "~/.config/sparq/model.toml"
-RETRIES = 3  # connection attempts
+RETRIES = 3  # attempts at a refused connection or a busy answer
+BUSY = frozenset({429, 502, 503, 504})  # the node asks to be tried again
 RETRY_WAIT_S = 2.0
 TIMEOUT_S = 300.0
 MAX_TOKENS = 2_000
@@ -125,8 +127,10 @@ class ModelClient:
         path = self._path(digest)
         if path is None or not path.exists():
             return None
-        saved = json.loads(path.read_text(encoding="utf-8"))["reply"]
-        return Reply(**saved)
+        try:
+            return Reply(**json.loads(path.read_text(encoding="utf-8"))["reply"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None  # a damaged file is a miss: asked again, and the file rewritten
 
     def _write(self, digest: str, request: dict[str, Any], reply: Reply) -> None:
         path = self._path(digest)
@@ -134,23 +138,33 @@ class ModelClient:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         saved = {k: v for k, v in reply.__dict__.items() if k != "cached"}
-        staging = path.with_suffix(".part")
+        staging = path.with_name(f"{path.name}.{uuid.uuid4().hex}.part")  # one a writer
         staging.write_text(json.dumps({"request": request, "reply": saved}), encoding="utf-8")
-        staging.replace(path)
+        try:
+            staging.replace(path)
+        except OSError:
+            if not path.exists():  # a real failure, not another worker saving the same reply
+                raise
+            staging.unlink(missing_ok=True)
 
     def _send(self, request: dict[str, Any]) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self.settings.key}"}
         url = f"{self.settings.url}/chat/completions"
         for attempt in range(1, RETRIES + 1):
             try:
-                return self._http.post(url, json=request, headers=headers)
+                response = self._http.post(url, json=request, headers=headers)
             except httpx.ConnectError:
                 if attempt == RETRIES:
                     raise ModelError(f"the model node refused {RETRIES} connections") from None
                 self.sleep(RETRY_WAIT_S)
+                continue
             except httpx.HTTPError as error:
                 kind = type(error).__name__
                 raise ModelError(f"the model node did not answer ({kind})") from None
+            if response.status_code in BUSY and attempt < RETRIES:
+                self.sleep(RETRY_WAIT_S)
+                continue
+            return response
         raise ModelError("no attempt was made")  # pragma: no cover - RETRIES is at least 1
 
     def _ask(self, request: dict[str, Any]) -> Reply:
