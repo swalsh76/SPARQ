@@ -25,16 +25,17 @@ from pathlib import Path
 from typing import Any
 
 from sparq_analytics.paper import quoter, trial
-from sparq_analytics.survey.cli import ERRORS, UsageError, need
+from sparq_analytics.survey.cli import ERRORS, UsageError, check, need
 from sparq_analytics.survey.queue import fee_terms
 
-APPLIES = {
+APPLIES: dict[str, tuple[str, ...]] = {
     "hours": ("fit",),
     "rules": ("test",),
     "from": ("test",),
     "to": ("test",),
-    "min_days": ("test",),
+    "min-days": ("test",),
 }
+NAMES = {"from": "from_day", "to": "to_day", "min-days": "min_days"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,14 +54,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-days", dest="min_days", type=int, help=f"test: days kept at least ({trial.MIN_DAYS})"
     )
     return parser
-
-
-def _check(args: argparse.Namespace) -> None:
-    """A flag given to a command it means nothing to is refused, not ignored."""
-    names = {"from": "from_day", "to": "to_day"}
-    for flag, commands in APPLIES.items():
-        if getattr(args, names.get(flag, flag)) is not None and args.command not in commands:
-            raise UsageError(f"--{flag.replace('_', '-')} does not apply to {args.command}")
 
 
 def _write(out: Path, name: str, data: dict[str, Any]) -> None:
@@ -101,7 +94,7 @@ HANDLERS = {"fit": _fit, "test": _test}
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        _check(args)
+        check(args, APPLIES, NAMES)
         return HANDLERS[args.command](args)
     except ERRORS as error:
         print(f"error: {error}", file=sys.stderr)

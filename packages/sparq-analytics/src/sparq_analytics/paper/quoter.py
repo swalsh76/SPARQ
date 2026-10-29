@@ -313,17 +313,18 @@ def study_hour(
     carry: Carry,
     span_end: datetime,
     current: pl.DataFrame | None = None,
-    next_kept: bool = True,
+    read_following: bool = True,
     scope: Scope = FIT,
 ) -> tuple[pl.DataFrame, pl.DataFrame, Carry, pl.DataFrame | None]:
     """One hour's fills with their 10-minute and 1-hour marks, its quote time, what the hour hands
-    the next, and the following hour's frames (read for the marks when that hour is kept)."""
+    the next, and the following hour's frames (read for the marks when asked and copied before
+    ``span_end``)."""
     if current is None:
         current = frames_of(live / "ticker" / f"{hour_name(hour)}.parquet")
     next_path = live / "ticker" / f"{hour_name(hour + HOUR)}.parquet"
     following = (
         frames_of(next_path)
-        if next_kept and next_path.exists() and hour + HOUR < span_end
+        if read_following and next_path.exists() and hour + HOUR < span_end
         else None
     )
     loaded_end = hour + (2 * HOUR if following is not None else HOUR)
@@ -367,8 +368,11 @@ def replay(
     end: datetime,
     scope: Scope = FIT,
     log: Callable[[str], None] = lambda _: None,
+    marks_end: datetime | None = None,
 ) -> Replay:
-    """The paper quoter over ``[start, end)`` of the live copies, hour by hour."""
+    """The paper quoter over ``[start, end)`` of the live copies, hour by hour; the marks may read
+    frames to ``marks_end`` (the copies' end, for a window inside them), else to ``end``."""
+    marks_end = end if marks_end is None else marks_end
     span_end_ms = int(end.timestamp() * 1000)
     gap_frame = gaps_of(live, end)
     # only the window's days can be dropped: an outage outside it drops nothing
@@ -386,8 +390,12 @@ def replay(
     for i, path in enumerate(files):
         hour = hour_of(path.stem)
         next_kept = i + 1 < len(files) and hour_of(files[i + 1].stem) == hour + HOUR
+        # the last kept hour's marks may read the hour after it when that hour is copied and kept
+        read_following = next_kept or (
+            i + 1 == len(files) and (hour + HOUR).date() not in set(dropped)
+        )
         found, timed, carry, following = study_hour(
-            hour, live, info, gaps, carry, end, current, next_kept, scope
+            hour, live, info, gaps, carry, marks_end, current, read_following, scope
         )
         current = following if next_kept else None
         if not next_kept:  # across a dropped day the book is not carried: a day-old quote is none
@@ -488,7 +496,12 @@ def _interval(frame: pl.DataFrame, column: str, hours: int) -> dict[str, Any]:
 
 
 def _cells(
-    fills: pl.DataFrame, times: pl.DataFrame, keys: list[str], hours: int, intervals: bool
+    fills: pl.DataFrame,
+    times: pl.DataFrame,
+    keys: list[str],
+    hours: int,
+    intervals: bool,
+    marks: tuple[str, ...] = MARKS,
 ) -> dict[str, dict[str, Any]]:
     """The figures of each cell of ``keys`` (the rule, state and k, with a category or tier):
     one entry a size, built from the quote time, so a cell quoted but never filled shows its
@@ -504,11 +517,12 @@ def _cells(
     for s in SIZES_E2:
         aggs.append(pl.col(f"fill_e2_{s}").sum().alias(f"contracts_{s}"))
         aggs.append(pl.col(f"fee_{s}").sum().alias(f"fee_{s}"))
-        for mark in MARKS:
+        for mark in marks:
             netted = pl.col(f"net_{mark}_{s}")
             aggs.append(pl.col(f"gross_{mark}_{s}").sum().alias(f"gross_{mark}_{s}"))
             aggs.append(netted.sum().alias(f"net_{mark}_{s}"))
             aggs.append(pl.col(f"gross_{mark}_{s}").is_not_null().sum().alias(f"marked_{mark}_{s}"))
+            aggs.append(netted.is_not_null().sum().alias(f"netted_fills_{mark}_{s}"))
             aggs.append(
                 pl.col(f"fill_e2_{s}")
                 .filter(netted.is_not_null())
@@ -542,12 +556,13 @@ def _cells(
                 "fee_e6_a_day": a_day(r[f"fee_{s}"] or 0, hours),
                 "marks": {},
             }
-            for mark in MARKS:
+            for mark in marks:
                 # the net, and the cents a contract, are over the marked fills whose fee is known
                 net_e6: int = r[f"net_{mark}_{s}"] or 0
                 over: float = (r[f"netted_{mark}_{s}"] or 0) / 100
                 entry: dict[str, Any] = {
                     "marked_fills": r[f"marked_{mark}_{s}"] or 0,
+                    "netted_fills": r[f"netted_fills_{mark}_{s}"] or 0,
                     "gross_e6_a_day": a_day(r[f"gross_{mark}_{s}"] or 0, hours),
                     "net_e6_a_day": a_day(net_e6, hours),
                     "netted_contracts": over,

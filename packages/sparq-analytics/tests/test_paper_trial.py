@@ -29,11 +29,19 @@ def test_the_registered_rules_are_pinned(tmp_path: Path) -> None:
     )
     with pytest.raises(SurveyDataError, match="not the registered rules file"):
         trial.registered(changed)
+    # the code's constants must still be the file's: a changed constant un-registers the test
+    with pytest.raises(SurveyDataError, match="empty_side_e6"):
+        trial.check_constants({**rules["shared"], "empty_side_e6": 150_000})
 
 
 def test_the_window_must_lie_inside_the_copies(tmp_path: Path) -> None:
     live = write_paper_live(tmp_path, days=3)
-    assert trial.window(live, D25, D26, 1) == (BASE_TIME, BASE_TIME + 48 * HOUR)
+    # the marks may read an hour past the window when the copies hold it (to 01:00 on the 27th)
+    assert trial.window(live, D25, D26, 1) == (
+        BASE_TIME,
+        BASE_TIME + 48 * HOUR,
+        BASE_TIME + 49 * HOUR,
+    )
     with pytest.raises(SurveyDataError, match="not inside them"):
         trial.window(live, D25, D27, 1)  # the copies end at 01:00 on the 27th
     with pytest.raises(SurveyDataError, match="ends .* before it starts"):
@@ -70,11 +78,13 @@ def test_the_trial_marks_fills_to_settlement_and_judges_each_rule(tmp_path: Path
     r1 = result["by_rule"]["R1"]
     assert (r1["fills"], r1["settled_fills"], r1["unsettled_fills"], r1["size"]) == (5, 1, 4, 10)
     # P5's bid at 25 on 1 contract settled yes: 75 cents, no fee, in 24 hours
-    assert r1["settlement"]["net_e6_a_day"] == 750_000 and r1["contracts_settled"] == 1.0
+    assert r1["settlement"]["net_e6_a_day"] == 750_000
+    assert r1["settlement"]["netted_contracts"] == 1.0
     assert r1["settlement"]["cents_a_contract"] == pytest.approx(75.0)
     assert r1["settlement"]["interval_e6_a_day"]["clusters"] == 1  # no spread to bootstrap
     assert r1["mid_1h"]["marked_fills"] == 3  # P1 twice and P7; P2 has no mid, P5 is closed
     assert r1["mid_1h"]["net_e6_a_day"] > 0
+    assert r1["settlement"]["netted_fills"] == 1 and fills.schema["mid_settle"] == pl.Int64
     assert r1["go"] is False  # one settled cluster has no lower bound
     r2 = result["by_rule"]["R2"]
     assert r2["size"] == 50 and r2["settlement"]["net_e6_a_day"] == 750_000  # a 1-contract trade
@@ -86,6 +96,46 @@ def test_the_trial_marks_fills_to_settlement_and_judges_each_rule(tmp_path: Path
     assert result["go"] == []
     with pytest.raises(SurveyDataError, match="fewer than 2"):
         trial.run_test(live, FEES, out, RULES, D25, D26, min_days=2)  # the 26th is dropped
+    # a rule nothing was quoted for has no cell: no fills, no quotes, not GO
+    rules = trial.registered(RULES)
+    rules["rules"].append(
+        {"id": "R9", "state": "one_sided", "categories": ["Companies"], "size_e2": 1000}
+    )
+    no_times = pl.DataFrame(
+        schema={
+            "state": pl.String,
+            "k_e6": pl.Int64,
+            "tier": pl.String,
+            "category": pl.String,
+            "quotes": pl.UInt32,
+            "quote_ms": pl.Int64,
+        }
+    )
+    verdicts = trial.judge(fills, no_times, rules, 24)
+    assert verdicts["R9"] == {
+        "state": "one_sided",
+        "categories": ["Companies"],
+        "size": 10,
+        "bar_e6_a_day": 25_000_000,
+        "fills": 0,
+        "quotes": 0,
+        "go": False,
+    }
+    assert verdicts["R1"]["fills"] == 5 and verdicts["R1"]["quotes"] == 0
+
+
+def test_the_last_hour_s_marks_read_the_copied_hour_after_the_window(tmp_path: Path) -> None:
+    # no dropped day: the 23:40 fill of the 25th is marked an hour later against the 26th's 00:10
+    # frame (mid 85), which lies past the window but inside the copies
+    live = write_paper_live(
+        tmp_path,
+        days=3,
+        gaps=[{"kind": "ticker", "start_ms": lm(1, 30), "end_ms": lm(1, 31), "reason": "lost"}],
+    )
+    trial.run_test(live, FEES, tmp_path / "out", RULES, D25, D25, min_days=1)
+    fills = pl.read_parquet(tmp_path / "out" / "paper-test-fills.parquet")
+    eve = fills.filter(pl.col("fill_ms") == lm(23, 40)).to_dicts()
+    assert len(eve) == 1 and eve[0]["mid_1h"] == 850_000
 
 
 def test_test_command_writes_the_verdicts(
