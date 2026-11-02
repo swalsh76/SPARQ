@@ -12,7 +12,7 @@ from forecasthelpers import RESULTS, model_transport, write_forecast_kalshi
 from sparq_analytics.model import cli, forecast, read
 from sparq_analytics.model.client import ModelClient, ModelSettings
 from sparq_analytics.model.prompts import FORECAST
-from sparq_analytics.survey.dump import SurveyDataError
+from sparq_analytics.survey.dump import SurveyDataError, midnight_ms
 
 SETTINGS = ModelSettings(url="http://model-node.test/v1", key="sk-test-key", model="small-model")
 
@@ -97,6 +97,7 @@ def test_the_prompt_shows_the_text_and_the_day_but_never_the_price(tmp_path: Pat
         ({"probability": "NaN"}, None),
         ({"probability": "high"}, None),
         ({"probability": [0.2]}, None),
+        ({"probability": 10**400}, None),  # too big for a float
         (None, None),
     ],
 )
@@ -231,6 +232,37 @@ def test_the_score_refuses_markets_without_a_result_or_a_part(tmp_path: Path) ->
         forecast.score(kalshi, pl.concat([frame, stray]), placebos=0)
     with pytest.raises(SurveyDataError, match="no answered market"):
         forecast.score(kalshi, frame.filter(pl.col("part") == "test"), placebos=0)
+    failed = frame.with_columns(
+        error=pl.when(pl.col("ticker") == "M005").then(pl.lit("the model node answered 503"))
+    )
+    with pytest.raises(SurveyDataError, match="1 market.s. got no answer .*answered 503"):
+        forecast.score(kalshi, failed, placebos=0)
+    stray_part = frame.with_columns(part=pl.when(pl.col("ticker") != "M005").then("part"))
+    with pytest.raises(SurveyDataError, match="neither the fit nor the test part"):
+        forecast.score(kalshi, stray_part, placebos=0)
+
+
+def test_a_placebo_draw_that_does_not_settle_is_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kalshi, _, rows = asked(tmp_path, "noise")
+    real = forecast.fit_logistic
+    calls: list[int] = []
+
+    def flaky(x: Any, y: Any) -> Any:
+        calls.append(1)
+        if len(calls) > 2:  # the price alone, then price and model; every placebo after
+            raise SurveyDataError("did not settle")
+        return real(x, y)
+
+    monkeypatch.setattr(forecast, "fit_logistic", flaky)
+    result = forecast.score(kalshi, forecast.frame_of(rows), placebos=3)
+    assert result["placebo"]["unsettled"] == 3 and result["placebo"]["upper"] is None
+    assert result["gain"]["markets"] == 161 and not result["clears"]["placebo"]
+
+
+def test_midnight_is_the_start_of_the_day_in_utc() -> None:
+    assert midnight_ms(date(1970, 1, 2)) == 86_400_000
 
 
 def write_settings(path: Path) -> Path:
@@ -273,9 +305,18 @@ def test_the_commands_forecast_and_score(
     assert scored["placebo"]["draws"] == 5
     assert scored["sample_digest"] == full["sample_digest"] and scored["split_day"] == "2026-09-11"
     assert json.loads((out / "model-score.json").read_text(encoding="utf-8")) == scored
-    # refusals
-    replies = out / "model-forecast.parquet"
-    pl.read_parquet(replies).head(5).write_parquet(replies)
+    # refusals: replies that are not the drawn sample, another prompt, too few replies
+    replies, run = out / "model-forecast.parquet", out / "model-forecast.json"
+    good, summary = pl.read_parquet(replies), run.read_text(encoding="utf-8")
+    good.with_columns(part=pl.lit("test")).write_parquet(replies)
+    assert cli.main(["score", *argv]) == 1
+    assert "are not the sample its forecast drew" in capsys.readouterr().err
+    good.write_parquet(replies)
+    run.write_text(summary.replace(forecast.FORECAST_HASH, "0" * 64), encoding="utf-8")
+    assert cli.main(["score", *argv]) == 1
+    assert "another prompt than the committed one" in capsys.readouterr().err
+    run.write_text(summary, encoding="utf-8")
+    good.head(5).write_parquet(replies)
     assert cli.main(["score", *argv]) == 1
     assert "holds 5 replies for 241 drawn markets" in capsys.readouterr().err
     assert cli.main(["score", *argv, "--limit", "5"]) == 1

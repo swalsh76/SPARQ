@@ -47,6 +47,7 @@ from sparq_analytics.survey.dump import (
     TAIL,
     UNKNOWN,
     SurveyDataError,
+    midnight_ms,
     scan_trades,
     trade_files,
 )
@@ -102,10 +103,6 @@ ROW_SCHEMA = {
     "parsed": pl.Boolean,
     "probability": pl.Float64,
 }
-
-
-def midnight_ms(day: date) -> int:
-    return int(datetime.combine(day, datetime.min.time(), tzinfo=UTC).timestamp() * 1000)
 
 
 def population(kalshi: Path, cut: date = CUT) -> pl.DataFrame:
@@ -202,7 +199,7 @@ def probability_of(answer: dict[str, Any] | None) -> float | None:
         return None
     try:
         p = float(value)
-    except ValueError:
+    except (ValueError, OverflowError):  # text that is no number, or an integer too big
         return None
     return p if math.isfinite(p) and 0.0 <= p <= 1.0 else None
 
@@ -385,6 +382,14 @@ def score(
     """The comparison on the answered markets of a full forecast run, and N6's verdict
     (``placebos`` draws, ``PLACEBOS`` by default)."""
     placebos = PLACEBOS if placebos is None else placebos
+    failed = rows.filter(pl.col("error").is_not_null())
+    if not failed.is_empty():
+        raise SurveyDataError(
+            f"{failed.height} market(s) got no answer from the model node ({failed['error'][0]});"
+            " run forecast again to ask them"
+        )
+    if not rows["part"].is_in(["fit", "test"]).fill_null(False).all():
+        raise SurveyDataError("a reply belongs to neither the fit nor the test part")
     answered = rows.filter(pl.col("parsed"))
     results = scan_markets(kalshi, ["ticker", "result"], traded=answered.select("ticker").lazy())
     data = answered.join(results.collect(), on="ticker", how="left")
@@ -417,11 +422,14 @@ def score(
     total = gain_estimate(tested)
     rng = np.random.default_rng(SEED)
     events, strata = data["event_ticker"].to_numpy(), data["stratum"].to_numpy()
-    placebo, own_event = [], 0
+    placebo, own_event, stuck = [], 0, 0
     for _ in range(placebos):
         donors, left = placebo_donors(events, strata, rng)
         own_event = max(own_event, left)
-        placebo.append(float(np.mean(loss_alone - with_model(model[donors])[0])))
+        try:
+            placebo.append(float(np.mean(loss_alone - with_model(model[donors])[0])))
+        except SurveyDataError:  # a draw the fit cannot settle says nothing either way
+            stuck += 1
     high = float(np.quantile(placebo, 1.0 - TAIL)) if placebo else None
     clears = {
         "enough": total["markets"] >= min_markets and total["events"] >= min_events,
@@ -466,6 +474,7 @@ def score(
             "upper": high,
             "mean": float(np.mean(placebo)) if placebo else None,
             "own_event_at_most": own_event,
+            "unsettled": stuck,
         },
         "bars": {"min_gain": MIN_GAIN, "min_markets": min_markets, "min_events": min_events},
         "clears": clears,

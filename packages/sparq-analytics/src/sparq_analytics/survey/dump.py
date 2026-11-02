@@ -54,6 +54,11 @@ class SurveyDataError(Exception):
     """The data folders lack something the survey needs, or the request reads held-out days."""
 
 
+def midnight_ms(day: date) -> int:
+    """The start of ``day`` (UTC) in epoch milliseconds."""
+    return int(datetime.combine(day, time.min, tzinfo=UTC).timestamp() * 1000)
+
+
 def series_table(kalshi: Path, columns: Sequence[str]) -> pl.DataFrame:
     """The history's series table with ``columns`` beside the ticker, renamed ``series_ticker``
     (and the fee multiplier ``multiplier_e6``) so it joins to the markets as they name it."""

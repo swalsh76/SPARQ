@@ -56,7 +56,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--settings", type=Path, help="the model node's settings file")
     parser.add_argument("--kalshi", type=Path, help="the history download's kalshi folder")
     parser.add_argument("--out", type=Path, help="where the results go")
-    parser.add_argument("--limit", type=int, help="only this many markets of each sample")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="read: only this many markets of each sample; forecast: a pilot of the draw's first N,"
+        " which score refuses",
+    )
     parser.add_argument("--workers", type=int, help="requests in flight (default 1)")
     parser.add_argument("--cache", type=Path, help="the reply cache (default OUT/model-cache)")
     return parser
@@ -172,6 +177,10 @@ def _score(args: argparse.Namespace) -> int:
     rows = pl.read_parquet(out / "model-forecast.parquet")
     if rows.height != run["drawn"]:
         raise SurveyDataError(f"{out} holds {rows.height} replies for {run['drawn']} drawn markets")
+    if forecast.digest(rows) != run["sample_digest"]:
+        raise SurveyDataError(f"the replies in {out} are not the sample its forecast drew")
+    if run["prompt"] != forecast.FORECAST_HASH:
+        raise SurveyDataError(f"the forecast in {out} asked another prompt than the committed one")
     result = forecast.score(kalshi, rows)
     result |= {k: run[k] for k in ("model", "prompt", "sample_digest", "split_day")}
     text = json.dumps(result, indent=2, default=str)

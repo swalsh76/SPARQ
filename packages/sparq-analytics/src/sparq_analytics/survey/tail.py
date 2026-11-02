@@ -32,7 +32,7 @@ Money is integer millionths of a dollar, scaled to a day by integer arithmetic; 
 hundredths of a contract; a trade's dollars are its yes price times its contracts, as in S3.1.
 """
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +55,7 @@ from sparq_analytics.survey.dump import (
     UNKNOWN,
     SurveyDataError,
     cut_markets,
+    midnight_ms,
     scan_trades,
     series_table,
     trade_files,
@@ -122,11 +123,7 @@ def volume(kalshi: Path, days: list[date]) -> dict[str, Any]:
     """The traded markets of the window by tier and category, the silent ones, and the traded
     ones the market list lacks."""
     first, last = days[0], days[-1]
-    midnight = datetime.min.time()
-    window_start_ms = int(datetime.combine(first, midnight, tzinfo=UTC).timestamp() * 1000)
-    window_end_ms = int(
-        datetime.combine(last + timedelta(days=1), midnight, tzinfo=UTC).timestamp() * 1000
-    )
+    window_start_ms, window_end_ms = midnight_ms(first), midnight_ms(last + timedelta(days=1))
     window_days = len(days)  # contiguous: trade_days saw to that
     traded = (
         scan_trades(trade_files(kalshi, first, last))
