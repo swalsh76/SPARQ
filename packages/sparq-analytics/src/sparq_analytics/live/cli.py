@@ -44,10 +44,10 @@ from sparq_analytics.live.source import (
     load_source,
 )
 from sparq_analytics.live.summary import in_any_population, render, summarize
+from sparq_analytics.scratch import ready
 from sparq_analytics.study.forward import busy_digest, read_busy
 from sparq_analytics.study.rules import Rule, rules_from_json
 
-COMMANDS = ("extract", "measure", "report")
 DAY = timedelta(days=1)
 
 
@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m sparq_analytics.live", description=__doc__.split("\n")[0]
     )
-    parser.add_argument("command", choices=COMMANDS)
+    parser.add_argument("command", choices=tuple(HANDLERS))
     parser.add_argument("--data", type=Path, required=True, help="the folder for the copies")
     parser.add_argument("--start", help="extract: a UTC time; measure: the first UTC day")
     parser.add_argument("--end", help="extract: a UTC time (default now); measure: the day after")
@@ -240,11 +240,15 @@ def _report(args: argparse.Namespace) -> int:
     return 0
 
 
+HANDLERS = {"extract": _extract, "measure": _measure, "report": _report}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    handlers = {"extract": _extract, "measure": _measure, "report": _report}
+    if not ready():  # the scratch settings, before any data is read
+        return 1
     try:
-        return handlers[args.command](args)
+        return HANDLERS[args.command](args)
     except (UsageError, LiveSourceError, ValueError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

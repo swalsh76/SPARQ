@@ -39,6 +39,7 @@ from typing import Any
 
 import polars as pl
 
+from sparq_analytics.scratch import ready
 from sparq_analytics.study import ladder as ladder_module
 from sparq_analytics.study import report
 from sparq_analytics.study.calibration import calibration_table
@@ -372,6 +373,8 @@ def _report(args: argparse.Namespace, root: Path, out: Path) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not ready():  # the scratch settings, before any data is read
+        return 1
     root = args.data_dir / "kalshi"
     out = args.study_dir if args.study_dir is not None else args.data_dir / "study"
     try:

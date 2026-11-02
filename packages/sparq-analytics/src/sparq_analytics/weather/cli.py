@@ -29,6 +29,7 @@ from pathlib import Path
 import httpx
 import polars as pl
 
+from sparq_analytics.scratch import ready
 from sparq_analytics.study.dataset import StudyDataError
 from sparq_analytics.weather import archive, live
 from sparq_analytics.weather.bounds import daily_bounds, report_bounds
@@ -175,6 +176,8 @@ HANDLERS = {
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not ready():  # the scratch settings, before any data is read
+        return 1
     try:
         return HANDLERS[args.command](args)
     except (

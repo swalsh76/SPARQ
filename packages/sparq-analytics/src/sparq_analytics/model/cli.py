@@ -28,6 +28,7 @@ import polars as pl
 
 from sparq_analytics.model import read
 from sparq_analytics.model.client import ModelClient, ModelError, ModelSettings, load_settings
+from sparq_analytics.scratch import ready
 from sparq_analytics.survey.cli import ERRORS, UsageError, check, need
 from sparq_analytics.weather.stations import WeatherDataError
 
@@ -127,6 +128,8 @@ HANDLERS = {"ping": _ping, "read": _read}
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not ready():  # the scratch settings, before any data is read
+        return 1
     try:
         check(args, APPLIES)
         return HANDLERS[args.command](args)

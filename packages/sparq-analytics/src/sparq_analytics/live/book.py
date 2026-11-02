@@ -28,13 +28,13 @@ S1.1b's verdict D11 allows book measures and markouts of ten minutes or less onl
 from dataclasses import dataclass
 
 import polars as pl
+from sparq_core.fixedpoint import E6
 
 from sparq_analytics.study.rules import Rule, add_trade_features
 
 GUARD_MS = 600_000  # D11: ten minutes
 BOOK_SETTLE_MS = 60_000  # after an outage, a minute for every market's book to be shown again
-ONE_E6 = 1_000_000
-NO_ASK = 2 * ONE_E6  # an empty ask, above every price
+NO_ASK = 2 * E6  # an empty ask, above every price
 NO_BID = -1  # an empty bid, below every price
 SIDES = ("bid", "bid_size", "ask", "ask_size")
 TICKER_LOST = "could not resubscribe to ticker"  # the ingest's reason for such an ``all`` gap
@@ -167,9 +167,7 @@ def book_frames(frames: pl.LazyFrame) -> pl.LazyFrame:
     arrived, so the book at that moment is the last one received, the same on every run.
     """
     bid = (pl.col("yes_bid_size_e2").fill_null(0) > 0) & (pl.col("yes_bid_e6").fill_null(0) > 0)
-    ask = (pl.col("yes_ask_size_e2").fill_null(0) > 0) & (
-        pl.col("yes_ask_e6").fill_null(ONE_E6) < ONE_E6
-    )
+    ask = (pl.col("yes_ask_size_e2").fill_null(0) > 0) & (pl.col("yes_ask_e6").fill_null(E6) < E6)
     book = frames.sort("ts_ms", "recv_ms", maintain_order=True).select(
         "ticker",
         "ts_ms",
