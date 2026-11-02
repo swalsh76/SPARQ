@@ -69,6 +69,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | **S3** | **Three measurements of where the money is** (§6.3): S3.1 the certainty dump and the 99-cent queue; S3.2 where the book is slow; S3.3 the thin tail and the surprise rate; S3.c close-out | Each measurement against its bar in M4; the owner chooses after each | **approved 2026-10-28**; S3.1 and S3.2 below their bars; S3.3 clears both of its bars; **closed 2026-10-29 (BUILD-LOG S3.c)**; its one strand proposal is S4 |
 | **S4** | **A paper quoter in the thin tail** (§6.4): S4.1 the paper quoter on the fit part; S4.2 the registered test on new live days; S4.3 the shadow quoter, on a GO; S4.c close-out | T7's bar on the registered test; the owner approves the rules first | **approved 2026-10-29**; S4.1 done and its four rules registered (PR #24); S4.2 built and merged (PR #25), its registered test to be run once on 2026-11-13 |
 | **S5** | **What a local language model can add** (§6.5): S5.1 the client and the reading check; S5.2 the model against the book; S5.c close-out | N6's bars; the owner chooses after S5.1 | **approved 2026-10-29**; S5.1 done (BUILD-LOG S5.1, PR #28): every bar clears; the owner chooses whether to go on to S5.2 |
+| **S6** | **Recording the order books of the thin tail** (§6.6): S6.1 the book keeper and the recorder; S6.2 the daemon; S6.c close-out | B5's bar | **proposed 2026-11-02** |
 
 ### 6.1 S1 Evidence for the quoter: decisions and slices (approved 2026-10-25)
 
@@ -265,6 +266,42 @@ The question is whether the book still offers prices on the wrong side of a boun
 
 **The owner's answers (2026-10-29).** S5 is approved as proposed, both measurements, and N2's no-out-of-house rule stands for S5.2. Each slice still gets its own plan before any code.
 
+### 6.6 S6 Recording the order books of the thin tail (proposed 2026-11-02)
+
+**Why this strand, and why now.** Every study so far has read the ingest's ticker feed: the best bid and ask and their sizes, never the queue behind them. A maker's real questions are about the queue: how much stands at a price, how long it stands, who joins and cancels, and where a new quote would rank. Book depth that is not recorded is lost; unlike trades it cannot be backfilled, so each day without a recorder is a day no later study can read. S1.2b's recorder was planned and approved on 2026-10-26 for the middle tier and parked unbuilt with S1 (D14). This proposal returns it, aimed at S4's thin tail.
+
+**What it is not.** It is not a strategy and makes no claim of an edge. It is not S4.3's prerequisite: T9 defines the shadow quoter on the ingest's ticker tables. S4.2's smoke run (three fit-part days, not the test) marked S4's uncontested rules negative at settlement, so S4 may close with a NO-GO on 2026-11-13. The recorder's value does not rest on S4: it rests on the queue questions every maker direction meets, among them the 99-cent queue parked in §9.
+
+**Decisions (proposed).**
+
+| # | Decision |
+|---|---|
+| B1 | **What is recorded.** For the chosen markets, Kalshi's `orderbook_delta` channel (each subscription's snapshot, then its deltas) and the `trade` channel, raw, with their receive times, in hourly Parquet files with the recorder's own gap log; and a book keeper that rebuilds each book from them, resyncing with `get_snapshot` after a gap or a reconnect. The ingest's ticker feed is not duplicated. |
+| B2 | **Which markets: S4's scope (T2).** Every open market under 1,000 contracts a day over the last seven days (from the ingest's trades, S3.3's rule), its mid from 3 to 97 cents, in every category; combos skipped and counted. On 2026-11-02 at 01:00 UTC that was **43,902 of the 57,739 markets** with ticker frames that hour (1.8 million of the hour's 3.1 million frames). The list is chosen at 00:00 UTC and topped up hourly with newly listed markets; a market leaves when it closes. The middle tier is not recorded (its delta rates are far higher; it can be added by a later decision). |
+| B3 | **Where and how.** On the analytics node, as a `launchd` daemon (`local.sparq.book-recorder`) under the agent account, from a clone pinned to a commit (D12's design), with D6's read-only key that is already there: WebSocket subscriptions and GET only, never an order. The owner installs the daemon once with `sudo`; that rollout is asked for separately. Analysis jobs on the node cap their threads so the recorder always has cores (S1.2b's addition). The server host and KAPS are untouched. |
+| B4 | **Storage.** The analytics node's data drive (1.8 TB free on 2026-11-02). The size of a day is measured in S6.1's live hour, before the daemon is proposed; the recorder warns in `status` above the measured rate's double, refuses to start with the drive 90% full, and the recording pauses for the owner's word when it passes **500 GB** in all. |
+| B5 | **The recorder's own bar.** It runs 24 hours unattended; the rebuilt best bid and ask agree with the ingest's ticker feed at least 99% of the moments compared (both sides are bids: the yes ask is a dollar less the best no bid); every gap and reconnect is logged, and `status` says how many hours are whole. |
+| B6 | **Unknowns, checked live first.** Whether production book messages carry `clock` (IKARS saw none on 2026-10-26; the changelog dates it 2026-10-29); the per-subscription market limit (error 26, number unstated), so how the 44,000 markets are split across subscriptions or shards; the message rate and size; `seq` on a reconnect. S6.1's design is fixed only after one live hour. |
+| B7 | **Use.** The recording is data, not a result: no study reads it until one is proposed and approved, with its own bars and held-out days. Its first readers would be a queue measurement for the thin tail (how long a quote inside the spread stands, what joins ahead of it) and, if S4 reaches it, S4.3. |
+| B8 | **Scope guard.** S6 builds the recorder, its checks and its daemon, and nothing that trades or reads a result. No new venue, no change to the server host, no web UI. |
+
+**Slices.**
+
+| Slice | What it does | Gate | Status |
+|---|---|---|---|
+| S6.1 | **The book keeper and the recorder:** book models on SPARQ's WebSocket client, the keeper with its resync, the market choice, hourly Parquet and the gap log, `run`, `status` and `check`; local tests against a fake socket; **one live hour** on the analytics node with the read-only key (the unknowns of B6, the rate and size) | One live hour recorded; the rebuild agrees with the ticker feed at 99% over it; the day's size measured | proposed |
+| S6.2 | **The daemon:** the `launchd` job, its refusals (drive missing or full, key or settings missing) with named exit codes, the analytics node's bundle and guide in `docs/deploy/`; a 24-hour unattended run | B5's bar over 24 hours | proposed |
+| S6.c | **Close-out:** the gate evidence, the docs, leftovers to §9 | The owner merges | proposed |
+
+**What it changes on machines:** the analytics node only (a daemon, the data drive). **New packages:** none (the WebSocket client, polars and pyarrow are already dependencies). **Live checks:** WebSocket subscriptions with the read-only key, GET only.
+
+**Known weaknesses, stated before.** The thin tail's books change slowly, so the recording's value per gigabyte may be high, but a quiet book also gives few moments for B5's check. A market list chosen from seven days of trades misses a market that turns thin today. If S4 closes NO-GO the recorder has no study waiting for it, only the queue questions; the owner may prefer to decide after 2026-11-13, at the cost of the days between.
+
+**Open questions for the owner.**
+1. **Scope:** S4's thin tail only (recommended), or also D12's 50 middle-tier markets.
+2. **Timing:** build now, so the recording starts within days (recommended), or wait for S4.2's result on 2026-11-13.
+3. **The pause at 500 GB:** keep it (recommended), or a different cap.
+
 ## 7. Risks
 
 - **The middle-tier lead may not hold.** It is exploratory, from the validate part, with intervals that cross zero; KAPS's validate leads all failed on the test part. S1.1 decides.
@@ -291,7 +328,7 @@ The question is whether the book still offers prices on the wrong side of a boun
 - **Outside fair values with hedges** through Interactive Brokers (Fed meetings against Fed funds futures, index ranges against options).
 - **Weather brackets against live station observations:** built as **S2** (§6.2, 2026-10-27) and closed on 2026-10-28 with no edge for takers (W9; the leads below stay parked).
 - **S1.2r, analysis plumbing on the analytics node** (parked from S1 by D14; approved 2026-10-26, not started; no result may change): the temporary and spill folder defaulting to the data drive in the code; `measure` skipping a day already made by the same code and settings; the live copies stored per day and sorted by market; polars' streaming engine measured on the whole-history passes, adopted only if the outputs are identical; and S1.2a's leftovers, `ONE_E6` in `live/book.py` and the live command line's command list. Until it is built, big runs on the node still set `TMPDIR` and `POLARS_OOC_DISK_BUDGET_MB` on the data drive by hand. Build it with the next strand that runs big analyses.
-- **S1.2b's order-book recorder** (parked from S1 by D14; its plan, approved 2026-10-26, is in §6.1): the tool that would show the queue at a price, for example the 99-cent bids below.
+- **S1.2b's order-book recorder** (parked from S1 by D14; its plan, approved 2026-10-26, is in §6.1): the tool that would show the queue at a price, for example the 99-cent bids below. **Proposed again as S6 (§6.6, 2026-11-02), aimed at S4's thin tail.**
 - **The write path, risk layer and kill switch (D7) and the tiny pilot (D8)** (parked from S1 by D14), **with D6's trading key and its custody design** (the trading key lives only on the analytics node, readable only by the quoter's account): carried as designed to whichever strand first needs real orders, on demo first, and real money only with the owner's go-ahead.
 - **S2 follow-up: the station's own 5-minute readings** (owner, 2026-10-28). The settled high is the maximum of all the station's readings, so a peak between hourly reports is seen late; faster readings from the same station could make S2's certainty earlier and more frequent. Check live availability, delay, resolution and an archive with honest times only if S2.2 finds an edge limited by when the outcome is known. *S2.2 (2026-10-28):* the settled high was above the highest hourly report on 679 of 1,086 fit-part city-days (mostly by 1 or 2 °F), and the six-hour maximum showed it a median of 4 hours later, or never (253); but the book priced the bound a median 4.6 hours before the hourly call, so earlier readings would have to beat traders' forecasts, not the hourly reports.
 - **The model node:** the owner's new machine (a 12 GB GPU and 64 GB of RAM, online since 2026-10-29; the address and key are in the assistant's memory, never in this repository) running Strata (`github.com/mach10x/strata`). Probed 2026-10-29: one model is served, a 3-bit quantized "flash" model of the Qwen family (not the 125B model Strata's description suggested), a reasoning model at 50 to 95 tokens a second, that read a weather rules text into fields correctly and misjudged a rain-title check. Proposed on its own (M6) as S5 (§6.5), approved by the owner on 2026-10-29; not part of S3 or S4.

@@ -839,3 +839,13 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 - A first edit script was not idempotent and stopped halfway after `ruff` reflowed text; later edits re-read the file and appended tests instead of patching reflowed ones.
 
 **Decisions (owner, 2026-10-29).** S5.1 approved as recommended. **Pending:** whether to go on to S5.2 (the default, with the expectation stated in PLAN §6.5 that the probability measurement does not pass), and the word to merge PR #28.
+
+## S6. Recording the order books of the thin tail (proposed 2026-11-02)
+
+### S6 proposal (2026-11-02 UTC, documents only; awaiting the owner)
+
+**Built.** PLAN §6.6: decisions B1 to B8 and slices S6.1, S6.2 and S6.c, returning S1.2b's recorder (approved 2026-10-26, parked by D14) aimed at S4's thin tail; the milestone row; the §9 entry points to it. Nothing else changes.
+
+**Verified.** The figures in the proposal were read on the analytics node on 2026-11-02, read only: the data drive has 1.8 TB free; of the 57,739 markets with ticker frames in the hour from 01:00 UTC, 43,902 had a mid from 3 to 97 cents and under 1,000 contracts a day over the seven days before (1.8 million of the hour's 3.1 million frames).
+
+**Review (PLAN Q8).** The proposal reviewed at low effort before its commit: no findings.
