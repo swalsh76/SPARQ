@@ -94,10 +94,14 @@ def build(tmp_path: Path, *, extra_trade: bool = True) -> tuple[Path, Path]:
         ours.append(recorded_trade(4_000, "A", "t5"))
     store.write_part(out, "trade", H, ours)
     store.combine_hour(out, H)
+    late = (H_US + 3_600_000_000 + 50_000, 1, 2, 2, "t9", "A", 400_000, 100, "yes", "bid", False,
+            H_MS + 3_599_990, H_MS + 3_599_995)  # made before 19:00, received after  # fmt: skip
+    store.write_part(out, "trade", H + timedelta(hours=1), [late])
     store.log_event(out, "reconnect", H_US + 9_500_000, link=2, reason="connection_lost",
                     downtime=1.0)  # fmt: skip
     theirs = [trade(500, "A", "t0"), trade(3_000, "A", "t1", 200), trade(9_000, "A", "t3"),
-              trade(20_000, "B", "t4"), trade(3_000, "Z", "tz")]  # fmt: skip
+              trade(20_000, "B", "t4"), trade(3_000, "Z", "tz"),
+              trade(3_599_990, "A", "t9")]  # fmt: skip
     for name, rows, schema in (("ticker", FRAMES, TICKER_SCHEMA), ("trade", theirs, TRADE_SCHEMA)):
         (live / name).mkdir(parents=True)
         pl.DataFrame(rows, schema=schema).write_parquet(live / name / f"{hour_name(H)}.parquet")
@@ -140,8 +144,9 @@ def test_the_check_compares_every_moment_and_the_trades(
     ]
     assert not books["passes"]  # 80% and one market whose book changed
     trades = result["trades"]
-    assert (trades["recorded"], trades["ingest"]) == (2, 3)  # t0 before A's book, tz not recorded
-    assert (trades["recorded_contracts_e2"], trades["ingest_contracts_e2"]) == (300, 400)
+    # t0 came before A's book, tz is not recorded, t9 was received after the hour: still found
+    assert (trades["recorded"], trades["ingest"]) == (3, 4)
+    assert (trades["recorded_contracts_e2"], trades["ingest_contracts_e2"]) == (400, 500)
     assert (trades["missing"], trades["missing_in_downtime"], trades["extra"]) == (2, 1, 1)
     assert not trades["agree"] and not result["passes"] and result["book_rows"] == len(BOOK)
 

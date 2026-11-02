@@ -15,7 +15,7 @@ snapshot in the hours checked) and hours, matched by ``trade_id``: in count and 
 trade the recording lacks inside a lost link's downtime is counted apart: Kalshi replays nothing.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -211,7 +211,8 @@ def check(out: Path, live: Path, start: datetime, end: datetime) -> dict[str, An
     frames = frames.filter(pl.col("ts_ms").is_between(start_ms, end_ms, closed="left"))
     books = compare_books(tops, frames, changed)
     spans = market_spans(tops, book)
-    recorded = store.read_hours(out, "trade", start, end).collect()
+    # a trade made just before the end may be received just after it, in the next hour's file
+    recorded = store.read_hours(out, "trade", start, end + timedelta(hours=1)).collect()
     ingest = pl.read_parquet(hour_files(live, "trade", start, end))
     events = store.read_events(out / store.GAPS)
     downtimes = [
