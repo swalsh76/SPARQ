@@ -38,7 +38,7 @@ from sparq_analytics.history.downloader import (
 )
 from sparq_analytics.history.rates import RateLimitPersisting
 from sparq_analytics.history.verify import verify
-from sparq_analytics.scratch import ScratchError, configure
+from sparq_analytics.scratch import ready
 
 NETWORK_COMMANDS = {"plan", "series", "markets", "trades", "candles"}
 
@@ -142,16 +142,13 @@ async def _run_network(args: argparse.Namespace) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not ready():  # the scratch settings, before any data is read
+        return 1
     if args.command in NETWORK_COMMANDS and not args.production:
         print(
             "This talks to Kalshi production (public data, GET only). Add --production.",
             file=sys.stderr,
         )
-        return 1
-    try:
-        configure()
-    except ScratchError as error:
-        print(f"error: {error}", file=sys.stderr)
         return 1
     try:
         if args.command == "status":

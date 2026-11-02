@@ -15,9 +15,11 @@ from fakekalshi import FakeKalshi, Rig  # noqa: E402
 def no_machine_settings(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No test reads the machine's own analytics settings (S1.2r's scratch folder)."""
-    nowhere = tmp_path_factory.getbasetemp() / "no-analytics-settings.toml"
-    monkeypatch.setenv("SPARQ_ANALYTICS_CONFIG", str(nowhere))
+    """No test reads the machine's own analytics settings (S1.2r's scratch folder): every test
+    sees an empty settings file, which changes nothing."""
+    empty = tmp_path_factory.getbasetemp() / "empty-analytics-settings.toml"
+    empty.touch()
+    monkeypatch.setenv("SPARQ_ANALYTICS_CONFIG", str(empty))
 
 
 @pytest.fixture

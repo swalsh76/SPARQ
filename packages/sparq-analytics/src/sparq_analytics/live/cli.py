@@ -44,7 +44,7 @@ from sparq_analytics.live.source import (
     load_source,
 )
 from sparq_analytics.live.summary import in_any_population, render, summarize
-from sparq_analytics.scratch import configure
+from sparq_analytics.scratch import ready
 from sparq_analytics.study.forward import busy_digest, read_busy
 from sparq_analytics.study.rules import Rule, rules_from_json
 
@@ -245,8 +245,9 @@ HANDLERS = {"extract": _extract, "measure": _measure, "report": _report}
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not ready():  # the scratch settings, before any data is read
+        return 1
     try:
-        configure()
         return HANDLERS[args.command](args)
     except (UsageError, LiveSourceError, ValueError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)

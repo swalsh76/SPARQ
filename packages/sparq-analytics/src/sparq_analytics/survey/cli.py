@@ -33,7 +33,7 @@ from typing import Any
 import polars as pl
 
 from sparq_analytics.live.source import LiveSourceError
-from sparq_analytics.scratch import configure
+from sparq_analytics.scratch import ready
 from sparq_analytics.study.dataset import StudyDataError
 from sparq_analytics.survey import lag, tail
 from sparq_analytics.survey.dump import CUT, SurveyDataError, history
@@ -189,8 +189,9 @@ HANDLERS = {"dump": _dump, "lag": _lag, "tail": _tail}
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not ready():  # the scratch settings, before any data is read
+        return 1
     try:
-        configure()
         check(args, APPLIES)
         return HANDLERS[args.command](args)
     except ERRORS as error:
