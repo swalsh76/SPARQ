@@ -862,6 +862,31 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 **Decisions.** The owner approved S6 on 2026-11-02 ("build all as recommended"): the thin tail only, built now, the 500 GB pause.
 
+### S6.1 The live probe (2026-11-02 UTC, done; PR TO COME)
+
+**Built.** `python -m sparq_analytics.books probe` (`books/probe.py`, `books/cli.py`): B2's markets chosen from the live copies (open at the newest copied hour, not a combo, the latest quote in the day before, the mid or the one standing price, above 3 and below 97 cents, under 1,000 contracts a day over the week or its days open so far); `orderbook_delta` and `trade` subscribed in growing batches (1,000 to 50,000) with a refusal handled by smaller batches and a subscription that takes not even one more market treated as full; every message counted by type with its JSON bytes, the book messages carrying `clock`, each market's wait for its first snapshot, the messages in every second (silent ones counted), `seq` gaps, and one deliberate reconnect halfway; `probe.json` and the first minutes as `sample.parquet` on the node's data drive. It needs `--production` and the read-only key, loaded into the probe's process by its run script and never printed; subscriptions only. In core, `KalshiFeed.drop_link()` (a deliberate loss, reconnected and restored like any other) and **a fix found live: Kalshi answers a second subscribe to a channel on the same link with an `ok` that names the channel's existing subscription on the frame, so `subscribe` now takes that sid** (it refused the reply as carrying none, which would also have broken a resubscribe of two subscriptions to one channel after a reconnect). No new package.
+
+**Verified (local).** Format, lint and `mypy --strict` are green; the full suite is 2,016 passed and 198 skipped; the `books` package at 99% branch coverage: B2's choice on built live copies (thin, thick, young, one-sided, combo, closed, unquoted, both certainty ends), the growing batches against a fake feed that refuses large ones with code 26, a subscription that fills, the link failing while subscribing, too many attempts, the counts, snapshots, reconnect, gap and resubscribe failure through a scripted feed, silent seconds and waits measured from the start, and the command line with its refusals; in core, the dropped link and the joined subscription against the local WebSocket server.
+
+**Verified (live, the analytics node, read-only key).** Two 2-minute smoke runs: the first stopped at the first batch on the `ok` reply above, which led to the fix; the second ran clean. **The hour** (`s61_probe.sh hour`, `74f8464`, 2026-11-02 05:17 to 06:17 UTC; outputs in the data drive's `sparq/books/hour`):
+- **Markets:** 91,623 of the 163,245 open at 03:00 UTC (122,987 quoted in the day before, 94,422 in the band; no combo among them).
+- **Subscriptions:** one per channel (sid 1 for the book, 2 for trades), six batches each up to 50,000 markets, none refused, in 1.4 seconds: no per-subscription limit at this size.
+- **`clock`:** on all 18,274,383 book messages: live, unlike IKARS's reading of 2026-10-26.
+- **Snapshots:** all 91,623 markets, the first within a median 1.5 seconds and at most 2.3.
+- **Rate:** 18,091,070 deltas, 183,313 snapshots and 58,640 trades in the hour; 5,042 messages a second steady (5,091 on average, 7,930 at the 99th percentile, 55,903 in the second of the first snapshots); the feed's queue never held more than 2,238; no overflow, stall, bad frame or parse error.
+- **The reconnect** at 30 minutes: back in 0.46 seconds, both subscriptions restored, 91,650 snapshots sent again, `seq` starting over at 1 (book) and 5 (trades), no gap.
+- **Size:** 5.9 GB of JSON in the hour, so about 139 GB a day; the 3-minute sample (995,553 messages) stored as compressed raw messages at 11.6% of its JSON, so **about 16 GB a day stored**. B4's warning is therefore 32 GB a day, and at this rate the 500 GB pause comes after about a month.
+- **Concentration** (the sample's deltas): only 19,151 markets changed in the 3 minutes; the top 10 markets carried 23%, the top 100 50%, the top 1,000 74%; Sports 70%, Financials 12%; 20 in-play tennis set markets (`KXATPSETWINNER`) 16%. The thin tail by trades is not quiet by quotes while a game is on.
+
+**Review (PLAN Q8).** `fef8683` reviewed at low effort: 3 findings, 2 fixed in it before the commit and 1 left: (1) the per-second figures counted only seconds with a message, overstating a quiet feed's rate: **fixed**, seconds counted from the start with silent ones as zeros; test; (2) a subscribe slower than the reconnect point stretched the run and dropped the link late: **fixed**, every wait measured from the start; test; (3) an empty list of quote hours would fail without a clear message: **no change**, it cannot happen (`last_hour_end` needs both tables copied and `hour_files` refuses a gap). `74f8464` reviewed at low effort: 1 finding, fixed in it: the subscriptions count counted accepted batches, which no longer equal subscriptions once Kalshi joins them; renamed `accepted_batches`. MERGE REVIEW TO COME.
+
+**Problems and fixes.**
+- Kalshi's `ok` reply to a second subscribe, above: the first live smoke stopped on it; fixed in core with a test.
+- The kept sample was cut from 10 minutes to 3 for the hour, since at 5,000 messages a second ten minutes would hold about 3 million messages in memory.
+- Three of my test expectations were wrong, not the code: the band count of the built copies, the refusal text (it carries its code), and the delta count when batches fall to one market each.
+
+**For S6.2's plan.** The recorder can stay one connection with one subscription per channel; it must take an `ok` as a join and rebuild every book from the snapshots that follow a reconnect. The size is the open design question: parsed columns instead of raw messages, and, since a few hundred busy books carry most of the traffic, whether B2 should leave out or sample the busiest in-play markets; that is a decision for the owner in S6.2's plan.
+
 ## S1.2r Analysis plumbing on the analytics node (from PLAN §9)
 
 ### S1.2r The scratch settings and S1.2a's leftovers (2026-11-02 UTC, done; PR #30)
