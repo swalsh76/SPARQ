@@ -11,6 +11,15 @@ sys.path.insert(0, str(Path(__file__).parent))  # so tests can import fakekalshi
 from fakekalshi import FakeKalshi, Rig  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def no_machine_settings(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No test reads the machine's own analytics settings (S1.2r's scratch folder)."""
+    nowhere = tmp_path_factory.getbasetemp() / "no-analytics-settings.toml"
+    monkeypatch.setenv("SPARQ_ANALYTICS_CONFIG", str(nowhere))
+
+
 @pytest.fixture
 def fake() -> FakeKalshi:
     return FakeKalshi()

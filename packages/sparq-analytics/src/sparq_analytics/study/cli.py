@@ -39,6 +39,7 @@ from typing import Any
 
 import polars as pl
 
+from sparq_analytics.scratch import ScratchError, configure
 from sparq_analytics.study import ladder as ladder_module
 from sparq_analytics.study import report
 from sparq_analytics.study.calibration import calibration_table
@@ -375,8 +376,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     root = args.data_dir / "kalshi"
     out = args.study_dir if args.study_dir is not None else args.data_dir / "study"
     try:
+        configure()
         return HANDLERS[args.command](args, root, out)
-    except (UsageError, StudyDataError, SplitError, PreregistrationError) as error:
+    except (UsageError, StudyDataError, SplitError, PreregistrationError, ScratchError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
 

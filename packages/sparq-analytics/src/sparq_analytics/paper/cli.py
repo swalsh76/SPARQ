@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from sparq_analytics.paper import quoter, trial
+from sparq_analytics.scratch import configure
 from sparq_analytics.survey.cli import ERRORS, UsageError, check, need
 from sparq_analytics.survey.queue import fee_terms
 
@@ -94,6 +95,7 @@ HANDLERS = {"fit": _fit, "test": _test}
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        configure()
         check(args, APPLIES, NAMES)
         return HANDLERS[args.command](args)
     except ERRORS as error:
