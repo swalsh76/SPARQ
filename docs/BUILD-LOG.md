@@ -840,6 +840,28 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 **Decisions (owner, 2026-10-29).** S5.1 approved as recommended. **Pending:** whether to go on to S5.2 (the default, with the expectation stated in PLAN §6.5 that the probability measurement does not pass), and the word to merge PR #28.
 
+## S6. Recording the order books of the thin tail (approved 2026-11-02)
+
+### S6 proposal (PR #29, 2026-11-02 UTC, documents only; approved by the owner)
+
+**Built.** PLAN §6.6: decisions B1 to B8 and slices S6.1 to S6.3 and S6.c, returning S1.2b's recorder (approved 2026-10-26, parked by D14) aimed at S4's thin tail; the milestone row; the §9 entry points to it. Nothing else changes.
+
+**Verified.** The figures in the proposal were read on the analytics node on 2026-11-02, read only: the data drive has 1.8 TB free; of the 57,739 markets with ticker frames in the hour from 01:00 UTC, 43,902 had a mid above 3 and below 97 cents and under 1,000 contracts a day over the seven days before (1.8 million of the hour's 3.1 million frames).
+
+**Review (PLAN Q8).** The proposal reviewed at low effort before its commit: no findings. The merge review, at medium effort over the branch against `main`, found 10 issues, 9 fixed in `7af325b` and 1 recorded elsewhere:
+1. B2's band was written "from 3 to 97 cents", inclusive, where T2 leaves 3 cents or less and 97 or more alone. **Fixed:** above 3 and below 97 (the count already used that).
+2. The 99-cent queue was named as a use, but B2's band excludes it. **Fixed:** named as outside B2, needing its own decision.
+3. B2 called its seven-day window S3.3's rule, which measures a market's whole life. **Fixed:** named as the live adaptation of S3.3's threshold.
+4. A newly listed market has no seven days, and nothing removed a market that turned thick. **Fixed:** a young market is judged over its days open so far; the daily choice drops one that no longer qualifies.
+5. The 43,902 counted only markets with a frame in one hour. **Fixed:** stated as such; S6.1 counts the whole list.
+6. B5's 99% had no minimum. **Fixed:** over at least 300 markets whose book changed, and reported per market.
+7. S1.2b's check of the recorded trades against the ingest's was dropped. **Fixed:** restored in B5.
+8. The build slice would have run the live hour that its own design depends on. **Fixed:** a live probe (S6.1) comes first; the recorder is S6.2, the daemon S6.3.
+9. The full-drive refusal applied only at start. **Fixed:** an hourly check stops the recorder cleanly at 90%.
+10. CLAUDE.md's resume point was not updated on this branch. **Recorded elsewhere:** the resume point is updated in the S5.2 branch's working copy, which carries the session's state, so the two open branches do not conflict on the same lines; the dates are UTC (2026-11-02), as the resume point's rule asks.
+
+**Decisions.** The owner approved S6 on 2026-11-02 ("build all as recommended"): the thin tail only, built now, the 500 GB pause.
+
 ## S1.2r Analysis plumbing on the analytics node (from PLAN §9)
 
 ### S1.2r The scratch settings and S1.2a's leftovers (2026-11-02 UTC, built; branch `s1/2r-plumbing`)
