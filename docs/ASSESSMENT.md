@@ -1,6 +1,6 @@
 # KAPS assessment: hardware, data, frameworks and literature
 
-> **Carried from KAPS on 2026-10-25.** Sections 1 to 6 are KAPS's assessment as written for its milestone K0; "KAPS" in them means the predecessor project, and its plan references are to KAPS's plan. Section 7 is the review that led to SPARQ.
+> **Carried from KAPS on 2026-10-25.** Sections 1 to 6 are KAPS's assessment as written for its milestone K0; "KAPS" in them means the predecessor project, and its plan references are to KAPS's plan. Section 7 is the review that led to SPARQ: the outside evidence and the reasoning, with SPARQ's own results since kept in [the evidence ledger](README.md#the-evidence-ledger) and the write-ups.
 
 Written 2026-10-21 for milestone K0. It answers the owner's starting question: what can be done with the machines we have, how to store and process the data, which tools to use, and what the research literature says about predicting what ordinary Kalshi traders will do.
 
@@ -184,23 +184,19 @@ Written at the end of KAPS, after its K0.5 study returned a NO-GO, when the owne
 - **The price is already close to the probability.** KAPS's K0.5 study (77 trade days, 7 August to 22 October 2026, stratified to 40 million trades; the write-up is in [KAPS docs/research/edge-spike.md](https://github.com/swalsh76/KAPS/blob/main/docs/research/edge-spike.md)): a bias correction by price band changed the Brier score by 0.0001 on the held-out part; no pre-registered segment had an after-fee edge above zero; a naive maker made +0.91 cents a contract under the optimistic fill rule and lost 0.32 under the strict one.
 - **Takers pay makers.** Burgi, Deng and Whelan's 2026 version ("Makers or Takers"): the average return is -31.46% for takers and -9.64% for makers; makers buying contracts at 50 cents or more earn about +2.6%; the authors expect the biases to fade now that they are published. Kalshi's own figures: over 70% of traders were unprofitable over six months (CNBC, May 2026); the Roosevelt Institute puts retail losses at about $583.5 M net to May 2026.
 - **The professional firms** (Susquehanna, and Jump with more than 20 event-contract traders) quote the headline markets; on Kalshi's RFQ layer, 13 quoters answer sports requests, almost all within 200 milliseconds (Oddpool's census).
-- **The widest spreads are in the thin tail** (SPARQ S3.3, 2026-10-29, on 101 hours of live frames; the half-spread below is gross revenue the wide makers resting at the touch already earn, not money left unclaimed, as the fresh-eyes review of 2026-11-02 put it): in markets under 1,000 contracts a day, the trades that cross a spread wider than 20 cents carry about $499,000 a day of half-spread (Sports $404,000), with no quote within 10 cents of the mid; the thinnest markets are two-sided a quarter of the time. What a maker standing inside those spreads would keep is SPARQ S4's question (PLAN §6.4).
+- **SPARQ's own readings since** (the thin tail's spreads, the 99-cent queue, related markets, weather) are in [the evidence ledger](README.md#the-evidence-ledger).
 
 ### 7.2 Checked and closed
 
 - **Bracket-sum arbitrage inside events** (a live scan of 14,312 open events): of 5,611 mutually exclusive sets with two or more live markets, one priced to a riskless profit after fees, by 0.12 cents a set.
 - **Parlays:** two- to four-leg cross-game parlays are not overpriced (median 0.991 to 0.999 of the product of their legs; Moshrefi 2026); the markup appears only at six legs and above, on small samples. Quoting combos by RFQ is a race between fast bots in which only the best quote is accepted.
 - **Simple forecast models for weather:** a public backtest over 1,506 New York events found the market already priced the National Weather Service forecasts; prices move 1 to 3 cents within 10 to 30 minutes of an update, less than a 3 to 3.5 cent round trip (OddsReference, 2026).
-- **Taking stale weather quotes after station reports** (SPARQ S2.2, 2026-10-28): on the fit part the book priced a bound a median 4.6 hours (highs) and 41 minutes (rain) before the hourly reports proved it; $0.65 a day at the lower bound on the fit part and $0 on validate, so no rule was tested (SPARQ PLAN W9).
-- **Resting bids at 99 cents for the certain side** (SPARQ S3.1, 2026-10-28): the queue ahead rations a bid's gains to a cent on what it fills, and a reversal's panic fills the whole bid at a 99-cent loss, so it loses in every category but Mentions (+$39 a day on 28 reversals in 65 days); the whole queue's $240,000 a day goes 85% to crypto bots.
-- **Stale quotes between related markets** (SPARQ S3.2, 2026-10-29): adjacent thresholds, the outcomes of one event, a game's series and one underlying across horizons answer a 2-cent move within seconds; the 10-minute pass-through is a fraction of a cent, hitting the stale quotes at their shown size loses millions of dollars a day a kind to taker fees, and the quotes that stand a second move against the signal. The fair value from related markets is already in the neighbouring book for a taker; a maker using it to pull or skew its own quotes was not measured.
 - **Millisecond speed races** (spot jumps, live games, data releases): the professional firms are faster than a home connection running Python.
 
 ### 7.3 Measured, not relied on
 
 - **Kalshi's Liquidity Incentive Program** (terms in Kalshi's CFTC filing of 2026-07-15; `GET /incentive_programs`): 6,560 markets carried rewards totalling about $293,000 a day on 2026-10-25 (median $14 a day a market). It ends on 2027-01-01 at the latest, Kalshi may end it at any time, Market Maker Agreement holders are excluded, and Kalshi ended its Volume Incentive Program early (no earlier than 2026-10-13). The owner chose not to rely on it (PLAN Q4).
 - **Perpetual funding** (`GET /margin/funding_rates/historical`, 6,535 records): BTC funding was positive in 51.6% of 8-hour intervals since 2026-06-03, about 9% a year on average and 14.5% over the last 30 days; ETH about zero. Perps now include metals, oil, the S&P 500 and the Nasdaq 100. As a carry trade, a modest yield; as a hedge for binary positions in the same account, potentially useful.
-- **Surprise-rate series** (SPARQ S3.3, 2026-10-29): of 313 series with 50 or more settled markets at 90 cents or more the day before close, 14 settled against that side more often than their prices implied, where 7.8 would by chance; as a whole favourites at 90 cents or more lost slightly less often than their prices implied (3.57% against 3.82%). Leads for a held-out test (PLAN §9), not relied on.
 
 ### 7.4 The middle tier (exploratory: the validate part only, about 25 slices looked at; tested in SPARQ S1.1: NO-GO)
 
@@ -219,7 +215,7 @@ A live snapshot of 148,971 open non-combo markets: the 209 busiest (over 100,000
 
 **Reading:** a gap exists between human-paced traders and the professional firms, in second-tier markets and in stale quotes; a seconds-scale maker could live in it. These are leads for a pre-registered test, not results: two of the three key intervals cross zero, and KAPS's validate leads all failed on its test part.
 
-**Tested (SPARQ S1.1, 2026-10-25): NO-GO.** The four rules built from these leads, tested once on the held-out part, all had lower bounds below zero: the middle-activity maker -0.09 cents a contract (lower -2.00), the human-paced maker +2.71 (-3.66), the same below the busiest series +2.51 (-1.30), and the first-trade taker -1.29 (-3.98). S1.2a then found that an order joining after a trade is adversely selected, losing 2.9 cents by 10 minutes before fees (SPARQ's LESSONS.md, PLAN D13 and D14).
+**Tested (SPARQ S1.1, 2026-10-25): NO-GO** ([middle-tier.md](research/middle-tier.md); the ledger).
 
 ### 7.5 Venues (US-accessible, October 2026)
 
