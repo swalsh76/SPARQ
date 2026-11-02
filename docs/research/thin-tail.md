@@ -105,13 +105,13 @@ Their rules text is in `tail.json`. What they have in common is thinness: in a s
 
 ## The readings, as a ladder
 
-1. **The raw price as the probability** of a 90-cent side losing: 3.82% implied against 3.57% observed; the price is a little too kind to the underdog.
+1. **The raw price as the probability** of a 90-cent side losing: 3.82% implied against 3.57% observed: favourites at 90 cents or more lost slightly less often than their prices implied.
 2. **A correction by price bucket:** the 95-to-99 and 99-and-more buckets overstate the surprise by 0.4 points each; the 90-to-95 bucket is right to a sixth of a point. A buyer of favourites gains about four tenths of a cent a contract, before a fee of 0.3 to 0.6 cents.
 3. **A naive maker in the thin tail:** at the best quote on every uncontested thin trade, $499,284 a day of half-spread before adverse selection; a tenth captured, $49,928.
 
 ## What this says for SPARQ
 
-Three measurements, two bars cleared. The half-spread in thin, wide-spread markets is the first place S3 has found money that is not already taken: 67,000 trades a day cross spreads averaging 58 cents in markets with no competing quote near the mid, four fifths of them in sports, and nobody stands at the touch when they come. Whether a quoter can stand there without being the one who is wrong is the question a strand would test, on paper first. The surprise rate confirms K0.5: prices in the tail are nearly right, slightly kind to the underdog, and the series that stand out are thin enough that a single trade sets their "price".
+Three measurements, two bars cleared. The half-spread in thin, wide-spread markets is the largest pool S3 has found, though it is gross revenue the wide makers at the touch already earn, not money left unclaimed (corrected wording, the fresh-eyes review of 2026-11-02): 67,000 trades a day cross spreads averaging 58 cents in markets with no competing quote near the mid, four fifths of them in sports, and no one quotes inside the spread when they come. Whether a quoter can stand there without being the one who is wrong is the question a strand would test, on paper first. The surprise rate confirms K0.5: prices in the tail are nearly right (favourites lost slightly less often than priced), and the series that stand out are thin enough that a single trade sets their "price".
 
 ## Limitations
 

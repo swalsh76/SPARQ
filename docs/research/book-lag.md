@@ -84,7 +84,7 @@ The sums are large because the quotes are many (millions a day) and often big (t
 
 ## What this says for SPARQ
 
-SPARQ's founding thesis was a fair value from related markets. On Kalshi's related markets at a 2-cent resolution, that fair value is already in the neighbouring book within seconds, the pass-through is a fraction of a cent, and the quotes that lag are the ones that know better. The weather books are the exception in speed (half still unmoved after ten minutes), but S2.2 showed they are priced hours ahead of the public observation and their cross-series response here is 0.15 cents with coin-flip agreement. Model-based grouping (the model node, PLAN §9) could find relations this reading cannot, but the lag it would exploit is measured here as seconds, not minutes.
+SPARQ's founding thesis was a fair value from related markets. What is measured here is its use by a taker; its use by a maker, pulling or skewing its own quotes when a related market moves, is not (the fresh-eyes review, 2026-11-02). For a taker, on Kalshi's related markets at a 2-cent resolution, that fair value is already in the neighbouring book within seconds, the pass-through is a fraction of a cent, and the quotes that lag are the ones that know better. The weather books are the exception in speed (half still unmoved after ten minutes), but S2.2 showed they are priced hours ahead of the public observation and their cross-series response here is 0.15 cents with coin-flip agreement. Model-based grouping (the model node, PLAN §9) could find relations this reading cannot, but the lag it would exploit is measured here as seconds, not minutes.
 
 ## Limitations
 
