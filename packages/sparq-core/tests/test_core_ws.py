@@ -158,6 +158,27 @@ async def test_after_a_drop_the_feed_reconnects_resubscribes_and_says_so_first()
     )
 
 
+async def test_a_dropped_link_reconnects_and_resubscribes_like_a_lost_one() -> None:
+    first = subscribe_then(trade(1, seq=1))
+    second = subscribe_then(trade(2, seq=1), sid=5)
+    async with FakeKalshi(first, second) as srv, feed_for(srv) as feed:
+        await feed.subscribe("trade", ["M"])
+        events = feed.events()
+        before = await take(events, 1)
+        await feed.drop_link()
+        after = await take(events, 2)
+    assert numbers(before) == ["t-1"] and isinstance(after[0], Reconnected)
+    assert after[0].reason == "connection_lost" and numbers(after) == ["t-2"]
+    assert srv.commands[1][0]["params"] == srv.commands[0][0]["params"]
+
+
+async def test_dropping_with_no_link_does_nothing() -> None:
+    async with FakeKalshi(subscribe_then()) as srv:
+        feed = feed_for(srv)
+        await feed.drop_link()  # never started: nothing to close
+        assert feed.stats()["generation"] == 0
+
+
 async def test_data_that_arrives_before_the_resubscribe_reply_still_follows_the_event() -> None:
     async def second(ws: ServerConnection) -> None:
         command = await read_command(ws)

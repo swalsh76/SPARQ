@@ -275,6 +275,14 @@ class KalshiFeed:
         await self._command("unsubscribe", {"sids": [sid]})
         self._subscriptions = [s for s in self._subscriptions if s.sid != sid]
 
+    async def drop_link(self) -> None:
+        """Close the current link as if it had been lost: the feed reconnects and restores its
+        subscriptions as after any loss (S6.1's probe measures what Kalshi sends then)."""
+        conn = self._conn
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                await conn.close()
+
     async def _command(self, cmd: str, params: dict[str, Any]) -> Frame:
         conn = self._conn
         if conn is None or not self._ready.is_set():
