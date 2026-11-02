@@ -174,10 +174,15 @@ class Feed:
         self.snapshots: list[tuple[int, list[str]]] = []
         self.refuse: set[str] = set()
         self.connected = True
+        self.sids: dict[str, int] = {}  # each channel's subscription on the current link
 
     async def subscribe(self, channel: str, market_tickers: list[str] | None = None) -> int:
         self.subscribed.append((channel, list(market_tickers or [])))
+        self.sids[channel] = SIDS[channel]
         return SIDS[channel]
+
+    def sid_for(self, channel: str) -> int | None:
+        return self.sids.get(channel)
 
     async def update_subscription(
         self, sid: int, action: str, market_tickers: list[str]
@@ -448,7 +453,7 @@ async def test_the_hourly_round_asks_for_every_snapshot(
 async def test_markets_that_open_join_and_those_determined_leave(tmp_path: Path) -> None:
     feed = Feed()
     made = recorder(tmp_path, feed)
-    made.tickers, made.sid = {"A", "B"}, {"orderbook_delta": 1, "trade": 2}
+    made.tickers, feed.sids = {"A", "B"}, {"orderbook_delta": 1, "trade": 2}
     made.handle(lifecycle("N", "created", T0_US, opens=T0 - timedelta(minutes=1)))
     made.handle(lifecycle("F", "created", T0_US, opens=T0 + timedelta(minutes=5)))
     made.handle(lifecycle("KXMVEX", "created", T0_US))
@@ -460,6 +465,8 @@ async def test_markets_that_open_join_and_those_determined_leave(tmp_path: Path)
         (1, "delete_markets", ["A"]), (2, "delete_markets", ["A"]),
     ]  # fmt: skip
     assert made.tickers == {"B", "N"} and made.added_us == {"N": T0_US} and not made.want
+    resets = [r for r in made.writer.rows["book"] if r[5] == RESET]
+    assert [r[4] for r in resets] == ["A"]  # the removed market's book is unknown in the files
     made.now_us = Clock(T0_US + 6 * 60 * 1_000_000)  # F has opened
     await made._apply_changes()
     assert feed.updates[-1] == (2, "add_markets", ["F"]) and "F" in made.tickers
@@ -472,7 +479,7 @@ async def test_changes_wait_for_a_link_and_refused_markets_are_left_out(tmp_path
     made = recorder(tmp_path, feed)
     made.tickers = {"A"}
     assert await made._change("add_markets", ["X"], "opened") is False  # no sid yet
-    made.sid = {"orderbook_delta": 1, "trade": 2}
+    feed.sids = {"orderbook_delta": 1, "trade": 2}
     feed.connected = False
     assert await made._change("add_markets", ["X"], "opened") is False
     feed.connected, feed.refuse = True, {"BAD"}
@@ -489,7 +496,7 @@ async def test_snapshots_wait_for_a_link_and_are_asked_again_when_it_fails(tmp_p
     made.tickers, made.want_all = {"A", "B"}, True
     await made._ask_snapshots()  # no sid on this link yet: Kalshi sends a restore's itself
     assert feed.snapshots == [] and made.want_all
-    made.sid = {"orderbook_delta": 1}
+    feed.sids = {"orderbook_delta": 1}
     feed.connected = False
     await made._ask_snapshots()
     assert made.want == {"A", "B"} and not made.want_all
@@ -501,7 +508,7 @@ async def test_snapshots_wait_for_a_link_and_are_asked_again_when_it_fails(tmp_p
 async def test_the_days_choice_refreshes_and_changes_the_list(tmp_path: Path) -> None:
     feed = Feed()
     made = recorder(tmp_path, feed, picks=[["B", "C"]])
-    made.tickers, made.sid = {"A", "B", "N", "OLD"}, {"orderbook_delta": 1, "trade": 2}
+    made.tickers, feed.sids = {"A", "B", "N", "OLD"}, {"orderbook_delta": 1, "trade": 2}
     made.added_us = {"N": T0_US - 3_600_000_000, "OLD": T0_US - 2 * 86_400_000_000}
     await made.rechoose("the day's choice")
     assert made.tickers == {"B", "C", "N"}  # A and OLD out, C in, N kept while young
@@ -558,3 +565,77 @@ async def test_refreshing_the_copies_runs_extract_in_a_child_and_reports_failure
     assert await rec.refresh_copies(tmp_path / "live", T0, 0.001) == (
         "the refresh took longer than 0.001 s"
     )
+
+
+def test_an_events_row_takes_the_time_of_the_frame_before_it(tmp_path: Path) -> None:
+    feed = Feed()
+    made = recorder(tmp_path, feed)
+    made.handle(snapshot("A", T0_US + 10, []))
+    made.now_us = Clock(T0_US + 40 * 60 * 1_000_000)  # handled long after, past the hour
+    made.handle(Reconnected(2, "connection_lost", 0.5))
+    made.handle(SequenceGap(1, 2, 4, 2))
+    times = [r[0] for r in made.writer.rows["book"] if r[5] == RESET]
+    assert times == [T0_US + 10, T0_US + 10] and made.writer.hour == T0.replace(minute=0)
+
+
+def test_a_late_row_stays_in_the_current_hour() -> None:
+    closed: list[datetime] = []
+    writer = store.Writer(lambda hour, rows: closed.append(hour))
+    writer.add("book", book_row(T0_US + store.US_PER_HOUR))
+    writer.add("book", book_row(T0_US))  # read before the hour turned, handled after
+    assert closed == [] and writer.size() == 2
+    assert writer.hour == T0.replace(minute=0) + timedelta(hours=1)
+
+
+def test_combining_again_keeps_the_rows_already_combined(tmp_path: Path) -> None:
+    hour = T0.replace(minute=0)
+    store.write_part(tmp_path, "book", hour, [book_row(T0_US)])
+    store.combine(tmp_path, "book", hour)
+    store.write_part(tmp_path, "book", hour, [book_row(T0_US + 1)])
+    store.combine(tmp_path, "book", hour)
+    assert pl.read_parquet(store.hour_file(tmp_path, "book", hour)).height == 2
+
+
+async def test_a_change_goes_on_from_where_a_lost_link_stopped_it(tmp_path: Path) -> None:
+    class Flaky(Feed):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_trade = True
+
+        async def update_subscription(
+            self, sid: int, action: str, market_tickers: list[str]
+        ) -> list[str]:
+            if sid == 2 and self.fail_trade:
+                self.fail_trade = False
+                raise FeedError("connection closed")
+            return await super().update_subscription(sid, action, market_tickers)
+
+    feed = Flaky()
+    feed.sids = {"orderbook_delta": 1, "trade": 2}
+    made = recorder(tmp_path, feed)
+    assert await made._change("add_markets", ["N"], "opened") is False
+    assert await made._change("add_markets", ["N"], "opened") is True
+    assert feed.updates == [(1, "add_markets", ["N"]), (2, "add_markets", ["N"])]  # not twice
+    assert made.tickers == {"N"} and made.applied == {
+        ("add_markets", "orderbook_delta"): set(), ("add_markets", "trade"): set()}  # fmt: skip
+
+
+async def test_a_choice_waits_for_the_link_and_says_when_it_could_not_be_applied(
+    tmp_path: Path,
+) -> None:
+    feed = Feed()
+    made = recorder(tmp_path, feed, picks=[["B"], ["B"]], retry_seconds=0.01, retries=50)
+    made.tickers = {"A"}
+
+    async def link_back() -> None:
+        await asyncio.sleep(0.05)
+        feed.sids = {"orderbook_delta": 1, "trade": 2}
+
+    await asyncio.gather(made.rechoose("the day's choice"), link_back())
+    assert made.tickers == {"B"}
+    feed.sids = {}
+    made.settings = settings(tmp_path, retry_seconds=0.0, retries=2)
+    made.tickers = {"A"}
+    await made.rechoose("the day's choice")
+    kinds = [e["kind"] for e in store.read_events(tmp_path / "rec" / store.GAPS)]
+    assert kinds == ["chosen", "choice_not_applied"] and made.tickers == {"A"}

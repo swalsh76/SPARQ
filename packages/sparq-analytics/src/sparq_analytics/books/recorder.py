@@ -47,7 +47,6 @@ from sparq_core.ws import Data, FeedError, FeedEvent, Reconnected, ResubscribeFa
 from sparq_core.ws_models import (
     MARKET_LIFECYCLE,
     ORDERBOOK,
-    SNAPSHOT,
     TRADE,
     EventLifecycleMsg,
     MarketLifecycleMsg,
@@ -58,19 +57,18 @@ from sparq_core.ws_models import (
 
 from sparq_analytics.books import store
 from sparq_analytics.books.keeper import Keeper
-from sparq_analytics.books.probe import choose, subscribe_all
+from sparq_analytics.books.probe import Subscriber, choose, subscribe_all
 from sparq_analytics.books.store import CHANGE, LEVEL, RESET, SIDE_CODE
 from sparq_analytics.live.source import LiveSourceError, hour_name, last_hour_end
 
-CHANNEL_OF_TYPE = {SNAPSHOT: ORDERBOOK, ORDERBOOK: ORDERBOOK, TRADE: TRADE}
 REMOVED_WHEN = frozenset({"determined", "settled"})
 CHANGE_NAME = {"add_markets": "add", "delete_markets": "remove"}
 
 
-class Feed(Protocol):
+class Feed(Subscriber, Protocol):
     """What the recorder needs of a feed (``sparq_core.ws.KalshiFeed`` in a real run)."""
 
-    async def subscribe(self, channel: str, market_tickers: list[str] | None = None) -> int: ...
+    def sid_for(self, channel: str) -> int | None: ...
 
     async def update_subscription(
         self, sid: int, action: str, market_tickers: list[str]
@@ -103,6 +101,8 @@ class Settings:
     stale_after: timedelta = timedelta(hours=2)  # copies older than this are refreshed at start
     lookback: timedelta = timedelta(days=8)  # the hours a refresh makes sure are copied
     young: timedelta = timedelta(days=1)  # a market added on opening stays this long
+    retry_seconds: float = 30.0  # a choice that could not be applied is tried again after this
+    retries: int = 60  # and this many times at most
 
 
 Refresh = Callable[[datetime], Awaitable[str | None]]  # copy the hours since a time; why it failed
@@ -157,7 +157,8 @@ class Recorder:
         self.opening: dict[str, int] = {}  # created markets not yet open, and when they open
         self.to_add: set[str] = set()
         self.to_remove: set[str] = set()
-        self.sid: dict[str, int] = {}  # each channel's subscription on the current link
+        self.applied: dict[tuple[str, str], set[str]] = {}  # a change's progress, per channel
+        self.last_recv_us = 0  # the newest frame's time: the time of a row an event stands for
         self.want_all = False
         self.want: set[str] = set()
         self.asked_us: dict[str, int] = {}
@@ -183,10 +184,7 @@ class Recorder:
         subscriptions: list[dict[str, Any]] = []
         try:
             for channel in (ORDERBOOK, TRADE):
-                result = await subscribe_all(self.feed, channel, tickers)
-                subscriptions.append(result)
-                if result["sids"]:
-                    self.sid[channel] = result["sids"][0]
+                subscriptions.append(await subscribe_all(self.feed, channel, tickers))
             skipped = set(subscriptions[0]["skipped"])
             self.tickers = set(tickers) - skipped
             if skipped:
@@ -248,7 +246,7 @@ class Recorder:
         """Let the disk work queued so far finish, then stop the worker."""
         if not disk.done():
             waiter = asyncio.create_task(self.disk.join())
-            await asyncio.wait({waiter, disk}, return_when="FIRST_COMPLETED")
+            await asyncio.wait({waiter, disk}, return_when=asyncio.FIRST_COMPLETED)
             waiter.cancel()
             disk.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -302,9 +300,11 @@ class Recorder:
             return
         at = self.now_us()
         out = self.settings.out
+        # the row an event stands for takes the time of the frame before it, so rows stay in the
+        # order and the hour they were read in even when the queue lags behind
+        row_at = self.last_recv_us or at
         if isinstance(event, Reconnected):
-            self.sid.clear()  # the old link's ids mean nothing now
-            self._forget_all(at, event.generation)
+            self._forget_all(row_at, event.generation)
             store.log_event(
                 out, "reconnect", at, link=event.generation, reason=event.reason,
                 downtime=event.downtime,
@@ -316,7 +316,7 @@ class Recorder:
                 expected=event.expected, got=event.got,
             )  # fmt: skip
             if channel in (ORDERBOOK, None):  # unknown: the books may be wrong, so ask again
-                self._forget_all(at, event.generation)
+                self._forget_all(row_at, event.generation)
                 self.want_all = True
         elif isinstance(event, ResubscribeFailed):
             store.log_event(out, "resubscribe_failed", at, channel=event.channel, error=event.error)
@@ -324,10 +324,8 @@ class Recorder:
 
     def _data(self, event: Data) -> None:
         frame, recv_us, link = event.frame, event.received_ns // 1000, event.generation
+        self.last_recv_us = max(self.last_recv_us, recv_us)
         message = frame.payload
-        channel = CHANNEL_OF_TYPE.get(frame.type)
-        if channel is not None and frame.sid is not None:
-            self.sid[channel] = frame.sid
         if isinstance(message, OrderbookSnapshotMsg):
             self.keeper.replace(message.market_ticker, message.yes, message.no)
             self._book_row(recv_us, link, frame, message.market_ticker, None, store.SNAPSHOT,
@@ -424,7 +422,7 @@ class Recorder:
     # -- asking Kalshi ----------------------------------------------------------------------------
 
     async def _ask_snapshots(self) -> None:
-        sid = self.sid.get(ORDERBOOK)
+        sid = self.feed.sid_for(ORDERBOOK)
         if sid is None:
             return  # a new link not yet confirmed: Kalshi sends the snapshots of a restore itself
         now = self.now_us()
@@ -465,19 +463,25 @@ class Recorder:
         self.to_add -= self.tickers
 
     async def _change(self, action: str, tickers: list[str], why: str) -> bool:
-        """Change both channels' market lists; False when not connected (tried again later). A
-        market Kalshi refuses is left out: not added, or taken as gone already."""
-        book, trade = self.sid.get(ORDERBOOK), self.sid.get(TRADE)
-        if book is None or trade is None:
-            return False
+        """Change both channels' market lists; False when not connected (tried again later, each
+        channel going on from where it stopped). A market Kalshi refuses is left out: not added,
+        or taken as gone already."""
         refused: set[str] = set()
         batch = self.settings.snapshot_batch
-        try:
-            for sid in (book, trade):
-                for start in range(0, len(tickers), batch):
-                    refused |= await self._update(sid, action, tickers[start : start + batch])
-        except FeedError:
-            return False
+        for channel in (ORDERBOOK, TRADE):
+            sid = self.feed.sid_for(channel)
+            if sid is None:
+                return False
+            applied = self.applied.setdefault((action, channel), set())
+            todo = [t for t in tickers if t not in applied]
+            try:
+                for start in range(0, len(todo), batch):
+                    chunk = todo[start : start + batch]
+                    refused |= await self._update(sid, action, chunk, applied)
+            except FeedError:
+                return False
+        for channel in (ORDERBOOK, TRADE):
+            self.applied[(action, channel)] -= set(tickers)
         at = self.now_us()
         if action == "add_markets":
             done = [t for t in tickers if t not in refused]
@@ -487,8 +491,9 @@ class Recorder:
             done = tickers
             self.tickers -= set(done)
             self.to_remove -= set(done)
-            for ticker in done:
+            for ticker in done:  # its book is unknown from here, in the files as in memory
                 self.keeper.forget(ticker)
+                self._book_row(max(self.last_recv_us, at), 0, None, ticker, None, RESET)
         if done:
             store.log_change(self.settings.out, at, CHANGE_NAME[action], done, why)
         if refused:
@@ -496,20 +501,22 @@ class Recorder:
                             markets=len(refused), first=min(refused))  # fmt: skip
         return True
 
-    async def _update(self, sid: int, action: str, chunk: list[str]) -> set[str]:
-        """Change one subscription by ``chunk``; returns the markets refused, found by halving a
-        refused batch. A failure without an error code is the link's, and is raised."""
+    async def _update(self, sid: int, action: str, chunk: list[str], applied: set[str]) -> set[str]:
+        """Change one subscription by ``chunk``, adding what it took to ``applied``; returns the
+        markets refused, found by halving a refused batch. A failure without an error code is
+        the link's, and is raised."""
         try:
             await self.feed.update_subscription(sid, action, chunk)
         except FeedError as error:
             if error.code is None:
                 raise
             if len(chunk) == 1:
+                applied.update(chunk)  # refused is settled too: not asked again
                 return set(chunk)
             half = len(chunk) // 2
-            return await self._update(sid, action, chunk[:half]) | await self._update(
-                sid, action, chunk[half:]
-            )
+            first = await self._update(sid, action, chunk[:half], applied)
+            return first | await self._update(sid, action, chunk[half:], applied)
+        applied.update(chunk)
         return set()
 
     async def rechoose(self, why: str) -> None:
@@ -529,14 +536,18 @@ class Recorder:
         young_us = int(self.settings.young.total_seconds() * 1e6)
         young = {t for t, at in self.added_us.items() if now - at < young_us and t in self.tickers}
         chosen = set(tickers) | young
-        await self._change("delete_markets", sorted(self.tickers - chosen), why)
-        adds = sorted(chosen - self.tickers)
-        if adds:
-            await self._change("add_markets", adds, why)
+        applied = False
+        for attempt in range(self.settings.retries + 1):  # a link that is down is waited for
+            if attempt:
+                await asyncio.sleep(self.settings.retry_seconds)
+            removed = await self._change("delete_markets", sorted(self.tickers - chosen), why)
+            if removed and await self._change("add_markets", sorted(chosen - self.tickers), why):
+                applied = True
+                break
         self.added_us = {t: at for t, at in self.added_us.items() if t in young}
         store.write_list(out, self._day(self.now_us()), sorted(self.tickers), counts | {"why": why})
-        store.log_event(out, "chosen", self.now_us(), why=why, markets=len(self.tickers),
-                        kept_young=len(young))  # fmt: skip
+        store.log_event(out, "chosen" if applied else "choice_not_applied", self.now_us(),
+                        why=why, markets=len(self.tickers), kept_young=len(young))  # fmt: skip
 
     @staticmethod
     def _day(at_us: int) -> str:

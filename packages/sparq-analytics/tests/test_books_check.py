@@ -162,8 +162,45 @@ def test_trades_agree_when_only_a_lost_links_are_missing() -> None:
     schema = {k: v for k, v in store.TRADE_SCHEMA.items()}
     ours = pl.DataFrame([recorded_trade(3_000, "A", "t1")], schema=schema, orient="row")
     theirs = pl.DataFrame([trade(3_000, "A", "t1"), trade(9_000, "A", "t3")], schema=TRADE_SCHEMA)
-    result = checking.compare_trades(ours, theirs, {"A": H_MS}, [(H_MS + 8_500, H_MS + 9_500)])
+    spans = pl.DataFrame(
+        {"ticker": ["A"], "first_ms": [H_MS], "last_ms": [None]},
+        schema={"ticker": pl.String, "first_ms": pl.Int64, "last_ms": pl.Int64},
+    )
+    result = checking.compare_trades(ours, theirs, spans, [(H_MS + 8_500, H_MS + 9_500)])
     assert result["agree"] and result["missing_in_downtime"] == 1
+    wrong = ours.with_columns(count_e2=pl.lit(999, pl.Int64))
+    result = checking.compare_trades(wrong, theirs, spans, [(H_MS + 8_500, H_MS + 9_500)])
+    assert result["wrong_size"] == 1 and not result["agree"]
+
+
+def test_a_removed_market_is_compared_only_while_it_was_recorded() -> None:
+    rows = [
+        b(0, None, RESET),
+        b(1_000, "A", SNAPSHOT, send=H_MS + 1_000),
+        b(2_000, "A", RESET),  # an impossible change: a snapshot follows
+        b(3_000, "A", SNAPSHOT, send=H_MS + 3_000),
+        b(1_000, "R", SNAPSHOT, send=H_MS + 1_000),
+        b(4_000, "R", RESET),  # removed: no snapshot follows
+    ]
+    book = pl.DataFrame(rows, schema=store.BOOK_SCHEMA, orient="row")
+    spans = checking.market_spans(checking.rebuild_tops(book), book).sort("ticker")
+    assert spans.rows() == [("A", H_MS + 1_000, None), ("R", H_MS + 1_000, H_MS + 4_000)]
+    theirs = pl.DataFrame([trade(3_500, "R", "r1"), trade(5_000, "R", "r2")], schema=TRADE_SCHEMA)
+    ours = pl.DataFrame([recorded_trade(3_500, "R", "r1")], schema=store.TRADE_SCHEMA, orient="row")
+    result = checking.compare_trades(ours, theirs, spans, [])
+    assert result["agree"] and result["ingest"] == 1  # r2 came after R was removed
+
+
+def test_a_markets_tops_never_go_back_in_time() -> None:
+    rows = [
+        b(1_000, "A", SNAPSHOT, send=H_MS + 1_000),
+        b(1_000, "A", LEVEL, 1, 400_000, 100),
+        b(5_000, "A", CHANGE, 1, 410_000, 100, ts=H_MS + 5_000),
+        b(4_990, "A", RESET),  # stamped by the recorder's clock, a little behind Kalshi's
+    ]
+    tops = checking.rebuild_tops(pl.DataFrame(rows, schema=store.BOOK_SCHEMA, orient="row"))
+    assert tops["t_ms"].to_list() == [H_MS + 1_000, H_MS + 5_000, H_MS + 5_000]
+    assert tops["known"].to_list() == [True, True, False]
 
 
 # -- status ---------------------------------------------------------------------------------------

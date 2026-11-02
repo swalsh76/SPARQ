@@ -129,7 +129,8 @@ def combine(root: Path, table: str, hour: datetime) -> Path | None:
     target = hour_file(root, table, hour)
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = target.with_name(target.name + ".tmp")
-    pl.scan_parquet(parts).sink_parquet(staging)  # streamed: an hour need not fit in memory
+    inputs = ([target] if target.exists() else []) + parts  # never write over rows already kept
+    pl.scan_parquet(inputs).sink_parquet(staging)  # streamed: an hour need not fit in memory
     staging.replace(target)
     shutil.rmtree(folder)
     return target
@@ -171,7 +172,9 @@ def recover(root: Path, now_hour: datetime) -> list[str]:
 
 class Writer:
     """Rows buffered by table for the current hour. ``take`` hands over what is buffered (for a
-    part file); a row of a new hour first hands the old hour's rows to ``on_hour``."""
+    part file); a row of a new hour first hands the old hour's rows to ``on_hour``. An hour once
+    closed is never reopened: a row stamped before the current hour (a frame read just before
+    the hour turned but handled after) stays in the current hour's file."""
 
     def __init__(self, on_hour: Callable[[datetime, Rows], None]) -> None:
         self.hour: datetime | None = None
@@ -181,7 +184,7 @@ class Writer:
 
     def add(self, table: str, row: tuple[Any, ...]) -> None:
         key = row[0] // US_PER_HOUR
-        if key != self._key:
+        if key > self._key:
             if self.hour is not None:
                 self._on_hour(self.hour, self.take())
             self._key, self.hour = key, hour_start(row[0])

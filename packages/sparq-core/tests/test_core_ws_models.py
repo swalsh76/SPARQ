@@ -405,6 +405,10 @@ def test_a_book_change_as_the_real_service_sends_it_has_no_unknown_fields() -> N
         [["0.45", "1.001"]],  # more precise than a hundredth of a contract
         [["0.45", True]],  # a count that is no number
         [["0.45", None]],  # a count that is missing
+        [["0.45", "0.00"]],  # a level of nothing
+        [["0.45", "-1.00"]],  # a negative level
+        [["0.0000", "1.00"]],  # a bid of nothing
+        [["1.0000", "1.00"]],  # a bid of a whole dollar
     ],
 )
 def test_a_bad_level_is_refused_and_the_frame_kept(side: Any) -> None:
@@ -421,6 +425,8 @@ def test_a_bad_level_is_refused_and_the_frame_kept(side: Any) -> None:
         {"side": "maybe", "price_dollars": "0.45", "delta_fp": "1.00"},
         {"side": "yes", "price_dollars": 1, "delta_fp": "1.00"},
         {"side": "yes", "delta_fp": "1.00"},
+        {"side": "no", "price_dollars": "0.0000", "delta_fp": "1.00"},
+        {"side": "no", "price_dollars": "1.0000", "delta_fp": "-1.00"},
     ],
 )
 def test_a_bad_book_change_is_refused_and_the_frame_kept(change: dict[str, Any]) -> None:

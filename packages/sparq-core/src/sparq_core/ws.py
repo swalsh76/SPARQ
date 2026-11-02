@@ -251,6 +251,16 @@ class KalshiFeed:
                 return sub.channel
         return None
 
+    def sid_for(self, channel: str) -> int | None:
+        """The subscription id of ``channel`` on the current link (its first, when Kalshi joined
+        several), or None while the link is down or that subscription is not yet restored."""
+        if not self._ready.is_set():
+            return None
+        for sub in self._subscriptions:
+            if sub.channel == channel and sub.sid is not None:
+                return sub.sid
+        return None
+
     async def update_subscription(
         self, sid: int, action: str, market_tickers: list[str]
     ) -> list[str]:
@@ -453,6 +463,8 @@ class KalshiFeed:
                 self._ready.clear()
                 self._conn = None
                 self._fail_pending("connection closed")
+                for sub in self._subscriptions:
+                    sub.sid = None  # the lost link's ids mean nothing; the restore sets new ones
                 lost_at = self._monotonic()
                 if lost_at - opened >= STABLE_AFTER:
                     attempt = 0

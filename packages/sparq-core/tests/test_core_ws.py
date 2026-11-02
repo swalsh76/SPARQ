@@ -252,6 +252,31 @@ async def test_a_snapshot_is_asked_for_without_waiting_for_a_reply(
     ]
 
 
+async def test_a_channels_subscription_is_known_on_the_current_link_only() -> None:
+    async def first(ws: ServerConnection) -> None:
+        await ws.send(subscribed(await read_command(ws), 7))
+        await ws.wait_closed()
+
+    async def second(ws: ServerConnection) -> None:
+        await ws.send(subscribed(await read_command(ws), 3))
+        await ws.wait_closed()
+
+    async with FakeKalshi(first, second) as srv:
+        feed = feed_for(srv)
+        assert feed.sid_for("trade") is None  # not started
+        async with feed:
+            await feed.subscribe("trade", ["A"])
+            assert feed.sid_for("trade") == 7 and feed.sid_for("ticker") is None
+            events = feed.events()
+            await feed.drop_link()
+            assert isinstance((await take(events, 1))[0], Reconnected)
+            for _ in range(200):
+                if feed.sid_for("trade") == 3:
+                    break
+                await asyncio.sleep(0.01)
+            assert feed.sid_for("trade") == 3  # the new link's, never the old one's
+
+
 async def test_a_snapshot_cannot_be_asked_for_before_the_feed_is_started() -> None:
     async with FakeKalshi(subscribe_then()) as srv:
         with pytest.raises(FeedError, match="not connected"):

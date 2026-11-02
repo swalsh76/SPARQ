@@ -23,7 +23,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
-from sparq_core.fixedpoint import to_e2, to_e6
+from sparq_core.fixedpoint import E6, to_e2, to_e6
 from sparq_core.models import (
     Model,
     Moment,
@@ -145,10 +145,19 @@ def _levels(value: Any) -> Any:
         if count is None:
             raise ValueError("a level's count is missing")
         try:
-            levels.append((to_e6(price), to_e2(count)))
+            price_e6, count_e2 = to_e6(price), to_e2(count)
         except TypeError as exc:  # a bool or float count
             raise ValueError(str(exc)) from None
+        _check_price(price_e6)
+        if count_e2 <= 0:
+            raise ValueError(f"a level's count must be above zero, not {count!r}")
+        levels.append((price_e6, count_e2))
     return tuple(levels)
+
+
+def _check_price(price_e6: int) -> None:
+    if not 0 < price_e6 < E6:
+        raise ValueError(f"a bid must lie between 0 and 1 dollar, not {price_e6 / E6}")
 
 
 Levels = Annotated[tuple[tuple[int, int], ...], BeforeValidator(_levels)]
@@ -178,6 +187,11 @@ class OrderbookDeltaMsg(WsModel):
     client_order_id: Text = None  # only on one's own orders, which the data key never has
     ts_ms: int | None = None
     ts: Moment = None  # the same moment as an RFC 3339 text (not seconds, as on the trades)
+
+    @model_validator(mode="after")
+    def _a_price_on_the_book(self) -> "OrderbookDeltaMsg":
+        _check_price(self.price_e6)
+        return self
 
 
 Payload = (

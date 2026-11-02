@@ -43,16 +43,20 @@ BOOK_COLUMNS = ["recv_us", "ticker", "kind", "side", "price_e6", "size_e2", "ts_
 
 
 def rebuild_tops(book: pl.DataFrame) -> pl.DataFrame:
-    """Each market's top of book after every book row that moved it, in the rows' order."""
+    """Each market's top of book after every book row that moved it, in the rows' order. The
+    times mix Kalshi's (a snapshot's sending time, a change's time) and the recorder's (a
+    ``RESET``), so a market's times are kept from going back: the rows' order decides."""
     keeper = Keeper()
     rows: list[tuple[Any, ...]] = []
     last: dict[str, Top | None] = {}
+    latest: dict[str, int] = {}  # each market's newest time: its tops never go back in time
 
     def emit(ticker: str, t_ms: int) -> None:
         top = keeper.top(ticker)
         if ticker in last and last[ticker] == top:
             return
         last[ticker] = top
+        t_ms = latest[ticker] = max(t_ms, latest.get(ticker, t_ms))
         if top is None:
             rows.append((ticker, t_ms, False, None, None, None, None))
         else:
@@ -87,8 +91,10 @@ def rebuild_tops(book: pl.DataFrame) -> pl.DataFrame:
 def compare_books(tops: pl.DataFrame, frames: pl.DataFrame, changed: set[str]) -> dict[str, Any]:
     """The moments compared and how many agree, overall and per market."""
     frames = frames.filter(pl.col("ticker").is_in(tops["ticker"].unique().implode()))
-    joined = frames.sort("ts_ms").join_asof(
-        tops.sort("t_ms"),
+    # stable sorts: tops of one millisecond (the changes of one match) keep their order, so the
+    # last of them is the one a frame of that millisecond meets
+    joined = frames.sort("ts_ms", maintain_order=True).join_asof(
+        tops.sort("t_ms", maintain_order=True),
         left_on="ts_ms",
         right_on="t_ms",
         by="ticker",
@@ -141,19 +147,27 @@ def compare_books(tops: pl.DataFrame, frames: pl.DataFrame, changed: set[str]) -
 def compare_trades(
     recorded: pl.DataFrame,
     ingest: pl.DataFrame,
-    first_ms: dict[str, int],
+    spans: pl.DataFrame,
     downtimes: list[tuple[int, int]],
 ) -> dict[str, Any]:
-    """The recorded trades against the ingest's, matched by ``trade_id``."""
-    starts = pl.DataFrame(
-        {"ticker": list(first_ms), "first_ms": list(first_ms.values())},
-        schema={"ticker": pl.String, "first_ms": pl.Int64},
-    )
-    theirs = ingest.join(starts, on="ticker").filter(pl.col("ts_ms") >= pl.col("first_ms"))
-    ours = recorded.unique("trade_id", keep="first").join(starts, on="ticker")
-    ours = ours.filter(pl.col("ts_ms") >= pl.col("first_ms"))
+    """The recorded trades against the ingest's, matched by ``trade_id``, each market's from its
+    first snapshot to its removal (``spans``: ``ticker``, ``first_ms``, ``last_ms``, the last null
+    while it is still recorded)."""
+
+    def inside(trades: pl.DataFrame) -> pl.DataFrame:
+        within = (pl.col("ts_ms") >= pl.col("first_ms")) & (
+            pl.col("last_ms").is_null() | (pl.col("ts_ms") < pl.col("last_ms"))
+        )
+        return trades.join(spans, on="ticker").filter(within)
+
+    theirs = inside(ingest)
+    ours = inside(recorded.unique("trade_id", keep="first"))
     missing = theirs.join(ours.select("trade_id"), on="trade_id", how="anti")
     extra = ours.join(theirs.select("trade_id"), on="trade_id", how="anti")
+    sized = ours.select("trade_id", "count_e2").join(
+        theirs.select("trade_id", theirs_e2="count_e2"), on="trade_id"
+    )
+    wrong_size = sized.filter(pl.col("count_e2") != pl.col("theirs_e2")).height
     in_downtime = pl.lit(False)
     for start, end in downtimes:
         in_downtime = in_downtime | pl.col("ts_ms").is_between(
@@ -168,8 +182,23 @@ def compare_trades(
         "missing": missing.height,
         "missing_in_downtime": lost,
         "extra": extra.height,
-        "agree": missing.height - lost == 0 and extra.height == 0,
+        "wrong_size": wrong_size,
+        "agree": missing.height - lost == 0 and extra.height == 0 and wrong_size == 0,
     }
+
+
+def market_spans(tops: pl.DataFrame, book: pl.DataFrame) -> pl.DataFrame:
+    """Each market's recorded span: from its first known top to the reset of its removal (a
+    market's own reset not followed by a snapshot), or open (null) while it is still recorded."""
+    first = tops.filter(pl.col("known")).group_by("ticker").agg(first_ms=pl.col("t_ms").min())
+    own = book.filter(pl.col("ticker").is_not_null() & pl.col("kind").is_in([RESET, SNAPSHOT]))
+    ends = (
+        own.group_by("ticker", maintain_order=True)
+        .agg(pl.col("kind").last(), pl.col("recv_us").last())
+        .filter(pl.col("kind") == RESET)
+        .select("ticker", last_ms=pl.col("recv_us") // 1000)
+    )
+    return first.join(ends, on="ticker", how="left")
 
 
 def check(out: Path, live: Path, start: datetime, end: datetime) -> dict[str, Any]:
@@ -181,8 +210,7 @@ def check(out: Path, live: Path, start: datetime, end: datetime) -> dict[str, An
     frames = pl.concat([frames_of(p) for p in hour_files(live, "ticker", start, end)])
     frames = frames.filter(pl.col("ts_ms").is_between(start_ms, end_ms, closed="left"))
     books = compare_books(tops, frames, changed)
-    first = tops.filter(pl.col("known")).group_by("ticker").agg(pl.col("t_ms").min())
-    first_ms = dict(zip(first["ticker"].to_list(), first["t_ms"].to_list(), strict=True))
+    spans = market_spans(tops, book)
     recorded = store.read_hours(out, "trade", start, end).collect()
     ingest = pl.read_parquet(hour_files(live, "trade", start, end))
     events = store.read_events(out / store.GAPS)
@@ -194,7 +222,7 @@ def check(out: Path, live: Path, start: datetime, end: datetime) -> dict[str, An
     trades = compare_trades(
         recorded.filter(pl.col("ts_ms").is_between(start_ms, end_ms, closed="left")),
         ingest.filter(pl.col("ts_ms").is_between(start_ms, end_ms, closed="left")),
-        first_ms,
+        spans,
         downtimes,
     )
     return {

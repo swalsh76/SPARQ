@@ -46,9 +46,9 @@ class Book:
     def set_level(self, side: str, price_e6: int, size_e2: int) -> None:
         """Set one level outright (a snapshot's)."""
         levels = self.yes if side == YES else self.no
-        if size_e2:
+        if size_e2 > 0:
             levels[price_e6] = size_e2
-        else:
+        else:  # no size (the models refuse a negative one): no level
             levels.pop(price_e6, None)
         self._rebest(side, price_e6, size_e2 > 0)
 
