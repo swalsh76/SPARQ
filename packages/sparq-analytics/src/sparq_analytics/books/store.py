@@ -1,0 +1,252 @@
+"""S6.2: where the recorder keeps what it hears (PLAN §6.6, B1 and B4).
+
+Everything lives under the recording folder on the analytics node's data drive, never in the
+repository. Times are UTC; ``recv_us`` is the recorder's wall clock as a frame was read, in
+microseconds since the epoch, and decides the hour a row belongs to.
+
+* ``book/<hour>.parquet``: one row a book event, in arrival order. ``kind`` says what it is:
+  ``RESET`` (the books are unknown from here: every market's when ``ticker`` is null, after a
+  start, a lost link or a ``seq`` jump; one market's after an impossible change), ``SNAPSHOT``
+  (the head of a snapshot: the market's book is replaced by the ``LEVEL`` rows that follow it at
+  once, none when it is empty) and ``CHANGE`` (``size_e2`` is then the change, signed). ``side`` is
+  1 for yes and 2 for no; prices are millionths of a dollar, sizes hundredths of a contract.
+  ``clock``, ``ts_ms`` (a change's time) and ``send_ms`` (``sending_ts_ms``) are Kalshi's.
+* ``trade/<hour>.parquet``: one row a trade on the trade channel.
+* ``odd/<hour>.parquet``: a frame that did not fit its model, or of a type not recorded above,
+  kept whole as text, so nothing heard is lost to a parser.
+* ``gaps.jsonl``: the recorder's own log: starts and stops, lost links, ``seq`` jumps, refused
+  resubscriptions, impossible books and failed refreshes, one JSON object a line, each written
+  through to the disk.
+* ``lists/<day>.json`` and ``lists/changes.jsonl``: each day's chosen markets and every market
+  added or removed since.
+
+An hour is written as it goes: every minute the rows so far become a part file under
+``parts/<table>/<hour>/``, so a crash loses at most a minute, and when the hour closes its parts
+are combined into the hour's file. A recorder that starts again finishes what a crash left.
+"""
+
+import json
+import os
+import shutil
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import polars as pl
+
+from sparq_analytics.live.source import hour_name, hour_of
+
+RESET, SNAPSHOT, LEVEL, CHANGE = 0, 1, 2, 3
+SIDE_CODE = {"yes": 1, "no": 2}
+SIDE_NAME = {1: "yes", 2: "no"}
+US_PER_HOUR = 3_600_000_000
+GAPS = "gaps.jsonl"
+
+BOOK_SCHEMA: dict[str, Any] = {
+    "recv_us": pl.Int64,
+    "link": pl.Int16,
+    "sid": pl.Int32,
+    "seq": pl.Int64,
+    "ticker": pl.String,
+    "kind": pl.Int8,
+    "side": pl.Int8,
+    "price_e6": pl.Int32,
+    "size_e2": pl.Int64,
+    "clock": pl.Int64,
+    "ts_ms": pl.Int64,
+    "send_ms": pl.Int64,
+}
+TRADE_SCHEMA: dict[str, Any] = {
+    "recv_us": pl.Int64,
+    "link": pl.Int16,
+    "sid": pl.Int32,
+    "seq": pl.Int64,
+    "trade_id": pl.String,
+    "ticker": pl.String,
+    "yes_price_e6": pl.Int32,
+    "count_e2": pl.Int64,
+    "taker_side": pl.String,
+    "taker_book_side": pl.String,
+    "is_block_trade": pl.Boolean,
+    "ts_ms": pl.Int64,
+    "send_ms": pl.Int64,
+}
+ODD_SCHEMA: dict[str, Any] = {
+    "recv_us": pl.Int64,
+    "link": pl.Int16,
+    "type": pl.String,
+    "error": pl.String,
+    "raw": pl.String,
+}
+TABLES: dict[str, dict[str, Any]] = {"book": BOOK_SCHEMA, "trade": TRADE_SCHEMA, "odd": ODD_SCHEMA}
+PART_ROWS = 1_000_000  # a buffer this long is written at once, whatever the minute
+
+Rows = dict[str, list[tuple[Any, ...]]]
+
+
+def hour_start(recv_us: int) -> datetime:
+    return datetime.fromtimestamp(recv_us // US_PER_HOUR * 3600, tz=UTC)
+
+
+def iso(at_us: int) -> str:
+    return datetime.fromtimestamp(at_us / 1e6, tz=UTC).isoformat()
+
+
+def hour_file(root: Path, table: str, hour: datetime) -> Path:
+    return root / table / f"{hour_name(hour)}.parquet"
+
+
+def parts_dir(root: Path, table: str, hour: datetime) -> Path:
+    return root / "parts" / table / hour_name(hour)
+
+
+def write_part(root: Path, table: str, hour: datetime, rows: list[tuple[Any, ...]]) -> Path:
+    """Write ``rows`` as the hour's next part (under a temporary name, then renamed)."""
+    folder = parts_dir(root, table, hour)
+    folder.mkdir(parents=True, exist_ok=True)
+    taken = [int(p.stem[1:]) for p in folder.glob("p*.parquet")]
+    target = folder / f"p{max(taken, default=-1) + 1:05d}.parquet"
+    staging = target.with_name(target.name + ".tmp")
+    pl.DataFrame(rows, schema=TABLES[table], orient="row").write_parquet(staging)
+    staging.replace(target)
+    return target
+
+
+def write_parts(root: Path, hour: datetime, rows: Rows) -> None:
+    for table, table_rows in rows.items():
+        if table_rows:
+            write_part(root, table, hour, table_rows)
+
+
+def combine(root: Path, table: str, hour: datetime) -> Path | None:
+    """Combine the hour's parts into its file and remove them; None when there are none."""
+    folder = parts_dir(root, table, hour)
+    parts = sorted(folder.glob("p*.parquet")) if folder.exists() else []
+    if not parts:
+        shutil.rmtree(folder, ignore_errors=True)
+        return None
+    target = hour_file(root, table, hour)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = target.with_name(target.name + ".tmp")
+    pl.scan_parquet(parts).sink_parquet(staging)  # streamed: an hour need not fit in memory
+    staging.replace(target)
+    shutil.rmtree(folder)
+    return target
+
+
+def combine_hour(root: Path, hour: datetime) -> None:
+    for table in TABLES:
+        combine(root, table, hour)
+
+
+def recover(root: Path, now_hour: datetime) -> list[str]:
+    """Finish what a stop or a crash left, before recording starts again: the parts of a past
+    hour are combined (or removed, when its file was written but the parts not yet removed), and
+    a file of the current hour goes back to being its first part, so the hour goes on."""
+    done: list[str] = []
+    for table in TABLES:
+        if (root / table).exists():
+            for staging in (root / table).glob("*.tmp"):
+                staging.unlink()
+        parts_root = root / "parts" / table
+        for folder in sorted(parts_root.iterdir()) if parts_root.exists() else []:
+            for staging in folder.glob("*.tmp"):
+                staging.unlink()
+            hour = hour_of(folder.name)
+            if hour_file(root, table, hour).exists():
+                shutil.rmtree(folder)  # combined already; the parts outlived the crash
+                done.append(f"{table} {folder.name}: removed parts already combined")
+            elif hour < now_hour:
+                combine(root, table, hour)
+                done.append(f"{table} {folder.name}: combined after a stop")
+        current = hour_file(root, table, now_hour)
+        if current.exists():
+            folder = parts_dir(root, table, now_hour)
+            folder.mkdir(parents=True, exist_ok=True)
+            current.replace(folder / "p00000.parquet")
+            done.append(f"{table} {hour_name(now_hour)}: reopened")
+    return done
+
+
+class Writer:
+    """Rows buffered by table for the current hour. ``take`` hands over what is buffered (for a
+    part file); a row of a new hour first hands the old hour's rows to ``on_hour``."""
+
+    def __init__(self, on_hour: Callable[[datetime, Rows], None]) -> None:
+        self.hour: datetime | None = None
+        self.rows: Rows = {table: [] for table in TABLES}
+        self._on_hour = on_hour
+        self._key = -1  # the current hour as a count of hours, cheap to compare on every row
+
+    def add(self, table: str, row: tuple[Any, ...]) -> None:
+        key = row[0] // US_PER_HOUR
+        if key != self._key:
+            if self.hour is not None:
+                self._on_hour(self.hour, self.take())
+            self._key, self.hour = key, hour_start(row[0])
+        self.rows[table].append(row)
+
+    def take(self) -> Rows:
+        taken = self.rows
+        self.rows = {table: [] for table in TABLES}
+        return taken
+
+    def size(self) -> int:
+        return sum(len(rows) for rows in self.rows.values())
+
+
+def log_event(root: Path, kind: str, at_us: int, **detail: Any) -> dict[str, Any]:
+    """Append one event to the gap log and write it through to the disk."""
+    event = {"kind": kind, "at": iso(at_us), "at_us": at_us, **detail}
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / GAPS).open("a", encoding="utf-8") as file:
+        file.write(json.dumps(event, default=str) + "\n")
+        file.flush()
+        os.fsync(file.fileno())
+    return event
+
+
+def read_events(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [json.loads(line) for line in lines if line.strip()]
+
+
+def write_list(root: Path, day: str, tickers: list[str], counts: dict[str, Any]) -> None:
+    folder = root / "lists"
+    folder.mkdir(parents=True, exist_ok=True)
+    staging = folder / f"{day}.json.tmp"
+    staging.write_text(json.dumps({"counts": counts, "tickers": tickers}), encoding="utf-8")
+    staging.replace(folder / f"{day}.json")
+
+
+def log_change(root: Path, at_us: int, action: str, tickers: list[str], why: str) -> None:
+    folder = root / "lists"
+    folder.mkdir(parents=True, exist_ok=True)
+    event = {"at": iso(at_us), "action": action, "why": why, "tickers": tickers}
+    with (folder / "changes.jsonl").open("a", encoding="utf-8") as file:
+        file.write(json.dumps(event) + "\n")
+
+
+def hours_recorded(root: Path, table: str = "book") -> list[datetime]:
+    folder = root / table
+    return sorted(hour_of(p.stem) for p in folder.glob("*.parquet")) if folder.exists() else []
+
+
+def read_hours(root: Path, table: str, start: datetime, end: datetime) -> pl.LazyFrame:
+    """The rows of ``table`` in the recorded hours of ``[start, end)``, an hour still in parts read
+    from them; an hour not recorded is simply absent (the gap log says why)."""
+    paths: list[Path] = []
+    hour = start
+    while hour < end:
+        whole = hour_file(root, table, hour)
+        if whole.exists():
+            paths.append(whole)
+        else:
+            paths += sorted(parts_dir(root, table, hour).glob("p*.parquet"))
+        hour += timedelta(hours=1)
+    if not paths:
+        return pl.LazyFrame(schema=TABLES[table])
+    return pl.scan_parquet(paths)
