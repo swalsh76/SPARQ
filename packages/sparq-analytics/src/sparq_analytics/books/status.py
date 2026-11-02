@@ -17,9 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from sparq_analytics.books import store
-from sparq_analytics.live.source import hour_name, hour_of
+from sparq_analytics.live.source import hour_name
 
-WARN_BYTES_A_DAY = 14 * 10**9  # twice the rate measured in the live hour (BUILD-LOG S6.2)
+# twice the rate measured in S6.2's live hour (298 MB for the 18:00 hour, about 7.1 GB a day)
+WARN_BYTES_A_DAY = 14 * 10**9
 PAUSE_BYTES = 500 * 10**9  # B4: the recording pauses for the owner's word past this
 BREAKS = frozenset(
     {"started", "stopped", "crashed", "reconnect", "sequence_gap", "resubscribe_failed"}
@@ -28,16 +29,25 @@ ENDS = ("stopped", "crashed", "resubscribe_failed")  # after these the recorder 
 SILENT_SECONDS = 300  # a part is written every minute: five without one means it has stopped
 
 
+def _span(event: dict[str, Any]) -> tuple[int, int]:
+    """When a break began and ended: a lost link from its last frame to its reconnect."""
+    at = int(event["at_us"])
+    if event["kind"] == "reconnect":
+        lost = event.get("lost_at_us", at - int(event.get("downtime", 0) * 1e6))
+        return int(lost), at
+    return at, at
+
+
 def whole_hours(hours: list[datetime], events: list[dict[str, Any]]) -> list[datetime]:
     """The recorded hours the recorder ran through without a break."""
-    marks = sorted((e["at_us"], e["kind"]) for e in events if e["kind"] in BREAKS)
+    marks = sorted((*_span(e), e["kind"]) for e in events if e["kind"] in BREAKS)
     whole = []
     for hour in hours:
         start_us = int(hour.timestamp() * 1_000_000)
         end_us = start_us + store.US_PER_HOUR
-        before = [kind for at, kind in marks if at < start_us]
+        before = [kind for at, _, kind in marks if at < start_us]
         running = bool(before) and before[-1] not in ENDS
-        broken = any(start_us <= at < end_us for at, _ in marks)
+        broken = any(begin < end_us and end >= start_us for begin, end, _ in marks)
         if running and not broken:
             whole.append(hour)
     return whole
@@ -55,7 +65,9 @@ def status(out: Path, now: datetime | None = None) -> dict[str, Any]:
     by_day: Counter[str] = Counter()
     for table in store.TABLES:
         for path in (out / table).glob("*.parquet") if (out / table).exists() else []:
-            by_day[hour_of(path.stem).date().isoformat()] += path.stat().st_size
+            hour = store.hour_named(path.stem)
+            if hour is not None:  # a stray file is not an hour of the recording
+                by_day[hour.date().isoformat()] += path.stat().st_size
     in_parts = _bytes(list((out / "parts").rglob("*.parquet"))) if (out / "parts").exists() else 0
     total = sum(by_day.values()) + in_parts
     today = now.date().isoformat()

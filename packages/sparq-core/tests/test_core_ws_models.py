@@ -405,7 +405,6 @@ def test_a_book_change_as_the_real_service_sends_it_has_no_unknown_fields() -> N
         [["0.45", "1.001"]],  # more precise than a hundredth of a contract
         [["0.45", True]],  # a count that is no number
         [["0.45", None]],  # a count that is missing
-        [["0.45", "0.00"]],  # a level of nothing
         [["0.45", "-1.00"]],  # a negative level
         [["0.0000", "1.00"]],  # a bid of nothing
         [["1.0000", "1.00"]],  # a bid of a whole dollar
@@ -432,3 +431,9 @@ def test_a_bad_level_is_refused_and_the_frame_kept(side: Any) -> None:
 def test_a_bad_book_change_is_refused_and_the_frame_kept(change: dict[str, Any]) -> None:
     result = parse_frame(frame("orderbook_delta", {"market_ticker": "X", **change}))
     assert result.payload is None and result.error and result.error.startswith("orderbook_delta")
+
+
+def test_a_snapshot_level_of_nothing_is_skipped() -> None:
+    body = {"market_ticker": "X", "yes_dollars_fp": [["0.45", "0.00"], ["0.40", "2.00"]]}
+    snapshot = parse_frame(frame("orderbook_snapshot", body)).payload
+    assert isinstance(snapshot, OrderbookSnapshotMsg) and snapshot.yes == ((400_000, 200),)

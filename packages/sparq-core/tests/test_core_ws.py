@@ -771,4 +771,8 @@ async def test_a_subscription_id_names_its_channel_on_each_link() -> None:
                 break
             await asyncio.sleep(0.02)
         assert (feed.channel_of(7), feed.channel_of(8)) == ("trade", "ticker")
-        assert feed.channel_of(1) is None  # the old link's ids mean nothing now
+        # on the new link an old id means nothing; a gap queued from the lost link still names
+        # its channel there
+        assert feed.channel_of(1, generation=2) is None
+        assert feed.channel_of(1, generation=1) == "trade" and feed.channel_of(1) == "trade"
+        assert feed.channel_of(7, generation=1) is None and feed.channel_of(1, generation=0) is None

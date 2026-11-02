@@ -199,7 +199,7 @@ class Feed:
             raise FeedError("not connected")
         self.snapshots.append((sid, list(market_tickers)))
 
-    def channel_of(self, sid: int) -> str | None:
+    def channel_of(self, sid: int, generation: int | None = None) -> str | None:
         return CHANNELS.get(sid)
 
     def put(self, *events: Any) -> None:
@@ -369,7 +369,8 @@ async def test_an_impossible_change_resets_that_market_and_asks_for_its_snapshot
     assert result["counts"]["impossible"] == 1
     impossible = [e for e in store.read_events(tmp_path / "rec" / store.GAPS)
                   if e["kind"] == "impossible"]  # fmt: skip
-    assert impossible[0]["ticker"] == "A" and impossible[0]["price_e6"] == 400_000
+    # the second change met a book already forgotten: unknown, not impossible
+    assert impossible[0]["first"] == "A" and impossible[0]["changes"] == 1
 
 
 async def test_a_refused_resubscription_stops_the_recording_after_writing(tmp_path: Path) -> None:
@@ -783,3 +784,67 @@ async def test_a_lost_book_message_for_a_market_not_recorded_is_not_asked_for(
     made.handle(data("orderbook_delta", {"market_ticker": "GONE", "side": "maybe"}, seq=2,
                      at_us=T0_US + 20))  # fmt: skip
     assert made.want == set() and [r[4] for r in made.writer.rows["book"]] == ["GONE"]
+
+
+async def test_a_market_leaves_when_it_closes(tmp_path: Path) -> None:
+    feed = Feed()
+    feed.sids = {"orderbook_delta": 1, "trade": 2}
+    made = recorder(tmp_path, feed)
+    made.tickers = {"A", "B"}
+    made.closes = {"A": T0_US - 1}  # closed a moment ago; B has no close known
+    made.handle(lifecycle("N", "created", T0_US, opens=T0 - timedelta(minutes=1)))
+    moved = {"market_ticker": "N", "event_type": "close_date_updated",
+             "close_ts": int(T0.timestamp()) - 5}  # fmt: skip
+    made.handle(data("market_lifecycle_v2", moved, seq=2, at_us=T0_US))
+    await made._apply_changes()
+    assert made.tickers == {"B"}  # A closed; N closed before it could be added
+    assert (1, "delete_markets", ["A"]) in feed.updates
+    assert not any(action == "add_markets" for _, action, _ in feed.updates)
+
+
+def test_close_times_come_from_the_copies(tmp_path: Path) -> None:
+    live = tmp_path / "live"
+    live.mkdir()
+    assert rec.close_times(live, ["A"]) == {}
+    pl.DataFrame({"ticker": ["A", "B", "C"], "close_ms": [5, None, 7]}).write_parquet(
+        live / "markets.parquet"
+    )
+    assert rec.close_times(live, ["A", "B"]) == {"A": 5_000}
+
+
+async def test_a_change_stops_when_a_new_link_arrives_between_batches(tmp_path: Path) -> None:
+    class Relinked(Feed):
+        relinked = False
+
+        async def update_subscription(
+            self, sid: int, action: str, market_tickers: list[str]
+        ) -> list[str]:
+            result = await super().update_subscription(sid, action, market_tickers)
+            if not self.relinked:
+                self.relinked = True
+                self.sids = {"orderbook_delta": 5, "trade": 6}  # the link was lost and restored
+            return result
+
+    feed = Relinked()
+    feed.sids = {"orderbook_delta": 1, "trade": 2}
+    made = recorder(tmp_path, feed, snapshot_batch=1)
+    assert await made._change("add_markets", ["X", "Y"], "opened") is False
+    assert feed.updates == [(1, "add_markets", ["X"])]  # Y never went to a stale id
+    assert await made._change("add_markets", ["X", "Y"], "opened") is True  # it goes on from Y
+    assert feed.updates[1:] == [(5, "add_markets", ["Y"]), (6, "add_markets", ["X"]),
+                                (6, "add_markets", ["Y"])]  # fmt: skip
+    assert made.tickers == {"X", "Y"}
+
+
+async def test_snapshots_stop_when_a_new_link_arrives_between_batches(tmp_path: Path) -> None:
+    class Relinked(Feed):
+        async def request_snapshot(self, sid: int, market_tickers: list[str]) -> None:
+            await super().request_snapshot(sid, market_tickers)
+            self.sids = {"orderbook_delta": 5}
+
+    feed = Relinked()
+    feed.sids = {"orderbook_delta": 1}
+    made = recorder(tmp_path, feed, snapshot_batch=1)
+    made.tickers, made.want_all = {"A", "B"}, True
+    await made._ask_snapshots()
+    assert feed.snapshots == [(1, ["A"])] and made.want == {"B"}

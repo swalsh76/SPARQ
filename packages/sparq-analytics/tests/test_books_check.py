@@ -356,3 +356,41 @@ def test_a_recorder_just_started_is_running_before_its_first_part(tmp_path: Path
     store.log_event(out, "started", int(now.timestamp() * 1e6) - 20_000_000)
     report = statusing.status(out, now)
     assert report["running"] and report["seconds_since_a_write"] == pytest.approx(20)
+
+
+def test_a_lost_link_breaks_every_hour_it_overlaps() -> None:
+    hours = [H, H + timedelta(hours=1)]
+    lost = {"kind": "reconnect", "at_us": H_US + int(1.2 * store.US_PER_HOUR), "downtime": 1_800.0,
+            "lost_at_us": H_US + int(0.9 * store.US_PER_HOUR)}  # fmt: skip
+    assert statusing.whole_hours(hours, [event(-0.5, "started"), lost]) == []
+
+
+def test_a_stray_file_does_not_stop_status(tmp_path: Path) -> None:
+    out, _ = build(tmp_path)
+    (out / "book" / "notes.parquet").write_bytes(b"")
+    assert statusing.status(out)["hours_recorded"] == 1
+
+
+def test_a_market_removed_and_added_again_has_two_stretches() -> None:
+    rows = [
+        b(1_000, "A", SNAPSHOT, send=H_MS + 1_000),
+        b(2_000, "A", RESET),  # removed
+        b(2_000_000, "A", SNAPSHOT, send=H_MS + 2_000_000),  # added again, much later
+    ]
+    spans = checking.market_spans(pl.DataFrame(rows, schema=store.BOOK_SCHEMA, orient="row"))
+    assert spans.rows() == [("A", H_MS + 1_000, H_MS + 2_000), ("A", H_MS + 2_000_000, None)]
+    theirs = pl.DataFrame([trade(1_500, "A", "a1"), trade(1_000_000, "A", "a2"),
+                           trade(2_500_000, "A", "a3")], schema=TRADE_SCHEMA)  # fmt: skip
+    ours = pl.DataFrame([recorded_trade(1_500, "A", "a1"), recorded_trade(2_500_000, "A", "a3")],
+                        schema=store.TRADE_SCHEMA, orient="row")  # fmt: skip
+    result = checking.compare_trades(ours, theirs, spans, [])
+    assert result["agree"] and result["ingest"] == 2  # a2 came while A was not recorded
+
+
+def test_a_lost_link_that_ends_after_the_hours_still_counts(tmp_path: Path) -> None:
+    out, live = build(tmp_path)
+    store.log_event(out, "reconnect", H_US + 3_600_000_000 + 180_000_000, link=3, reason="stalled",
+                    downtime=0.1, lost_at_us=H_US + 19_000_000)  # fmt: skip
+    assert (
+        checking.check(out, live, H, H + timedelta(hours=1))["trades"]["missing_in_downtime"] == 2
+    )

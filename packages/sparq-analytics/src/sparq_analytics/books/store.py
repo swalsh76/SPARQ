@@ -181,7 +181,7 @@ def combine_hour(root: Path, hour: datetime) -> None:
         combine(root, table, hour)
 
 
-def _hour_named(name: str) -> datetime | None:
+def hour_named(name: str) -> datetime | None:
     try:
         return hour_of(name)
     except ValueError:  # not an hour's name: someone else's file, left alone
@@ -209,7 +209,7 @@ def recover(root: Path, now_hour: datetime) -> dict[str, list[str]]:
                 staging.unlink()
         parts_root = root / "parts" / table
         for folder in sorted(parts_root.iterdir()) if parts_root.exists() else []:
-            hour = _hour_named(folder.name)
+            hour = hour_named(folder.name)
             if hour is None:
                 continue
             for staging in folder.glob("*.tmp"):
@@ -237,11 +237,11 @@ def recover(root: Path, now_hour: datetime) -> dict[str, list[str]]:
 
 def last_row_us(root: Path) -> int | None:
     """The receive time of the newest book row kept (in an hour's file or its parts), or None."""
-    files = [p for p in (root / "book").glob("*.parquet") if _hour_named(p.stem)] if (
+    files = [p for p in (root / "book").glob("*.parquet") if hour_named(p.stem)] if (
         root / "book").exists() else []  # fmt: skip
     parts_root = root / "parts" / "book"
     for folder in parts_root.iterdir() if parts_root.exists() else []:
-        if _hour_named(folder.name):
+        if hour_named(folder.name):
             files += [p for p in folder.glob("p*.parquet") if _readable(p)]
     if not files:
         return None
@@ -300,7 +300,7 @@ def log_event(root: Path, kind: str, at_us: int, **detail: Any) -> dict[str, Any
     with (root / GAPS).open("a", encoding="utf-8") as file:
         file.write(json.dumps(event, default=str) + "\n")
         file.flush()
-        os.fsync(file.fileno())
+        _flush_to_drive(file.fileno())
     return event
 
 
@@ -332,12 +332,12 @@ def log_change(root: Path, at_us: int, action: str, tickers: list[str], why: str
     with (folder / "changes.jsonl").open("a", encoding="utf-8") as file:
         file.write(json.dumps(event) + "\n")
         file.flush()
-        os.fsync(file.fileno())
+        _flush_to_drive(file.fileno())
 
 
 def hours_recorded(root: Path, table: str = "book") -> list[datetime]:
     folder = root / table
-    hours = [_hour_named(p.stem) for p in folder.glob("*.parquet")] if folder.exists() else []
+    hours = [hour_named(p.stem) for p in folder.glob("*.parquet")] if folder.exists() else []
     return sorted(h for h in hours if h is not None)
 
 

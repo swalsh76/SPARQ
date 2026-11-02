@@ -307,16 +307,16 @@ async def _extract(
                 present += 1
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
+            still = name == "trade" and _overlaps(unfinished, hour).height > 0
+            if still:  # marked before the copy, so a stop between the two leaves it marked
+                mark.touch()
+                provisional += 1
             count = await _copy(conn, query, (hour, hour + HOUR), schema, target)
             rows[name] += count
             copied += 1
             recopied += again
-            if name == "trade":
-                if _overlaps(unfinished, hour).height:
-                    mark.touch()
-                    provisional += 1
-                else:
-                    mark.unlink(missing_ok=True)
+            if name == "trade" and not still:
+                mark.unlink(missing_ok=True)
             log(f"{name} {hour_name(hour)}: {count:,} rows{' (again)' if again else ''}")
     markets = await _copy(conn, MARKET_SQL, (), MARKET_SCHEMA, folder / "markets.parquet")
     log(f"markets: {markets:,} rows")

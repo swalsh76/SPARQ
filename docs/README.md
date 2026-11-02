@@ -35,4 +35,4 @@ Every study and test SPARQ (and KAPS before it) ran, newest last. "Outcomes read
 | S5.1 | Can the model read a market's rules into fields? | Measurement against bars | None | Every bar cleared, no miss on 11,825 markets | Trust, for templated rules | [model-reading.md](research/model-reading.md) |
 | S5.2 | Does the model add to the price? | Registered bars (N6) | History to 2026-10-10 | Run under way (due 2026-11-03); the model's knowledge cutoff to be probed first | Pending | PLAN §6.5 |
 | S6.1 | What does the book channel carry? | Live measurement, one hour | None | One subscription per channel; `clock` on every message; 5,042 messages a second | Trust | BUILD-LOG S6.1 |
-| S6.2 | Does the recorder rebuild the book? | B5's bar on one hour | None | Being checked | — | BUILD-LOG S6.2 |
+| S6.2 | Does the recorder rebuild the book? | B5's bar on one hour | None | **Passed:** 99.977% of 2,231,804 moments agree over 42,629 changed books; trades match exactly; about 7.1 GB a day | Trust (one hour) | BUILD-LOG S6.2 |

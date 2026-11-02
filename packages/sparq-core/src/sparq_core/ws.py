@@ -171,6 +171,8 @@ class KalshiFeed:
         self._lost: str | None = None
         self._generation = 0
         self._last_seq: dict[int, int] = {}
+        self._lost_generation = 0
+        self._lost_channels: dict[int, str] = {}  # the last lost link's ids, for gaps queued then
         self._last_frame_at = 0.0
         self._stats: Counter[str] = Counter()
         self._by_type: Counter[str] = Counter()
@@ -240,15 +242,22 @@ class KalshiFeed:
         self._subscriptions.append(_Subscription(channel, params, sid))
         return sid
 
-    def channel_of(self, sid: int) -> str | None:
-        """The channel a subscription id belongs to on the current link, or None if unknown.
+    def channel_of(self, sid: int, generation: int | None = None) -> str | None:
+        """The channel a subscription id belongs to, or None if unknown.
 
-        ``sid`` changes with every link, so a sid taken from an event is only meaningful against
-        the feed's present subscriptions (a gap on a lost link is named by its channel at once).
+        ``sid`` changes with every link: it is read against the link ``generation`` names (an
+        event's own), or the current link when none is given; an id the current link does not
+        know is looked up on the link lost just before, so a gap queued before the loss is still
+        named by its channel.
         """
-        for sub in self._subscriptions:
-            if sub.sid == sid:
-                return sub.channel
+        if generation is None or generation == self._generation:
+            for sub in self._subscriptions:
+                if sub.sid == sid:
+                    return sub.channel
+            if generation is not None:
+                return None
+        if generation is None or generation == self._lost_generation:
+            return self._lost_channels.get(sid)
         return None
 
     def sid_for(self, channel: str) -> int | None:
@@ -463,6 +472,10 @@ class KalshiFeed:
                 self._ready.clear()
                 self._conn = None
                 self._fail_pending("connection closed")
+                self._lost_generation = self._generation
+                self._lost_channels = {
+                    sub.sid: sub.channel for sub in self._subscriptions if sub.sid is not None
+                }
                 for sub in self._subscriptions:
                     sub.sid = None  # the lost link's ids mean nothing; the restore sets new ones
                 lost_at = self._monotonic()

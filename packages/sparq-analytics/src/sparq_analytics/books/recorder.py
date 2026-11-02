@@ -21,7 +21,9 @@ each day, once the recorder has refreshed the copies itself (``live extract`` in
 bounded in time; when it fails, yesterday's list stays and the failure is logged), and at once
 when the copies were already stale at the start. A market that opens during the day joins from
 the market-lifecycle channel, in batches each minute, and stays through the day's choice until it
-has been open a day (B2 reads a day of quotes); a market leaves when it is determined. Kalshi sends
+has been open a day (B2 reads a day of quotes); a market leaves when it closes (its close time from
+the copies' market list or a lifecycle message: the ingest's ticker shows a closed book emptied,
+and the book channel sends nothing for it) or is determined. Kalshi sends
 the snapshot of every market added to a subscription by itself (measured 2026-11-02: 27,755
 added, each with its snapshot within about 2 seconds), so none is asked for.
 
@@ -42,6 +44,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
+import polars as pl
 from sparq_core.markets import COMBO_PREFIX
 from sparq_core.ws import Data, FeedError, FeedEvent, Reconnected, ResubscribeFailed, SequenceGap
 from sparq_core.ws_models import (
@@ -79,7 +82,7 @@ class Feed(Subscriber, Protocol):
 
     async def request_snapshot(self, sid: int, market_tickers: list[str]) -> None: ...
 
-    def channel_of(self, sid: int) -> str | None: ...
+    def channel_of(self, sid: int, generation: int | None = None) -> str | None: ...
 
     def events(self) -> Any: ...
 
@@ -138,6 +141,17 @@ def _us(moment: datetime) -> int:
     return int(moment.timestamp() * 1_000_000)
 
 
+def close_times(live: Path, tickers: list[str]) -> dict[str, int]:
+    """When each market closes, from the copies' market list (microseconds; none when absent)."""
+    path = live / "markets.parquet"
+    if not path.exists():
+        return {}
+    markets = pl.read_parquet(path, columns=["ticker", "close_ms"]).filter(
+        pl.col("ticker").is_in(tickers) & pl.col("close_ms").is_not_null()
+    )
+    return {t: ms * 1000 for t, ms in markets.iter_rows()}
+
+
 class Recorder:
     def __init__(
         self,
@@ -164,6 +178,8 @@ class Recorder:
         self.last_recv_us = 0  # the newest frame's time: the time of a row an event stands for
         self.link = 0  # the link the newest frame came on
         self.awaiting: dict[str, int] = {}  # snapshots asked for and not yet come, since when
+        self.closes: dict[str, int] = {}  # when each market closes: it leaves then (B2)
+        self.impossible: list[str] = []  # markets whose book was impossible since the last log
         self.choosing = asyncio.Lock()  # one choice (and one refresh of the copies) at a time
         self.want_all = False
         self.want: set[str] = set()
@@ -188,6 +204,7 @@ class Recorder:
         tickers, counts = await asyncio.to_thread(self.chooser, self.settings.live)
         if not tickers:
             raise LiveSourceError(f"no market qualifies at {counts['at']}")
+        self.closes = await asyncio.to_thread(close_times, self.settings.live, tickers)
         store.write_list(out, self._day(started), tickers, counts)
         store.log_event(out, "started", started, markets=len(tickers),
                         recovered=recovered["done"])  # fmt: skip
@@ -333,7 +350,7 @@ class Recorder:
                 downtime=event.downtime, lost_at_us=row_at,
             )  # fmt: skip
         elif isinstance(event, SequenceGap):
-            channel = self.feed.channel_of(event.sid)
+            channel = self.feed.channel_of(event.sid, event.generation)
             store.log_event(
                 out, "sequence_gap", at, link=event.generation, channel=channel,
                 expected=event.expected, got=event.got,
@@ -366,8 +383,7 @@ class Recorder:
             if self.keeper.apply(ticker, message.side, message.price_e6, message.delta_e2) is False:
                 self._book_row(recv_us, link, None, ticker, None, RESET)
                 self.counts["impossible"] += 1
-                store.log_event(self.settings.out, "impossible", recv_us, ticker=ticker,
-                                side=message.side, price_e6=message.price_e6)  # fmt: skip
+                self.impossible.append(ticker)
                 self.want.add(ticker)
         elif isinstance(message, TradeMsg):
             self.counts["trades"] += 1
@@ -430,6 +446,8 @@ class Recorder:
         ticker = message.market_ticker
         if not ticker or ticker.startswith(COMBO_PREFIX):
             return
+        if message.close_ts is not None:  # on creation, and whenever the close moves
+            self.closes[ticker] = _us(message.close_ts)
         if message.event_type == "created":
             opens = recv_us if message.open_ts is None else _us(message.open_ts)
             if opens <= recv_us:
@@ -463,6 +481,10 @@ class Recorder:
         if sid is None:
             return  # a new link not yet confirmed: Kalshi sends the snapshots of a restore itself
         now = self.now_us()
+        if self.impossible:  # logged together, once a turn: a burst never blocks the feed
+            seen, self.impossible = self.impossible, []
+            store.log_event(self.settings.out, "impossible", now, changes=len(seen),
+                            markets=len(set(seen)), first=seen[0])  # fmt: skip
         limit = int(self.settings.resnapshot_seconds * 1e6)
         overdue = sorted(t for t, at in self.awaiting.items() if now - at >= limit)
         if overdue:  # asked for and never come (Kalshi refused or dropped it): ask again
@@ -482,6 +504,9 @@ class Recorder:
         batch = self.settings.snapshot_batch
         for start in range(0, len(wanted), batch):
             chunk = wanted[start : start + batch]
+            if self.feed.sid_for(ORDERBOOK) != sid:  # a new link since: asked on the next turn
+                self.want |= set(wanted[start:])
+                return
             try:
                 await self.feed.request_snapshot(sid, chunk)
             except FeedError:
@@ -498,13 +523,14 @@ class Recorder:
             if opens <= now:
                 self.to_add.add(ticker)
                 del self.opening[ticker]
-        adds = sorted(self.to_add - self.tickers)
+        self.to_remove.update(t for t in self.tickers if self.closes.get(t, now + 1) <= now)
+        adds = sorted(t for t in self.to_add - self.tickers if self.closes.get(t, now + 1) > now)
         removes = sorted(self.to_remove & self.tickers)
         if adds and await self._change("add_markets", adds, "opened"):
             self.to_add -= set(adds)
             self.added_us.update(dict.fromkeys(adds, now))
         if removes:
-            await self._change("delete_markets", removes, "determined")
+            await self._change("delete_markets", removes, "closed or determined")
         self.to_add -= self.tickers
 
     async def _change(self, action: str, tickers: list[str], why: str) -> bool:
@@ -521,6 +547,8 @@ class Recorder:
             todo = [t for t in tickers if t not in applied]
             try:
                 for start in range(0, len(todo), batch):
+                    if self.feed.sid_for(channel) != sid:  # a new link since: go on next time
+                        return False
                     chunk = todo[start : start + batch]
                     refused |= await self._update(sid, action, chunk, applied)
             except FeedError:
@@ -600,7 +628,8 @@ class Recorder:
             return
         young_us = int(self.settings.young.total_seconds() * 1e6)
         young = {t for t, at in self.added_us.items() if now - at < young_us and t in self.tickers}
-        chosen = set(tickers) | young
+        self.closes |= await asyncio.to_thread(close_times, self.settings.live, tickers)
+        chosen = {t for t in set(tickers) | young if self.closes.get(t, now + 1) > now}
         applied = False
         for attempt in range(self.settings.retries + 1):  # a link that is down is waited for
             if attempt:

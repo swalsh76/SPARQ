@@ -34,6 +34,7 @@ from sparq_analytics.survey.lag import frames_of
 BAR_SHARE = 0.99
 BAR_MARKETS = 300
 DOWNTIME_MARGIN_MS = 5_000  # a trade this close to a lost link's downtime is counted with it
+RESUME_MS = 600_000  # a market's own reset followed by its snapshot within this is no removal
 TOP_SCHEMA = {
     "ticker": pl.String,
     "t_ms": pl.Int64,
@@ -59,8 +60,7 @@ class Tops:
         self.keeper = Keeper()
         self.last: dict[str, Top | None] = {}
         self.latest: dict[str, int] = {}  # each market's newest time
-        self.first_ms: dict[str, int] = {}
-        self.own_last: dict[str, tuple[int, int]] = {}  # a market's last reset or snapshot, when
+        self.stretches: dict[str, list[list[int | None]]] = {}  # each market's recorded stretches
         self.changed: set[str] = set()
 
     def standing(self) -> pl.DataFrame:
@@ -84,8 +84,13 @@ class Tops:
                 return
             self.last[ticker] = top
             t_ms = self.latest[ticker] = max(t_ms, self.latest.get(ticker, t_ms))
-            if top is not None:
-                self.first_ms.setdefault(ticker, t_ms)
+            stretches = self.stretches.setdefault(ticker, [])
+            if top is not None and (not stretches or stretches[-1][1] is not None):
+                ended = stretches[-1][1] if stretches else None
+                if ended is not None and t_ms - ended <= RESUME_MS:
+                    stretches[-1][1] = None  # an impossible change or a lost message: it goes on
+                else:
+                    stretches.append([t_ms, None])  # recorded from its first known top
             rows.append(self._row(ticker, t_ms, top))
 
         filling: tuple[str, int] | None = None  # the snapshot whose levels are being read
@@ -99,13 +104,16 @@ class Tops:
             if kind == RESET:
                 gone = list(keeper.books) if ticker is None else [ticker]
                 keeper.forget(ticker)
-                if ticker is not None:
-                    self.own_last[ticker] = (RESET, recv_ms)
+                if (
+                    ticker is not None
+                ):  # its own reset: a stretch ends (a snapshot may begin another)
+                    open_ = self.stretches.get(ticker)
+                    if open_ and open_[-1][1] is None:
+                        open_[-1][1] = recv_ms
                 for market in gone:
                     emit(market, recv_ms)
             elif kind == SNAPSHOT:
                 keeper.replace(ticker, (), ())
-                self.own_last[ticker] = (SNAPSHOT, recv_ms)
                 filling = (ticker, send_ms if send_ms is not None else recv_ms)
             elif kind == LEVEL:
                 keeper.books[ticker].set_level(SIDE_NAME[side], price, size)
@@ -118,13 +126,10 @@ class Tops:
         return pl.DataFrame(rows, schema=TOP_SCHEMA, orient="row")
 
     def spans(self) -> pl.DataFrame:
-        """Each market's recorded span: from its first known top to the reset of its removal (a
-        market's own reset not followed by a snapshot), or open (null) while it is recorded."""
-        rows = [
-            (t, first, end if kind == RESET else None)
-            for t, first in self.first_ms.items()
-            for kind, end in [self.own_last.get(t, (SNAPSHOT, 0))]
-        ]
+        """Each market's recorded stretches: from a known top to its own reset not followed by
+        its snapshot within ``RESUME_MS`` (its removal), the last open (null) while it is
+        recorded; a market removed and added again has a stretch for each time."""
+        rows = [(t, first, end) for t, spans in self.stretches.items() for first, end in spans]
         return pl.DataFrame(
             rows, schema={"ticker": pl.String, "first_ms": pl.Int64, "last_ms": pl.Int64},
             orient="row",
@@ -242,8 +247,8 @@ def compare_trades(
         )
         return trades.join(spans, on="ticker").filter(within)
 
-    theirs = inside(ingest)
-    ours = inside(recorded.unique("trade_id", keep="first"))
+    theirs = inside(ingest).unique("trade_id", keep="first")
+    ours = inside(recorded.unique("trade_id", keep="first")).unique("trade_id", keep="first")
     missing = theirs.join(ours.select("trade_id"), on="trade_id", how="anti")
     extra = ours.join(theirs.select("trade_id"), on="trade_id", how="anti")
     sized = ours.select("trade_id", "count_e2").join(
@@ -299,7 +304,9 @@ def check(out: Path, live: Path, start: datetime, end: datetime) -> dict[str, An
     downtimes = [  # from the last frame before the loss (or the downtime the feed measured)
         (e.get("lost_at_us", e["at_us"] - int(e["downtime"] * 1e6)) // 1000, e["at_us"] // 1000)
         for e in events
-        if e["kind"] == "reconnect" and start_ms <= e["at_us"] // 1000 < end_ms + 60_000
+        if e["kind"] == "reconnect"  # any lost link that overlaps the hours checked
+        and e.get("lost_at_us", e["at_us"] - int(e["downtime"] * 1e6)) // 1000 < end_ms
+        and e["at_us"] // 1000 >= start_ms
     ]
     trades = compare_trades(
         recorded.filter(pl.col("ts_ms").is_between(start_ms, end_ms, closed="left")),

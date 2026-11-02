@@ -162,3 +162,23 @@ def test_one_extract_at_a_time(tmp_path: Path) -> None:
                     pass
 
     asyncio.run(two())
+
+
+def test_a_provisional_hour_is_marked_before_its_copy(tmp_path: Path) -> None:
+    conn = FakeCopier()
+    start_ms = int(T0.timestamp() * 1000)
+    conn.trade_gaps = pl.DataFrame(
+        {"kind": ["all"], "status": ["open"], "start_ms": [start_ms], "end_ms": [None]},
+        schema={"kind": pl.String, "status": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64},
+    )
+    seen: list[bool] = []
+    original = conn.copy_from_query
+
+    async def watching(query: str, *args: Any, **kw: Any) -> str:
+        if "FROM trade " in query:
+            seen.append((tmp_path / "trade" / "2026-10-25T00.provisional").exists())
+        return await original(query, *args, **kw)
+
+    conn.copy_from_query = watching  # type: ignore[method-assign]
+    asyncio.run(extract(conn, tmp_path, T0, T0 + timedelta(hours=1), now=T0 + timedelta(hours=2)))
+    assert seen == [True]

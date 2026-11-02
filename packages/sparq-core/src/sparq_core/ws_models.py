@@ -150,9 +150,10 @@ def _levels(value: Any) -> Any:
         except TypeError as exc:  # a bool or float count
             raise ValueError(str(exc)) from None
         _check_price(price_e6)
-        if count_e2 <= 0:
-            raise ValueError(f"a level's count must be above zero, not {count!r}")
-        levels.append((price_e6, count_e2))
+        if count_e2 < 0:
+            raise ValueError(f"a level's count cannot be negative, not {count!r}")
+        if count_e2:  # a level of nothing is no level
+            levels.append((price_e6, count_e2))
     return tuple(levels)
 
 
