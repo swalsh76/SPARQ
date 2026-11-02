@@ -295,6 +295,7 @@ async def test_a_recording_keeps_every_book_event_trade_and_odd_frame(tmp_path: 
         trade,
         delta("A", T0_US + 40, "0.4100001", "1.00", seq=3),  # does not fit: kept as odd
         data("multivariate_lookup", {"x": 1}, seq=1, at_us=T0_US + 50),
+        data("event_lifecycle", {"event_ticker": "E"}, seq=2, at_us=T0_US + 60),  # not kept
     )  # fmt: skip
     assert [c for c, _ in feed.subscribed] == ["orderbook_delta", "trade", "market_lifecycle_v2"]
     assert feed.subscribed[0][1] == ["A", "B"] and feed.subscribed[2][1] == []
@@ -458,7 +459,7 @@ async def test_markets_that_open_join_and_those_determined_leave(tmp_path: Path)
         (1, "add_markets", ["N"]), (2, "add_markets", ["N"]),
         (1, "delete_markets", ["A"]), (2, "delete_markets", ["A"]),
     ]  # fmt: skip
-    assert made.tickers == {"B", "N"} and made.added_us == {"N": T0_US} and "N" in made.want
+    assert made.tickers == {"B", "N"} and made.added_us == {"N": T0_US} and not made.want
     made.now_us = Clock(T0_US + 6 * 60 * 1_000_000)  # F has opened
     await made._apply_changes()
     assert feed.updates[-1] == (2, "add_markets", ["F"]) and "F" in made.tickers
@@ -505,7 +506,7 @@ async def test_the_days_choice_refreshes_and_changes_the_list(tmp_path: Path) ->
     await made.rechoose("the day's choice")
     assert made.tickers == {"B", "C", "N"}  # A and OLD out, C in, N kept while young
     assert (1, "delete_markets", ["A", "OLD"]) in feed.updates
-    assert (1, "add_markets", ["C"]) in feed.updates and "C" in made.want
+    assert (1, "add_markets", ["C"]) in feed.updates and not made.want
     listed = json.loads((tmp_path / "rec" / "lists" / "2026-11-02.json").read_text())
     assert listed["tickers"] == ["B", "C", "N"] and listed["counts"]["why"] == "the day's choice"
     assert made.added_us == {"N": T0_US - 3_600_000_000}

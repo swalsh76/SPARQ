@@ -21,7 +21,9 @@ each day, once the recorder has refreshed the copies itself (``live extract`` in
 bounded in time; when it fails, yesterday's list stays and the failure is logged), and at once
 when the copies were already stale at the start. A market that opens during the day joins from
 the market-lifecycle channel, in batches each minute, and stays through the day's choice until it
-has been open a day (B2 reads a day of quotes); a market leaves when it is determined.
+has been open a day (B2 reads a day of quotes); a market leaves when it is determined. Kalshi sends
+the snapshot of every market added to a subscription by itself (measured 2026-11-02: 27,755
+added, each with its snapshot within about 2 seconds), so none is asked for.
 
 Every wait is bounded and nothing prompts. A refused resubscription after a lost link stops the
 recorder (its daemon, S6.3, starts it again); everything heard until then is written first.
@@ -47,6 +49,7 @@ from sparq_core.ws_models import (
     ORDERBOOK,
     SNAPSHOT,
     TRADE,
+    EventLifecycleMsg,
     MarketLifecycleMsg,
     OrderbookDeltaMsg,
     OrderbookSnapshotMsg,
@@ -354,6 +357,8 @@ class Recorder:
         elif isinstance(message, MarketLifecycleMsg):
             self.counts["lifecycle"] += 1
             self._lifecycle(message, recv_us)
+        elif isinstance(message, EventLifecycleMsg):
+            self.counts["lifecycle"] += 1  # a new event: its markets follow as their own messages
         else:
             self.counts["odd"] += 1
             self.writer.add("odd", (recv_us, link, frame.type, frame.error,
@@ -455,7 +460,6 @@ class Recorder:
         if adds and await self._change("add_markets", adds, "opened"):
             self.to_add -= set(adds)
             self.added_us.update(dict.fromkeys(adds, now))
-            self.want.update(adds)  # their first book, in case adding sends none
         if removes:
             await self._change("delete_markets", removes, "determined")
         self.to_add -= self.tickers
@@ -525,10 +529,10 @@ class Recorder:
         young_us = int(self.settings.young.total_seconds() * 1e6)
         young = {t for t, at in self.added_us.items() if now - at < young_us and t in self.tickers}
         chosen = set(tickers) | young
-        await self._change("delete_markets", sorted(self.tickers - chosen), "the day's choice")
+        await self._change("delete_markets", sorted(self.tickers - chosen), why)
         adds = sorted(chosen - self.tickers)
-        if adds and await self._change("add_markets", adds, "the day's choice"):
-            self.want.update(adds)
+        if adds:
+            await self._change("add_markets", adds, why)
         self.added_us = {t: at for t, at in self.added_us.items() if t in young}
         store.write_list(out, self._day(self.now_us()), sorted(self.tickers), counts | {"why": why})
         store.log_event(out, "chosen", self.now_us(), why=why, markets=len(self.tickers),
