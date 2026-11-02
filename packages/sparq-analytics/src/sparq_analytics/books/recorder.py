@@ -47,6 +47,7 @@ from sparq_core.ws import Data, FeedError, FeedEvent, Reconnected, ResubscribeFa
 from sparq_core.ws_models import (
     MARKET_LIFECYCLE,
     ORDERBOOK,
+    SNAPSHOT,
     TRADE,
     EventLifecycleMsg,
     MarketLifecycleMsg,
@@ -58,10 +59,12 @@ from sparq_core.ws_models import (
 from sparq_analytics.books import store
 from sparq_analytics.books.keeper import Keeper
 from sparq_analytics.books.probe import Subscriber, choose, subscribe_all
+from sparq_analytics.books.status import ENDS
 from sparq_analytics.books.store import CHANGE, LEVEL, RESET, SIDE_CODE
 from sparq_analytics.live.source import LiveSourceError, hour_name, last_hour_end
 
 REMOVED_WHEN = frozenset({"determined", "settled"})
+BOOK_TYPES = frozenset({SNAPSHOT, ORDERBOOK})
 CHANGE_NAME = {"add_markets": "add", "delete_markets": "remove"}
 
 
@@ -159,6 +162,9 @@ class Recorder:
         self.to_remove: set[str] = set()
         self.applied: dict[tuple[str, str], set[str]] = {}  # a change's progress, per channel
         self.last_recv_us = 0  # the newest frame's time: the time of a row an event stands for
+        self.link = 0  # the link the newest frame came on
+        self.awaiting: dict[str, int] = {}  # snapshots asked for and not yet come, since when
+        self.choosing = asyncio.Lock()  # one choice (and one refresh of the copies) at a time
         self.want_all = False
         self.want: set[str] = set()
         self.asked_us: dict[str, int] = {}
@@ -171,12 +177,20 @@ class Recorder:
         """Record until ``stop`` is set or ``seconds`` have passed; returns what was counted."""
         out = self.settings.out
         started = self.now_us()
+        last_row = await asyncio.to_thread(store.last_row_us, out)  # before recovery moves it
         recovered = await asyncio.to_thread(store.recover, out, store.hour_start(started))
+        events = store.read_events(out / store.GAPS)
+        ends = [e["kind"] for e in events if e["kind"] == "started" or e["kind"] in ENDS]
+        if ends and ends[-1] == "started":  # the last run never logged its end: it crashed
+            store.log_event(out, "crashed", last_row or started, found_at=store.iso(started))
+        for part in recovered["lost"]:
+            store.log_event(out, "lost_part", started, part=part)
         tickers, counts = await asyncio.to_thread(self.chooser, self.settings.live)
         if not tickers:
             raise LiveSourceError(f"no market qualifies at {counts['at']}")
         store.write_list(out, self._day(started), tickers, counts)
-        store.log_event(out, "started", started, markets=len(tickers), recovered=recovered)
+        store.log_event(out, "started", started, markets=len(tickers),
+                        recovered=recovered["done"])  # fmt: skip
         self._book_row(started, 0, None, None, None, RESET)  # nothing is known before this
         consumer = asyncio.create_task(self._consume())
         disk = asyncio.create_task(self._disk())
@@ -185,10 +199,19 @@ class Recorder:
         try:
             for channel in (ORDERBOOK, TRADE):
                 subscriptions.append(await subscribe_all(self.feed, channel, tickers))
-            skipped = set(subscriptions[0]["skipped"])
-            self.tickers = set(tickers) - skipped
-            if skipped:
-                store.log_change(out, self.now_us(), "remove", sorted(skipped), "refused")
+            # a market is recorded only where both channels took it
+            left = {t for s in subscriptions for t in (*s["skipped"], *s["left_out"])}
+            self.tickers = set(tickers) - left
+            if left:
+                store.log_change(out, self.now_us(), "remove", sorted(left), "refused")
+            # a market the book channel took but the trade channel did not leaves the book too
+            book_left = {*subscriptions[0]["skipped"], *subscriptions[0]["left_out"]}
+            await self._leave_book(sorted(left - book_left))
+            for result in subscriptions:
+                if result["full"]:
+                    store.log_event(out, "subscription_full", self.now_us(),
+                                    channel=result["channel"],
+                                    left_out=len(result["left_out"]))  # fmt: skip
             await self.feed.subscribe(MARKET_LIFECYCLE)
             tasks += [
                 asyncio.create_task(self._every(self.settings.flush_seconds, self._flush)),
@@ -307,7 +330,7 @@ class Recorder:
             self._forget_all(row_at, event.generation)
             store.log_event(
                 out, "reconnect", at, link=event.generation, reason=event.reason,
-                downtime=event.downtime,
+                downtime=event.downtime, lost_at_us=row_at,
             )  # fmt: skip
         elif isinstance(event, SequenceGap):
             channel = self.feed.channel_of(event.sid)
@@ -325,8 +348,10 @@ class Recorder:
     def _data(self, event: Data) -> None:
         frame, recv_us, link = event.frame, event.received_ns // 1000, event.generation
         self.last_recv_us = max(self.last_recv_us, recv_us)
+        self.link = link
         message = frame.payload
         if isinstance(message, OrderbookSnapshotMsg):
+            self.awaiting.pop(message.market_ticker, None)
             self.keeper.replace(message.market_ticker, message.yes, message.no)
             self._book_row(recv_us, link, frame, message.market_ticker, None, store.SNAPSHOT,
                            clock=message.clock)  # fmt: skip
@@ -361,6 +386,18 @@ class Recorder:
             self.counts["odd"] += 1
             self.writer.add("odd", (recv_us, link, frame.type, frame.error,
                                     json.dumps(frame.raw, separators=(",", ":"))))  # fmt: skip
+            if frame.type in BOOK_TYPES:  # a book message lost to the parser: that book is unknown
+                body = frame.raw.get("msg")
+                lost = body.get("market_ticker") if isinstance(body, dict) else None
+                if isinstance(lost, str):
+                    self.keeper.forget(lost)
+                    self._book_row(recv_us, link, None, lost, None, RESET)
+                    if lost in self.tickers:  # asked again only while it is recorded
+                        self.want.add(lost)
+                else:
+                    self._forget_all(recv_us, link)
+                    self.want_all = True
+                self.counts["book_unparsed"] += 1
         if self.writer.size() >= store.PART_ROWS:
             self._flush()
 
@@ -426,12 +463,20 @@ class Recorder:
         if sid is None:
             return  # a new link not yet confirmed: Kalshi sends the snapshots of a restore itself
         now = self.now_us()
+        limit = int(self.settings.resnapshot_seconds * 1e6)
+        overdue = sorted(t for t, at in self.awaiting.items() if now - at >= limit)
+        if overdue:  # asked for and never come (Kalshi refused or dropped it): ask again
+            for ticker in overdue:
+                del self.awaiting[ticker]
+            self.want.update(t for t in overdue if t in self.tickers)
+            self.counts["snapshots_overdue"] += len(overdue)
+            store.log_event(self.settings.out, "snapshots_overdue", now, markets=len(overdue),
+                            first=overdue[0])  # fmt: skip
         if self.want_all:
             wanted, self.want_all = sorted(self.tickers), False
             self.want.clear()
             self.counts["snapshot_rounds"] += 1
         else:
-            limit = int(self.settings.resnapshot_seconds * 1e6)
             wanted = sorted(t for t in self.want if now - self.asked_us.get(t, -limit) >= limit)
             self.want -= set(wanted)
         batch = self.settings.snapshot_batch
@@ -443,7 +488,7 @@ class Recorder:
                 self.want |= set(wanted[start:])  # not connected: asked again on the next turn
                 return
             for ticker in chunk:
-                self.asked_us[ticker] = now
+                self.asked_us[ticker] = self.awaiting[ticker] = now
             self.counts["snapshots_asked"] += len(chunk)
 
     async def _apply_changes(self) -> None:
@@ -493,13 +538,28 @@ class Recorder:
             self.to_remove -= set(done)
             for ticker in done:  # its book is unknown from here, in the files as in memory
                 self.keeper.forget(ticker)
-                self._book_row(max(self.last_recv_us, at), 0, None, ticker, None, RESET)
+                self.awaiting.pop(ticker, None)
+                self._book_row(max(self.last_recv_us, at), self.link, None, ticker, None, RESET)
         if done:
             store.log_change(self.settings.out, at, CHANGE_NAME[action], done, why)
         if refused:
             store.log_event(self.settings.out, "change_refused", at, action=action,
                             markets=len(refused), first=min(refused))  # fmt: skip
         return True
+
+    async def _leave_book(self, tickers: list[str]) -> None:
+        sid = self.feed.sid_for(ORDERBOOK)
+        if not tickers or sid is None:
+            return
+        try:
+            for start in range(0, len(tickers), self.settings.snapshot_batch):
+                chunk = tickers[start : start + self.settings.snapshot_batch]
+                await self.feed.update_subscription(sid, "delete_markets", chunk)
+        except FeedError as error:  # the next day's choice tries again
+            store.log_event(
+                self.settings.out, "change_refused", self.now_us(), action="delete_markets",
+                markets=len(tickers), error=str(error),
+            )  # fmt: skip
 
     async def _update(self, sid: int, action: str, chunk: list[str], applied: set[str]) -> set[str]:
         """Change one subscription by ``chunk``, adding what it took to ``applied``; returns the
@@ -521,15 +581,20 @@ class Recorder:
 
     async def rechoose(self, why: str) -> None:
         """Refresh the copies, choose B2's markets afresh and change the subscriptions to them.
-        When the refresh or the choice fails the list stays as it is, and the failure is logged."""
+        When the refresh or the choice fails the list stays as it is, and the failure is logged.
+        One choice runs at a time."""
+        async with self.choosing:
+            await self._rechoose(why)
+
+    async def _rechoose(self, why: str) -> None:
         out, now = self.settings.out, self.now_us()
         since = datetime.fromtimestamp(now / 1e6, tz=UTC) - self.settings.lookback
         failure = await self.refresh(since.replace(minute=0, second=0, microsecond=0))
         if failure is None:
             try:
                 tickers, counts = await asyncio.to_thread(self.chooser, self.settings.live)
-            except (LiveSourceError, OSError) as error:
-                failure = f"the choice failed: {error}"
+            except Exception as error:  # noqa: BLE001 (a bad copy must not stop the recording)
+                failure = f"the choice failed: {type(error).__name__}: {error}"
         if failure is not None:
             store.log_event(out, "refresh_failed", self.now_us(), why=why, error=failure)
             return

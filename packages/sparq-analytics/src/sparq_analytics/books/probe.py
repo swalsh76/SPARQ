@@ -177,6 +177,7 @@ async def subscribe_all(
         "markets": len(tickers),
         "subscribed_markets": done - len(skipped),
         "skipped": skipped,
+        "left_out": tickers[done:],  # never subscribed: the subscription was full first
         "full": full,
         "sids": sorted({a["sid"] for a in attempts if "sid" in a}),
         "accepted_batches": len(attempts) - len(refused),

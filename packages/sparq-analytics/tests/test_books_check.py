@@ -10,6 +10,7 @@ book shows 41); ``B`` empty at 3,000; ``Z`` (not recorded) at 3,000.
 """
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -188,7 +189,7 @@ def test_a_removed_market_is_compared_only_while_it_was_recorded() -> None:
         b(4_000, "R", RESET),  # removed: no snapshot follows
     ]
     book = pl.DataFrame(rows, schema=store.BOOK_SCHEMA, orient="row")
-    spans = checking.market_spans(checking.rebuild_tops(book), book).sort("ticker")
+    spans = checking.market_spans(book).sort("ticker")
     assert spans.rows() == [("A", H_MS + 1_000, None), ("R", H_MS + 1_000, H_MS + 4_000)]
     theirs = pl.DataFrame([trade(3_500, "R", "r1"), trade(5_000, "R", "r2")], schema=TRADE_SCHEMA)
     ours = pl.DataFrame([recorded_trade(3_500, "R", "r1")], schema=store.TRADE_SCHEMA, orient="row")
@@ -233,6 +234,8 @@ def test_the_status_of_a_recording(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     store.write_part(out, "book", H + timedelta(hours=1), BOOK)  # an hour still in parts
     store.write_list(out, "2026-11-02", ["A"], {})
     now = datetime(2026, 11, 3, 1, tzinfo=UTC)
+    for path in out.rglob("*.parquet"):  # written a minute before now
+        os.utime(path, (now.timestamp() - 60, now.timestamp() - 60))
     report = statusing.status(out, now)
     assert report["hours_recorded"] == 1 and report["hours_whole"] == 0  # the reconnect broke it
     assert report["running"] and report["list"] == {"day": "2026-11-02", "file": "2026-11-02.json"}
@@ -307,3 +310,49 @@ def test_record_on_the_command_line(
     assert "add --production" in capsys.readouterr().err
     assert cli.main([*argv, "--minutes", "0", "--production"]) == 1
     assert "above zero" in capsys.readouterr().err
+
+
+def test_a_crash_breaks_its_hour_and_a_silent_recorder_is_not_running(tmp_path: Path) -> None:
+    hours = [H, H + timedelta(hours=1), H + timedelta(hours=2)]
+    events = [event(-0.5, "started"), event(1.3, "crashed"), event(2.5, "started")]
+    assert statusing.whole_hours(hours, events) == [H]  # 19:00 broken, 20:00 down then restarted
+    out, _ = build(tmp_path)
+    store.log_event(out, "started", H_US)
+    now = datetime(2026, 11, 3, 1, tzinfo=UTC)
+    for path in out.rglob("*.parquet"):  # the last write an hour ago
+        os.utime(path, (now.timestamp() - 3_600, now.timestamp() - 3_600))
+    report = statusing.status(out, now)
+    assert not report["running"] and report["seconds_since_a_write"] == pytest.approx(3_600)
+    assert "written nothing for 60 minutes" in report["warnings"][0]
+
+
+def test_the_check_carries_the_books_from_one_hour_to_the_next(tmp_path: Path) -> None:
+    out, live = build(tmp_path)
+    late = H + timedelta(hours=1)
+    (live / "ticker" / f"{hour_name(late)}.parquet").unlink(missing_ok=True)
+    rows = [frame(3_600_000 + 1_000, "A", 400_000, 1_000, 1_000_000, 0),  # A's book from 18:00
+            frame(3_600_000 + 2_000, "B", 0, 0, 1_000_000, 0)]  # fmt: skip
+    pl.DataFrame(rows, schema=TICKER_SCHEMA).write_parquet(
+        live / "ticker" / f"{hour_name(late)}.parquet"
+    )
+    pl.DataFrame(schema=TRADE_SCHEMA).write_parquet(live / "trade" / f"{hour_name(late)}.parquet")
+    result = checking.check(out, live, H, late + timedelta(hours=1))
+    assert result["books"]["moments"] == 7 and result["books"]["agree"] == 6
+
+
+def test_a_lost_links_window_starts_at_the_last_frame(tmp_path: Path) -> None:
+    out, live = build(tmp_path)
+    store.log_event(out, "reconnect", H_US + 30_000_000, link=3, reason="stalled", downtime=0.1,
+                    lost_at_us=H_US + 19_000_000)  # fmt: skip
+    trades = checking.check(out, live, H, H + timedelta(hours=1))["trades"]
+    assert trades["missing_in_downtime"] == 2  # t3 (in the first) and t4 at 20 s (in this one)
+
+
+def test_a_recorder_just_started_is_running_before_its_first_part(tmp_path: Path) -> None:
+    out, _ = build(tmp_path)
+    now = datetime(2026, 11, 3, 1, tzinfo=UTC)
+    for path in out.rglob("*.parquet"):  # the old run's files, hours old
+        os.utime(path, (now.timestamp() - 7_200, now.timestamp() - 7_200))
+    store.log_event(out, "started", int(now.timestamp() * 1e6) - 20_000_000)
+    report = statusing.status(out, now)
+    assert report["running"] and report["seconds_since_a_write"] == pytest.approx(20)

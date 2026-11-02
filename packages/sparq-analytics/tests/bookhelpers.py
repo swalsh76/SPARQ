@@ -221,6 +221,10 @@ class FakeCopier:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.closed = False
+        self.trade_gaps = pl.DataFrame(
+            schema={"kind": pl.String, "status": pl.String, "start_ms": pl.Int64,
+                    "end_ms": pl.Int64}
+        )  # fmt: skip
 
     async def copy_from_query(
         self, query: str, *args: Any, output: str, format: str, header: bool
@@ -233,6 +237,8 @@ class FakeCopier:
             data = self._between(trades(), args).with_columns(
                 pl.col("is_block_trade").cast(pl.Int8)
             )
+        elif "FROM gap_log" in query and "status" in query:
+            data = self.trade_gaps
         elif "FROM gap_log" in query:
             data = gaps()
         elif "settlement_ts" in query:

@@ -22,13 +22,18 @@ microseconds since the epoch, and decides the hour a row belongs to.
 
 An hour is written as it goes: every minute the rows so far become a part file under
 ``parts/<table>/<hour>/``, so a crash loses at most a minute, and when the hour closes its parts
-are combined into the hour's file. A recorder that starts again finishes what a crash left.
+are combined into the hour's file. Every file is written under a temporary name, flushed to the
+drive (``F_FULLFSYNC`` on macOS, where a plain ``fsync`` stops at the drive's cache) and renamed,
+and the folder is flushed after the rename, so a power cut leaves a whole file or none. A recorder
+that starts again finishes what a crash left, and sets aside (``quarantine/``) a part that cannot
+be read, so one torn file never stops the recording.
 """
 
 import json
 import os
 import shutil
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -85,6 +90,41 @@ PART_ROWS = 1_000_000  # a buffer this long is written at once, whatever the min
 Rows = dict[str, list[tuple[Any, ...]]]
 
 
+def _flush_to_drive(fd: int) -> None:
+    if sys.platform == "darwin":  # past the drive's own cache (LESSONS: durability)
+        import fcntl
+
+        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+    else:
+        os.fsync(fd)
+
+
+def sync_file(path: Path) -> None:
+    """Flush a written file to the drive."""
+    fd = os.open(path, os.O_RDWR)
+    try:
+        _flush_to_drive(fd)
+    finally:
+        os.close(fd)
+
+
+def sync_dir(path: Path) -> None:
+    """Flush a folder, so a rename in it lasts (a folder cannot be opened for this off POSIX)."""
+    if sys.platform == "win32":
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        _flush_to_drive(fd)
+    finally:
+        os.close(fd)
+
+
+def _put_in_place(staging: Path, target: Path) -> None:
+    sync_file(staging)
+    staging.replace(target)
+    sync_dir(target.parent)
+
+
 def hour_start(recv_us: int) -> datetime:
     return datetime.fromtimestamp(recv_us // US_PER_HOUR * 3600, tz=UTC)
 
@@ -109,7 +149,7 @@ def write_part(root: Path, table: str, hour: datetime, rows: list[tuple[Any, ...
     target = folder / f"p{max(taken, default=-1) + 1:05d}.parquet"
     staging = target.with_name(target.name + ".tmp")
     pl.DataFrame(rows, schema=TABLES[table], orient="row").write_parquet(staging)
-    staging.replace(target)
+    _put_in_place(staging, target)
     return target
 
 
@@ -131,7 +171,7 @@ def combine(root: Path, table: str, hour: datetime) -> Path | None:
     staging = target.with_name(target.name + ".tmp")
     inputs = ([target] if target.exists() else []) + parts  # never write over rows already kept
     pl.scan_parquet(inputs).sink_parquet(staging)  # streamed: an hour need not fit in memory
-    staging.replace(target)
+    _put_in_place(staging, target)
     shutil.rmtree(folder)
     return target
 
@@ -141,20 +181,45 @@ def combine_hour(root: Path, hour: datetime) -> None:
         combine(root, table, hour)
 
 
-def recover(root: Path, now_hour: datetime) -> list[str]:
-    """Finish what a stop or a crash left, before recording starts again: the parts of a past
-    hour are combined (or removed, when its file was written but the parts not yet removed), and
-    a file of the current hour goes back to being its first part, so the hour goes on."""
+def _hour_named(name: str) -> datetime | None:
+    try:
+        return hour_of(name)
+    except ValueError:  # not an hour's name: someone else's file, left alone
+        return None
+
+
+def _readable(part: Path) -> bool:
+    try:
+        pl.read_parquet_schema(part)  # the footer: a torn file has none
+    except Exception:  # noqa: BLE001 (any failure to read means the part is lost)
+        return False
+    return True
+
+
+def recover(root: Path, now_hour: datetime) -> dict[str, list[str]]:
+    """Finish what a stop or a crash left, before recording starts again: a part that cannot be
+    read is set aside in ``quarantine/`` (``lost``); the parts of a past hour are combined (or
+    removed, when its file was written but the parts not yet removed); and a file of the current
+    hour goes back to being its first part, so the hour goes on (``done``)."""
     done: list[str] = []
+    lost: list[str] = []
     for table in TABLES:
         if (root / table).exists():
             for staging in (root / table).glob("*.tmp"):
                 staging.unlink()
         parts_root = root / "parts" / table
         for folder in sorted(parts_root.iterdir()) if parts_root.exists() else []:
+            hour = _hour_named(folder.name)
+            if hour is None:
+                continue
             for staging in folder.glob("*.tmp"):
                 staging.unlink()
-            hour = hour_of(folder.name)
+            for part in sorted(folder.glob("p*.parquet")):
+                if not _readable(part):
+                    aside = root / "quarantine" / table / folder.name
+                    aside.mkdir(parents=True, exist_ok=True)
+                    part.replace(aside / part.name)
+                    lost.append(f"{table}/{folder.name}/{part.name}")
             if hour_file(root, table, hour).exists():
                 shutil.rmtree(folder)  # combined already; the parts outlived the crash
                 done.append(f"{table} {folder.name}: removed parts already combined")
@@ -167,7 +232,36 @@ def recover(root: Path, now_hour: datetime) -> list[str]:
             folder.mkdir(parents=True, exist_ok=True)
             current.replace(folder / "p00000.parquet")
             done.append(f"{table} {hour_name(now_hour)}: reopened")
-    return done
+    return {"done": done, "lost": lost}
+
+
+def last_row_us(root: Path) -> int | None:
+    """The receive time of the newest book row kept (in an hour's file or its parts), or None."""
+    files = [p for p in (root / "book").glob("*.parquet") if _hour_named(p.stem)] if (
+        root / "book").exists() else []  # fmt: skip
+    parts_root = root / "parts" / "book"
+    for folder in parts_root.iterdir() if parts_root.exists() else []:
+        if _hour_named(folder.name):
+            files += [p for p in folder.glob("p*.parquet") if _readable(p)]
+    if not files:
+        return None
+    newest = max(files, key=lambda p: p.stat().st_mtime)
+    value = pl.scan_parquet(newest).select(pl.col("recv_us").max()).collect().item()
+    return None if value is None else int(value)
+
+
+def newest_write(root: Path) -> float | None:
+    """When the recording last wrote a part or an hour's file (seconds since the epoch)."""
+    stamps = [p.stat().st_mtime for p in _written(root)]
+    return max(stamps, default=None)
+
+
+def _written(root: Path) -> Iterator[Path]:
+    for table in TABLES:
+        if (root / table).exists():
+            yield from (root / table).glob("*.parquet")
+    if (root / "parts").exists():
+        yield from (root / "parts").rglob("*.parquet")
 
 
 class Writer:
@@ -211,10 +305,16 @@ def log_event(root: Path, kind: str, at_us: int, **detail: Any) -> dict[str, Any
 
 
 def read_events(path: Path) -> list[dict[str, Any]]:
+    """The events logged, a line torn by a crash left out."""
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [json.loads(line) for line in lines if line.strip()]
+    events = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            events.append(json.loads(line))
+        except ValueError:
+            continue
+    return events
 
 
 def write_list(root: Path, day: str, tickers: list[str], counts: dict[str, Any]) -> None:
@@ -222,7 +322,7 @@ def write_list(root: Path, day: str, tickers: list[str], counts: dict[str, Any])
     folder.mkdir(parents=True, exist_ok=True)
     staging = folder / f"{day}.json.tmp"
     staging.write_text(json.dumps({"counts": counts, "tickers": tickers}), encoding="utf-8")
-    staging.replace(folder / f"{day}.json")
+    _put_in_place(staging, folder / f"{day}.json")
 
 
 def log_change(root: Path, at_us: int, action: str, tickers: list[str], why: str) -> None:
@@ -231,11 +331,14 @@ def log_change(root: Path, at_us: int, action: str, tickers: list[str], why: str
     event = {"at": iso(at_us), "action": action, "why": why, "tickers": tickers}
     with (folder / "changes.jsonl").open("a", encoding="utf-8") as file:
         file.write(json.dumps(event) + "\n")
+        file.flush()
+        os.fsync(file.fileno())
 
 
 def hours_recorded(root: Path, table: str = "book") -> list[datetime]:
     folder = root / table
-    return sorted(hour_of(p.stem) for p in folder.glob("*.parquet")) if folder.exists() else []
+    hours = [_hour_named(p.stem) for p in folder.glob("*.parquet")] if folder.exists() else []
+    return sorted(h for h in hours if h is not None)
 
 
 def read_hours(root: Path, table: str, start: datetime, end: datetime) -> pl.LazyFrame:

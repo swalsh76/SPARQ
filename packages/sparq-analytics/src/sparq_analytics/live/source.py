@@ -12,14 +12,22 @@ The connection settings are a TOML file on the analytics node (``SPARQ_LIVE_CONF
 It never holds a password: the PostgreSQL client reads that from ``~/.pgpass``. Every query is
 bounded by time, because the hypertables are indexed by market and time, not by time alone. An hour
 is copied only once it is ``SETTLE`` old, written under a temporary name and renamed, so a run can
-stop anywhere and the next resumes at the first missing hour. Settlement results are never copied:
+stop anywhere and the next resumes at the first missing hour. One extract runs at a time in a
+folder (a lock file; a second waits, at most ``LOCK_WAIT``). **A trades hour that overlaps a trades
+gap the ingest has not finished backfilling is marked provisional** (``<hour>.provisional`` beside
+it) and copied again by every later extract until the gap is done, since its trades are still
+arriving; ``recopy_gaps`` copies again every trades hour that overlaps any trades gap, for hours
+copied before this rule. Settlement results are never copied:
 until S1.1b's verdict no live-data work may compute an edge to settlement (D11).
 """
 
+import asyncio
+import contextlib
 import os
 import ssl
+import sys
 import tomllib
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,6 +36,7 @@ from typing import Any
 import polars as pl
 
 SETTLE = timedelta(minutes=10)
+LOCK_WAIT = timedelta(hours=1)  # the longest one extract waits for another in the same folder
 HOUR = timedelta(hours=1)
 DEFAULT_CONFIG = "~/.config/sparq/live.toml"
 
@@ -76,6 +85,14 @@ GAP_SQL = (
     "FROM gap_log WHERE kind IN ('ticker', 'all')"
 )
 
+# the ingest's trades gaps (a whole outage counts too) with how far their backfill has come
+TRADE_GAP_SQL = (
+    "SELECT kind, status, floor(extract(epoch FROM started_at) * 1000)::bigint AS start_ms, "
+    "floor(extract(epoch FROM ended_at) * 1000)::bigint AS end_ms "
+    "FROM gap_log WHERE kind IN ('trades', 'all')"
+)
+UNFINISHED = ("open", "backfilling")
+
 TICKER_SCHEMA = {
     "ts_ms": pl.Int64,
     "recv_ms": pl.Int64,
@@ -110,6 +127,8 @@ MARKET_SCHEMA = {
 }
 GAP_SCHEMA = {"kind": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64, "reason": pl.String}
 SETTLE_SCHEMA = {"ticker": pl.String, "result": pl.String, "settled_ms": pl.Int64}
+TRADE_GAP_SCHEMA = {"kind": pl.String, "status": pl.String, "start_ms": pl.Int64,
+                    "end_ms": pl.Int64}  # fmt: skip
 TABLES = (("ticker", TICKER_SQL, TICKER_SCHEMA), ("trade", TRADE_SQL, TRADE_SCHEMA))
 
 
@@ -185,8 +204,8 @@ def hour_of(name: str) -> datetime:
 async def _copy(
     conn: Any, query: str, args: tuple[Any, ...], schema: dict[str, Any], target: Path
 ) -> int:
-    staging = target.with_name(target.name + ".csv.part")
-    finished = target.with_name(target.name + ".part")
+    staging = target.with_name(f"{target.name}.{os.getpid()}.csv.part")
+    finished = target.with_name(f"{target.name}.{os.getpid()}.part")
     await conn.copy_from_query(query, *args, output=str(staging), format="csv", header=True)
     frame = pl.read_csv(staging, schema=schema)
     if "is_block_trade" in frame.columns:
@@ -205,6 +224,41 @@ class ExtractReport:
     markets: int
     gaps: int
     settlements: int
+    recopied: int = 0  # trades hours copied again (provisional, or overlapping a trades gap)
+    provisional: int = 0  # trades hours whose backfill is not done yet
+
+
+@contextlib.asynccontextmanager
+async def locked(folder: Path, wait: timedelta = LOCK_WAIT) -> AsyncIterator[None]:
+    """Hold the folder's extract lock, waiting at most ``wait`` for another extract."""
+    if sys.platform == "win32":  # not a target (the workstation's tests): no other extract there
+        yield
+        return
+    import fcntl
+
+    await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
+    with (folder / ".extract.lock").open("a") as lock:
+        deadline = asyncio.get_running_loop().time() + wait.total_seconds()
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise LiveSourceError(f"another extract has held {folder} too long") from None
+                await asyncio.sleep(5)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _overlaps(gaps: pl.DataFrame, hour: datetime) -> pl.DataFrame:
+    start_ms = int(hour.timestamp() * 1000)
+    end_ms = start_ms + 3_600_000
+    return gaps.filter(
+        (pl.col("start_ms") < end_ms) & (pl.col("end_ms").is_null() | (pl.col("end_ms") > start_ms))
+    )
 
 
 async def extract(
@@ -215,29 +269,62 @@ async def extract(
     *,
     now: datetime,
     log: Callable[[str], None] = lambda _: None,
+    recopy_gaps: bool = False,
 ) -> ExtractReport:
-    """Copy each missing whole hour of ticker frames and trades, then the market list and the
-    ticker gaps afresh."""
-    copied = present = 0
+    """Copy each missing whole hour of ticker frames and trades (and again each trades hour still
+    provisional), then the market list and the ticker gaps afresh."""
+    async with locked(folder):
+        return await _extract(conn, folder, start, end, now=now, log=log, recopy_gaps=recopy_gaps)
+
+
+async def _extract(
+    conn: Any,
+    folder: Path,
+    start: datetime,
+    end: datetime,
+    *,
+    now: datetime,
+    log: Callable[[str], None],
+    recopy_gaps: bool,
+) -> ExtractReport:
+    copied = present = recopied = provisional = 0
     rows = {name: 0 for name, _, _ in TABLES}
+    gap_file = folder / "trade-gaps.parquet"
+    await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
+    await _copy(conn, TRADE_GAP_SQL, (), TRADE_GAP_SCHEMA, gap_file)
+    trade_gaps = pl.read_parquet(gap_file)
+    unfinished = trade_gaps.filter(pl.col("status").is_in(UNFINISHED))
     for hour in whole_hours(start, end, now):
         for name, query, schema in TABLES:
             target = folder / name / f"{hour_name(hour)}.parquet"
-            if target.exists():
+            mark = target.with_suffix(".provisional")
+            again = (
+                name == "trade"
+                and target.exists()
+                and (mark.exists() or (recopy_gaps and _overlaps(trade_gaps, hour).height > 0))
+            )
+            if target.exists() and not again:
                 present += 1
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             count = await _copy(conn, query, (hour, hour + HOUR), schema, target)
             rows[name] += count
             copied += 1
-            log(f"{name} {hour_name(hour)}: {count:,} rows")
+            recopied += again
+            if name == "trade":
+                if _overlaps(unfinished, hour).height:
+                    mark.touch()
+                    provisional += 1
+                else:
+                    mark.unlink(missing_ok=True)
+            log(f"{name} {hour_name(hour)}: {count:,} rows{' (again)' if again else ''}")
     markets = await _copy(conn, MARKET_SQL, (), MARKET_SCHEMA, folder / "markets.parquet")
     log(f"markets: {markets:,} rows")
     gaps = await _copy(conn, GAP_SQL, (), GAP_SCHEMA, folder / "gaps.parquet")
     log(f"ticker gaps: {gaps:,}")
     settled = await _copy(conn, SETTLE_SQL, (), SETTLE_SCHEMA, folder / "settlements.parquet")
     log(f"settlements: {settled:,}")
-    return ExtractReport(copied, present, rows, markets, gaps, settled)
+    return ExtractReport(copied, present, rows, markets, gaps, settled, recopied, provisional)
 
 
 def hour_files(folder: Path, name: str, start: datetime, end: datetime) -> list[Path]:

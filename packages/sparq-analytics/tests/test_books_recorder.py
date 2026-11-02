@@ -105,7 +105,7 @@ def test_recovery_finishes_what_a_crash_left(tmp_path: Path) -> None:
     store.write_part(tmp_path, "book", now, [book_row(T0_US)])
     store.combine(tmp_path, "book", now)  # a clean stop this hour
     (tmp_path / "book" / "x.parquet.tmp").write_bytes(b"half")
-    report = store.recover(tmp_path, now)
+    report = store.recover(tmp_path, now)["done"]
     assert store.hour_file(tmp_path, "book", past).exists()
     assert pl.read_parquet(store.hour_file(tmp_path, "book", done)).height == 1
     assert not store.hour_file(tmp_path, "book", now).exists()  # reopened as its first part
@@ -305,11 +305,15 @@ async def test_a_recording_keeps_every_book_event_trade_and_odd_frame(tmp_path: 
     assert [c for c, _ in feed.subscribed] == ["orderbook_delta", "trade", "market_lifecycle_v2"]
     assert feed.subscribed[0][1] == ["A", "B"] and feed.subscribed[2][1] == []
     book = rows(tmp_path)
-    assert book["kind"].to_list() == [RESET, SNAPSHOT, LEVEL, LEVEL, SNAPSHOT, CHANGE]
-    assert book["side"].to_list() == [None, None, 1, 2, None, 1]
-    assert book["size_e2"].to_list() == [None, None, 1_000, 500, None, 300]
-    assert book["seq"].to_list()[1:] == [1, 1, 1, 1, 2] and book["ts_ms"][5] == (T0_US + 20) // 1000
-    assert made.keeper.top("A") == Top(410_000, 300, 450_000, 500)
+    # the change that did not fit makes A's book unknown (a reset), and it is asked for again
+    assert book["kind"].to_list() == [RESET, SNAPSHOT, LEVEL, LEVEL, SNAPSHOT, CHANGE, RESET]
+    assert book["ticker"][6] == "A" and result["counts"]["book_unparsed"] == 1
+    assert book["side"].to_list() == [None, None, 1, 2, None, 1, None]
+    assert book["size_e2"].to_list() == [None, None, 1_000, 500, None, 300, None]
+    assert (
+        book["seq"].to_list()[1:6] == [1, 1, 1, 1, 2] and book["ts_ms"][5] == (T0_US + 20) // 1000
+    )
+    assert made.keeper.top("A") is None and (1, ["A"]) in feed.snapshots
     trades = rows(tmp_path, "trade")
     assert trades.select("trade_id", "count_e2", "taker_side", "taker_book_side").row(0) == (
         "t1", 200, "yes", "bid")  # fmt: skip
@@ -535,7 +539,7 @@ async def test_a_failed_refresh_or_choice_keeps_the_list(tmp_path: Path) -> None
     assert made.tickers == {"A"}
     errors = [e["error"] for e in store.read_events(tmp_path / "rec" / store.GAPS)]
     assert errors == ["live extract exited 1: no settings",
-                      "the choice failed: 2 trade hour(s) not copied"]  # fmt: skip
+                      "the choice failed: LiveSourceError: 2 trade hour(s) not copied"]  # fmt: skip
 
 
 async def test_the_daily_choice_waits_for_just_after_midnight(tmp_path: Path) -> None:
@@ -639,3 +643,143 @@ async def test_a_choice_waits_for_the_link_and_says_when_it_could_not_be_applied
     await made.rechoose("the day's choice")
     kinds = [e["kind"] for e in store.read_events(tmp_path / "rec" / store.GAPS)]
     assert kinds == ["chosen", "choice_not_applied"] and made.tickers == {"A"}
+
+
+def test_a_torn_part_is_set_aside_and_stray_names_are_left_alone(tmp_path: Path) -> None:
+    hour = T0.replace(minute=0) - timedelta(hours=1)
+    store.write_part(tmp_path, "book", hour, [book_row(T0_US)])
+    (store.parts_dir(tmp_path, "book", hour) / "p00001.parquet").write_bytes(b"torn by a power cut")
+    (tmp_path / "parts" / "book" / "notes").mkdir(parents=True)
+    (tmp_path / "book").mkdir()
+    (tmp_path / "book" / "notes.parquet").write_bytes(b"")
+    report = store.recover(tmp_path, T0.replace(minute=0))
+    assert report["lost"] == [f"book/{hour.strftime('%Y-%m-%dT%H')}/p00001.parquet"]
+    assert (tmp_path / "quarantine" / "book").exists()
+    assert pl.read_parquet(store.hour_file(tmp_path, "book", hour)).height == 1
+    assert store.hours_recorded(tmp_path) == [hour]
+
+
+def test_a_torn_last_line_of_the_log_is_left_out(tmp_path: Path) -> None:
+    store.log_event(tmp_path, "started", T0_US)
+    with (tmp_path / store.GAPS).open("a", encoding="utf-8") as file:
+        file.write('{"kind": "stop')
+    assert [e["kind"] for e in store.read_events(tmp_path / store.GAPS)] == ["started"]
+
+
+def test_the_newest_row_and_write(tmp_path: Path) -> None:
+    assert store.last_row_us(tmp_path) is None and store.newest_write(tmp_path) is None
+    hour = T0.replace(minute=0)
+    store.write_part(tmp_path, "book", hour, [book_row(T0_US), book_row(T0_US + 7)])
+    assert store.last_row_us(tmp_path) == T0_US + 7
+    assert store.newest_write(tmp_path) is not None
+
+
+async def test_a_run_that_never_logged_its_end_is_logged_as_a_crash(tmp_path: Path) -> None:
+    out = tmp_path / "rec"
+    store.log_event(out, "started", T0_US - 600_000_000)
+    store.write_part(out, "book", T0.replace(minute=0), [book_row(T0_US - 300_000_000)])
+    (store.parts_dir(out, "book", T0.replace(minute=0)) / "p00001.parquet").write_bytes(b"torn")
+    await recorder(tmp_path, Feed()).run(asyncio.Event(), seconds=0.05)
+    events = store.read_events(out / store.GAPS)
+    assert [e["kind"] for e in events][:4] == ["started", "crashed", "lost_part", "started"]
+    assert events[1]["at_us"] == T0_US - 300_000_000  # the last row kept
+
+
+async def test_markets_a_full_subscription_left_out_are_not_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Full(Feed):
+        async def subscribe(self, channel: str, market_tickers: list[str] | None = None) -> int:
+            if channel == "trade" and len(market_tickers or []) > 1:
+                raise FeedError("subscription market limit", code=26)
+            if channel == "trade" and market_tickers == ["B"]:
+                raise FeedError("subscription market limit", code=26)
+            return await super().subscribe(channel, market_tickers)
+
+    import sparq_analytics.books.probe as probe
+
+    monkeypatch.setattr(probe, "FULL_AFTER", 1)
+    feed = Full()
+    made = recorder(tmp_path, feed)
+    result = await made.run(asyncio.Event(), seconds=0.05)
+    assert result["markets"] == 1 and made.tickers == {"A"}
+    assert feed.updates == [(1, "delete_markets", ["B"])]  # off the book channel too
+    full = [e for e in store.read_events(tmp_path / "rec" / store.GAPS)
+            if e["kind"] == "subscription_full"]  # fmt: skip
+    assert full and full[0]["channel"] == "trade" and full[0]["left_out"] == 1
+
+
+async def test_a_book_message_with_no_market_resets_every_book(tmp_path: Path) -> None:
+    feed = Feed()
+    made = recorder(tmp_path, feed)
+    made.handle(snapshot("A", T0_US + 10, [["0.40", "1.00"]]))
+    made.handle(data("orderbook_delta", {"side": "yes"}, seq=2, at_us=T0_US + 20))
+    assert made.keeper.books == {} and made.want_all
+    assert [r[5] for r in made.writer.rows["book"]][-1] == RESET
+
+
+async def test_a_snapshot_asked_for_and_never_sent_is_asked_for_again(tmp_path: Path) -> None:
+    feed = Feed()
+    feed.sids = {"orderbook_delta": 1}
+    made = recorder(tmp_path, feed, resnapshot_seconds=60.0)
+    made.tickers, made.want = {"A", "B"}, {"A", "B"}
+    await made._ask_snapshots()
+    made.handle(snapshot("A", T0_US + 10, []))  # A's comes; B's never does
+    assert made.awaiting == {"B": T0_US}
+    made.now_us = Clock(T0_US + 61_000_000)
+    await made._ask_snapshots()
+    assert feed.snapshots[-1] == (1, ["B"]) and made.counts["snapshots_overdue"] == 1
+    overdue = [e for e in store.read_events(tmp_path / "rec" / store.GAPS)
+               if e["kind"] == "snapshots_overdue"]  # fmt: skip
+    assert overdue[0]["first"] == "B"
+
+
+async def test_a_reconnect_logs_where_the_link_was_lost(tmp_path: Path) -> None:
+    feed = Feed()
+    made = recorder(tmp_path, feed)
+    made.handle(snapshot("A", T0_US + 10, []))
+    made.now_us = Clock(T0_US + 90_000_000)
+    made.handle(Reconnected(2, "stalled", 0.5))
+    event = store.read_events(tmp_path / "rec" / store.GAPS)[-1]
+    assert event["lost_at_us"] == T0_US + 10 and event["at_us"] == T0_US + 90_000_000
+
+
+async def test_one_choice_at_a_time(tmp_path: Path) -> None:
+    feed = Feed()
+    feed.sids = {"orderbook_delta": 1, "trade": 2}
+    made = recorder(tmp_path, feed, picks=[["A"], ["A"]])
+    active, most = 0, 0
+
+    async def slow(since: datetime) -> str | None:
+        nonlocal active, most
+        active += 1
+        most = max(most, active)
+        await asyncio.sleep(0.05)
+        active -= 1
+        return None
+
+    made.refresh = slow
+    await asyncio.gather(made.rechoose("the copies were stale"), made.rechoose("the day's choice"))
+    assert most == 1
+
+
+async def test_an_unexpected_failure_of_the_choice_keeps_the_list(tmp_path: Path) -> None:
+    def broken(live: Path) -> tuple[list[str], dict[str, Any]]:
+        raise ValueError("a torn copy")
+
+    made = Recorder(Feed(), settings(tmp_path), refresh=lambda since: asyncio.sleep(0, result=None),
+                    chooser=broken, now_us=Clock())  # fmt: skip
+    made.tickers = {"A"}
+    await made.rechoose("the day's choice")
+    error = store.read_events(tmp_path / "rec" / store.GAPS)[-1]["error"]
+    assert error == "the choice failed: ValueError: a torn copy" and made.tickers == {"A"}
+
+
+async def test_a_lost_book_message_for_a_market_not_recorded_is_not_asked_for(
+    tmp_path: Path,
+) -> None:
+    made = recorder(tmp_path, Feed())
+    made.tickers = {"A"}
+    made.handle(data("orderbook_delta", {"market_ticker": "GONE", "side": "maybe"}, seq=2,
+                     at_us=T0_US + 20))  # fmt: skip
+    assert made.want == set() and [r[4] for r in made.writer.rows["book"]] == ["GONE"]
