@@ -862,7 +862,7 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 **Decisions.** The owner approved S6 on 2026-11-02 ("build all as recommended"): the thin tail only, built now, the 500 GB pause.
 
-### S6.1 The live probe (2026-11-02 UTC, done; PR TO COME)
+### S6.1 The live probe (2026-11-02 UTC, done; PR #31)
 
 **Built.** `python -m sparq_analytics.books probe` (`books/probe.py`, `books/cli.py`): B2's markets chosen from the live copies (open at the newest copied hour, not a combo, the latest quote in the day before, the mid or the one standing price, above 3 and below 97 cents, under 1,000 contracts a day over the week or its days open so far); `orderbook_delta` and `trade` subscribed in growing batches (1,000 to 50,000) with a refusal handled by smaller batches and a subscription that takes not even one more market treated as full; every message counted by type with its JSON bytes, the book messages carrying `clock`, each market's wait for its first snapshot, the messages in every second (silent ones counted), `seq` gaps, and one deliberate reconnect halfway; `probe.json` and the first minutes as `sample.parquet` on the node's data drive. It needs `--production` and the read-only key, loaded into the probe's process by its run script and never printed; subscriptions only. In core, `KalshiFeed.drop_link()` (a deliberate loss, reconnected and restored like any other) and **a fix found live: Kalshi answers a second subscribe to a channel on the same link with an `ok` that names the channel's existing subscription on the frame, so `subscribe` now takes that sid** (it refused the reply as carrying none, which would also have broken a resubscribe of two subscriptions to one channel after a reconnect). No new package.
 
