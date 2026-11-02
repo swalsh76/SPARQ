@@ -403,7 +403,7 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 | | fit (53 days) | validate (12 days) |
 |---|---|---|
 | Settled markets in scope | 8,397 | 2,088 |
-| Called (highs / rain) | 2,240 (1,972 / 268) | 532 (461 / 71) |
+| Called (highs / rain) | 2,240 (1,972 / 268) [^calls] | 532 (461 / 71) |
 | Wrong calls | 0 | 0 |
 | Trades after the call | 41,731 | 9,653 |
 | Ours: trades, markets, city-days | 1,572, 19, 19 | 1, 1, 1 |
@@ -412,6 +412,8 @@ Not taken: IKARS's Windows ACL check (SPARQ runs on Linux and macOS only), its a
 | Lower bound (first worth taking per market): trades, profit, a day | 14, $34.23, $0.65 | 0, $0.00 |
 | Ruled-out side after the call: trades, contracts | 40,159, 8.8 M | 9,652, 2.1 M |
 | of which at 99 cents for the certain side | 38,381, 8.7 M | 9,652, 2.1 M |
+
+[^calls]: S2.1 counted 2,243 calls on the fit part and S2.2 counts 2,240; the three-call difference is not reconciled (found by the fresh-eyes review, 2026-11-02). No figure depends on them: both have no wrong call.
 
 - *Where ours were.* 16 of the 19 markets are rain. The three highs rank 13th, 15th and 18th by profit; the five most profitable markets are rain (Atlanta 5 Sep, Houston 17 Sep, San Francisco 15 Aug, Boston 21 Sep, Washington 27 Aug).
 - *The book is ahead of the reports.* In the called markets, the certain side last traded below 95 cents a median **276 minutes before the call** for the highs (10% of markets under 70) and **41 minutes before** for rain (10% under 10). The validate part gives 325 and 40. Traders price the bound from forecasts, radar and the trend, hours before an hourly report proves it.
@@ -655,14 +657,14 @@ The test world gained an outage, a market closing mid-span, a trade on a stale b
 | Slice | Outcome | PR |
 |---|---|---|
 | Proposal (M1 to M7) | approved 2026-10-28 | #19 |
-| S3.1 the certainty dump and the 99-cent queue | **done, below the bar:** a 100-contract bid joining when the price reaches 99 loses in every category but Mentions (+$39 a day on 28 reversals in 65 days); the whole queue nets about $240,000 a day, 85% to crypto bots | #20 |
+| S3.1 the certainty dump and the 99-cent queue | **done, cleared as worded in Mentions alone, not pursued (wording corrected 2026-11-02):** a 100-contract bid joining when the price reaches 99 loses in every category but Mentions (+$39 a day on 28 reversals in 65 days); the whole queue nets about $240,000 a day, 85% to crypto bots | #20 |
 | S3.2 where the book is slow | **done, below the bar:** no relation type clears; related markets answer within seconds, the 10-minute pass-through is 0.15 to 0.59 cents and hitting the stale quotes loses $1.3 M to $32 M a day a kind to fees (corrected in S3.3 and here; the conclusions never changed) | #21 |
 | S3.3 the thin tail and the surprise rate | **done, both bars cleared:** $499,284 a day of half-spread in thin markets' uncontested trades (Sports $403,571) against $250; 14 series of 313 judged clear the surprise bar, 7.8 by chance | #22 |
 | S3.c close-out | **done:** this entry, the verdict and the S4 proposal | #23 |
 
 No order was sent in S3, and no key beyond the database role was used (M2). Every code slice passed format, lint, types, tests and the coverage gate in CI, and the survey package is 100% covered.
 
-**What stays.** On `main`: `sparq_analytics.survey` (`dump`, `lag`, `tail`), tested, and `live extract`'s four market columns. On the analytics node's data drive: the live copies (2026-10-18 to 2026-10-29 02:00, frames and trades), the survey outputs (`dump*.json`, `lag.json`, `tail*.json`, the pairs and the event files) and the run scripts. The owner decides whether they stay (S2.c's precedent: keep).
+**What stays.** On `main`: `sparq_analytics.survey` (`dump`, `lag`, `tail`), tested, and `live extract`'s four market columns. On the analytics node's data drive: the live copies (asked from 2026-10-18, held from 2026-10-24 21:00 where the ingest begins, to 2026-10-29 02:00; frames and trades), the survey outputs (`dump*.json`, `lag.json`, `tail*.json`, the pairs and the event files) and the run scripts. The owner decides whether they stay (S2.c's precedent: keep).
 
 **Verified (local).** ruff, mypy (222 files) and the survey tests (62) at 100% branch coverage of the package; the full suite 1,927 passed, 196 skipped; six regressions planted, one for each fix that gained a test, all caught.
 
@@ -772,7 +774,7 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 **Decisions (owner, pending).** Whether to run the registered test on 2026-11-13 as registered (recommended: yes, it is one command, and the rules file stays pinned), and what S4 does after it.
 
-## S5. What a local language model can add (proposed 2026-10-29)
+## S5. What a local language model can add (approved 2026-10-29)
 
 ### S5 proposal (PR #27, 2026-10-29 UTC, documents only; approved by the owner)
 
@@ -923,3 +925,24 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 **Problems and fixes.** The first forced spill (a 40-million-row sort under a 64 MB budget) did not spill at all, so it proved nothing; a join and group-by under an 8 MB budget with polars' spill metrics did. The node's run scripts keep their exports for now (harmless: an exported value wins); `s52_run.sh` is not edited while it runs.
 
+## The fresh-eyes review (2026-11-02 UTC)
+
+**How.** Owner's request ("perform a complete fresh-eyes subagent review of the project so far"), run under PLAN Q9 as two sub-agents with no prior context, both read only: one over the code (the whole codebase at `s6/2-recorder`, and S5.2's model code), one over the plan, the research and the direction (CLAUDE.md, PLAN, ASSESSMENT, LESSONS, this log and every write-up). The code reviewer ran the suite (2,082 passed, 199 skipped), mypy and ruff, all green.
+
+**What the code review found.** No non-negotiable broken: the REST guard allows GET only and public routes, the WebSocket client sends only subscribe, update and unsubscribe and refuses private channels, demo is the default, money is fixed point in every decision path, and no secret or real host name is tracked. Eighteen findings, mostly where the S6.2 recorder meets real failures (a crash, a power cut, a lagging queue) and at the B5 check's edges; they are fixed in S6.2 (its entry), except: the live copies are never copied again after the ingest backfills trades, and `live extract` has no lock (fixed with S6.2, since S4.2's registered test reads the copies); the paper quoter's same-millisecond trades and its fills during short outages follow the registered rules, so they are reported in S4.2's write-up, not changed; S5.2's thin filter counts trades after the decision time, one line in its write-up.
+
+**What the direction review found.** Each study is honest and careful (digests, unopened test parts, every correction recorded), but the portfolio drifts: every strand since S2 was chosen from data already held and screened with gross-volume bars that pass easily, while the two ideas in the goal that could beat informed takers are untested: a fair value from a liquid related market used by a maker to pull or skew its quotes, and an outside anchor for sports, four fifths of the thin tail's money. S4's smoke run (−3.1 cents a contract at settlement) reads as thin-tail takers being informed relative to the book.
+
+**Housekeeping done (owner, 2026-11-02: "perform housekeeping").**
+- PLAN: the status line brought to S6; §1 gains where the work stands against the goal; Q3's first gate noted as S1's, closed; §5's heading and §7's first risk no longer wait on S1; M3's test part caveated (K0.5's, S1.1's and S4.2's smoke readings); T5 records the smoke run's reading of settlements as a deviation; T6 and this log say where the live copies really begin (2026-10-24 21:00); S4.2's row names its PR and **writes down what a NO-GO means before the run**; S3.1 cleared its bar as worded in Mentions and was not pursued (it was reported as below it); S3.2 measured taking, not a maker's use of a related market; S3.3's half-spread is gross revenue the wide makers already earn, not money left unclaimed.
+- ASSESSMENT, LESSONS, `thin-tail.md`, `book-lag.md` and `certainty-dump.md` carry the same corrections; the surprise rate is said one way everywhere (favourites at 90 cents or more lost slightly less often than priced, 3.57% against 3.82%).
+- This log: S5's heading says approved; S2.2's 2,240 calls against S2.1's 2,243 are footnoted as not reconciled.
+- CLAUDE.md: the resume point brought to the present and carried to `main`, with S1.2r's line for the node kept.
+- S5.2 (on its branch): the model's knowledge cutoff is to be probed with public events before its gain is read.
+
+**For the owner (the direction review's decisions; nothing is changed until they are taken).**
+1. Whether to measure an outside fair value for sports (sportsbook lines or Polymarket, after reading their terms) and a related market's use by a maker, beginning with a post-mortem on the three days already opened (did S4's losing fills follow moves in the same game's liquid markets; how do the incumbent wide makers fare at settlement).
+2. S6's scope once S6.2 is done: hold S6.3 until the direction is chosen, or go on; whether to add a sample of middle-tier markets.
+3. Whether to reverse D13 and run S1.1b's still-unopened forward test of R4 (one download and one command).
+4. Kalshi's Developer Agreement: re-read its storage and public-statement clauses against months of recorded books and the public write-ups; whether `docs/research` should be private.
+5. A stopping rule written in advance: what result, by what date, ends the search for an edge for a one-person seconds-scale maker.

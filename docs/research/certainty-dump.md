@@ -1,6 +1,6 @@
 # The certainty dump and the 99-cent queue (S3.1)
 
-**Outcome against M4's bar ($25 a day within one category, for a bid that joins the 99-cent queue when the price first reaches 99): cleared in one category, Mentions, at $39 a day for a 100-contract bid and $313 for 1,000, on thin evidence; every other category loses, Sports and Crypto by about $12,800 a day.** The whole 99-cent queue, all makers together, nets about $240,000 a day, but a late joiner gets a rationed share of its gains and a near-full share of its losses. The owner chooses what follows (M1).
+**Outcome against M4's bar ($25 a day within one category, for a bid that joins the 99-cent queue when the price first reaches 99): cleared as worded in one category, Mentions (not pursued: 28 reversals in 65 days, with 11 categories read, is taken as noise), at $39 a day for a 100-contract bid and $313 for 1,000, on thin evidence; every other category loses, Sports and Crypto by about $12,800 a day.** The whole 99-cent queue, all makers together, nets about $240,000 a day, but a late joiner gets a rationed share of its gains and a near-full share of its losses. The owner chooses what follows (M1).
 
 ## Data snapshot
 
