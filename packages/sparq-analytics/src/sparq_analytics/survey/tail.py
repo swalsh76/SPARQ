@@ -456,10 +456,10 @@ def live_reading(live: Path, fees: pl.DataFrame) -> dict[str, Any]:
 # -- the surprise rate --------------------------------------------------------------------------
 
 
-def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
+def day_before_prices(kalshi: Path, cut: date) -> tuple[pl.DataFrame, int]:
     """Each cut market's last trade from 36 to 12 hours before its close (among trades in one
-    millisecond, the highest price), with its side in the tail (90 cents or more) where there is
-    one, and the counts of markets left out."""
+    millisecond, the highest price) as ``price_e6`` at ``priced_ms``, with its event (its own
+    ticker when the list names none); and the number of cut markets, priced or not."""
     markets = cut_markets(kalshi, cut)
     files = trade_files(kalshi, HISTORY_START, cut)
     t = pl.col("t_ms")
@@ -481,11 +481,21 @@ def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
         .select("ticker", "event_ticker")
         .collect()
     )
-    price = pl.col("price_e6")
     frame = (
         markets.join(priced, on="ticker", how="inner")
         .join(events, on="ticker", how="left")
-        .with_columns(
+        .with_columns(event_ticker=pl.col("event_ticker").fill_null(pl.col("ticker")))
+    )
+    return frame, markets.height
+
+
+def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
+    """Each cut market's day-before price (:func:`day_before_prices`) with its side in the tail
+    (90 cents or more) where there is one, and the counts of markets left out."""
+    priced, cut_count = day_before_prices(kalshi, cut)
+    price = pl.col("price_e6")
+    frame = (
+        priced.with_columns(
             side=pl.when(price >= TAIL_E6)
             .then(pl.lit("yes"))
             .when(price <= E6 - TAIL_E6)
@@ -498,14 +508,13 @@ def day_before(kalshi: Path, cut: date) -> tuple[pl.DataFrame, dict[str, int]]:
             surprise=(pl.col("result") != pl.col("side")).cast(pl.Int8),
             implied=(E6 - pl.col("p_e6")) / E6,
             bucket=bucket(pl.col("p_e6"), BUCKETS),
-            event_ticker=pl.col("event_ticker").fill_null(pl.col("ticker")),
         )
     )
     in_tail = frame.filter(pl.col("side").is_not_null())
     counts = {
-        "markets": markets.height,
+        "markets": cut_count,
         "priced": priced.height,
-        "unpriced": markets.height - priced.height,
+        "unpriced": cut_count - priced.height,
         "not_in_tail": frame.height - in_tail.height,
         "in_tail": in_tail.height,
     }

@@ -27,7 +27,7 @@ engineered for.
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import date, timedelta
 from pathlib import Path
@@ -149,9 +149,9 @@ def sample(markets: pl.DataFrame, limit: int | None) -> pl.DataFrame:
     return shuffled if limit is None else shuffled.head(limit)
 
 
-def parse_reply(content: str) -> dict[str, Any] | None:
-    """The JSON object in a reply (it may sit in a code fence, after a line of prose or hold other
-    objects), or None."""
+def parse_reply(content: str, keys: Collection[str] = KEYS) -> dict[str, Any] | None:
+    """The JSON object with ``keys`` in a reply (it may sit in a code fence, after a line of prose
+    or hold other objects), or None."""
     decoder = json.JSONDecoder()
     for start, char in enumerate(content):
         if char != "{":
@@ -160,7 +160,7 @@ def parse_reply(content: str) -> dict[str, Any] | None:
             value, _ = decoder.raw_decode(content, start)
         except ValueError:
             continue
-        if isinstance(value, dict) and value.keys() >= KEYS:
+        if isinstance(value, dict) and value.keys() >= set(keys):
             return value
     return None
 
@@ -224,6 +224,14 @@ def classify_unnamed(answer: dict[str, Any] | None, series_site: str | None) -> 
     return "right" if code == series_site else "wrong"
 
 
+def chat_or_error(client: ModelClient, prompt: str) -> tuple[Reply, str | None]:
+    """The model's reply, or an empty one and the reason when the node did not answer."""
+    try:
+        return client.chat(prompt), None
+    except ModelError as problem:
+        return Reply("", "", 0, 0.0, False), str(problem)
+
+
 def read_one(client: ModelClient, row: dict[str, Any]) -> dict[str, Any]:
     """One market: the model's reply and how it compares."""
     base: dict[str, Any] = {
@@ -237,11 +245,7 @@ def read_one(client: ModelClient, row: dict[str, Any]) -> dict[str, Any]:
         "floor": row["floor"],
         "cap": row["cap"],
     }
-    try:
-        reply = client.chat(READ_WEATHER.format(rules=row["rules"]))
-        error = None
-    except ModelError as problem:
-        reply, error = Reply("", "", 0, 0.0, False), str(problem)
+    reply, error = chat_or_error(client, READ_WEATHER.format(rules=row["rules"]))
     answer = parse_reply(reply.content)
     named = row["site"] is not None
     known = row["strike_type"] in STRIKES
@@ -271,10 +275,13 @@ def run_read(
     markets: pl.DataFrame,
     workers: int = 1,
     log: Callable[[str], None] = lambda _: None,
+    ask: Callable[[ModelClient, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Every market read through the model, ``workers`` at a time with at most twice that many
-    requests in flight (so a node that has stopped answering is noticed within a few calls); stops
-    when ``ABORT_AFTER`` requests in a row fail."""
+    """Every market put to the model by ``ask`` (the reading's :func:`read_one` by default; a row
+    it returns carries ``error``), ``workers`` at a time with at most twice that many requests in
+    flight (so a node that has stopped answering is noticed within a few calls); stops when
+    ``ABORT_AFTER`` requests in a row fail."""
+    one = read_one if ask is None else ask
     rows = iter(markets.to_dicts())
     total = markets.height
     done: list[dict[str, Any]] = []
@@ -284,7 +291,7 @@ def run_read(
 
     def feed() -> None:
         while len(pending) < 2 * workers and (row := next(rows, None)) is not None:
-            pending.add(pool.submit(read_one, client, row))
+            pending.add(pool.submit(one, client, row))
 
     try:
         feed()
@@ -393,12 +400,31 @@ def frame_of(rows: list[dict[str, Any]]) -> pl.DataFrame:
     return pl.DataFrame(rows, schema=ROW_SCHEMA)
 
 
+def speed(frame: pl.DataFrame, wall_seconds: float) -> dict[str, Any]:
+    """A run's calls (answered, not from the cache), the cached replies, and the pace and median
+    time and tokens of the calls."""
+    spent = frame.filter(~pl.col("cached") & pl.col("error").is_null())
+    seconds = float(spent["seconds"].sum())
+    return {
+        "calls": spent.height,
+        "cached": int(frame["cached"].sum()),
+        "wall_seconds": wall_seconds,
+        "markets_a_minute": (
+            spent.height / (wall_seconds / 60) if wall_seconds > 0 and spent.height else None
+        ),
+        "tokens_a_second": (
+            int(spent["tokens"].sum()) / seconds if spent.height and seconds > 0 else None
+        ),
+        "seconds_median": spent["seconds"].median() if spent.height else None,
+        "tokens_median": spent["tokens"].median() if spent.height else None,
+    }
+
+
 def summarize(rows: list[dict[str, Any]], wall_seconds: float) -> dict[str, Any]:
     """N6's figures: by group for S2's window, the earlier sample apart, the speed, the verdict."""
     frame = frame_of(rows)
     window = frame.filter(pl.col("sample") == "window")
     groups = {g: figures(window.filter(pl.col("group") == g)) for g in ("highs", "rain")}
-    spent = frame.filter(~pl.col("cached") & pl.col("error").is_null())
     parse_rate = int(window["parsed"].sum()) / window.height if window.height else None
     clears = {
         f"{g}_{part}": groups[g][part]["clears"] for g in groups for part in ("site", "bounds")
@@ -409,19 +435,7 @@ def summarize(rows: list[dict[str, Any]], wall_seconds: float) -> dict[str, Any]
         "by_group": groups,
         "earlier_sample": figures(frame.filter(pl.col("sample") == "older")),
         "parse_rate": parse_rate,
-        "calls": spent.height,
-        "cached": int(frame["cached"].sum()),
-        "wall_seconds": wall_seconds,
-        "markets_a_minute": (
-            spent.height / (wall_seconds / 60) if wall_seconds > 0 and spent.height else None
-        ),
-        "tokens_a_second": (
-            int(spent["tokens"].sum()) / float(spent["seconds"].sum())
-            if spent.height and float(spent["seconds"].sum()) > 0
-            else None
-        ),
-        "seconds_median": spent["seconds"].median() if spent.height else None,
-        "tokens_median": spent["tokens"].median() if spent.height else None,
+        **speed(frame, wall_seconds),
         "clears": clears,
         "parse_clears": bool(parse_rate is not None and parse_rate >= PARSE),
         "passes": bool(all(clears.values()) and parse_rate is not None and parse_rate >= PARSE),
