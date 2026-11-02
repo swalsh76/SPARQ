@@ -201,16 +201,28 @@ async def test_subscriptions_grow_until_refused_then_go_on_at_the_largest() -> N
     tickers = [f"M{i:02d}" for i in range(30)]
     result = await probe.subscribe_all(feed, "trade", tickers, batches=(2, 5, 10, 20))
     assert [len(t) for _, t in feed.subscribed] == [2, 5, 10, 10, 3]
-    assert result["largest_accepted"] == 10 and result["subscriptions"] == 5
+    assert result["largest_accepted"] == 10 and result["accepted_batches"] == 5
     [refusal] = result["refused"]
     assert (refusal["markets"], refusal["code"]) == (13, 26)
     assert "Too many markets" in refusal["refused"]
     assert sum(len(t) for _, t in feed.subscribed) == 30
 
 
-async def test_a_refusal_of_everything_ends_the_probe() -> None:
-    with pytest.raises(FeedError):
-        await probe.subscribe_all(FakeFeed(limit=0), "trade", ["A", "B"], batches=(2,))
+async def test_a_subscription_that_takes_no_more_is_full_and_stops_there() -> None:
+    class Full(FakeFeed):
+        """Joins every batch to one subscription that holds three markets at most."""
+
+        async def subscribe(self, channel: str, market_tickers: list[str] | None = None) -> int:
+            held = sum(len(t) for _, t in self.subscribed)
+            if held + len(market_tickers or []) > 3:
+                raise FeedError("subscription market limit", code=26)
+            self.subscribed.append((channel, list(market_tickers or [])))
+            return 9
+
+    feed = Full()
+    result = await probe.subscribe_all(feed, "trade", list("ABCDEF"), batches=(2, 4))
+    assert result["full"] and result["subscribed_markets"] == 3 and result["sids"] == [9]
+    assert [len(t) for _, t in feed.subscribed] == [2, 1]
 
 
 async def test_a_link_failure_while_subscribing_ends_the_probe() -> None:
@@ -225,7 +237,7 @@ async def test_a_link_failure_while_subscribing_ends_the_probe() -> None:
 async def test_too_many_attempts_end_the_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(probe, "MAX_ATTEMPTS", 2)
     with pytest.raises(FeedError, match="after 2 attempts"):
-        await probe.subscribe_all(FakeFeed(limit=1), "trade", ["A", "B", "C", "D"], batches=(4,))
+        await probe.subscribe_all(FakeFeed(limit=1), "trade", ["A", "B", "C", "D"], batches=(1,))
 
 
 async def test_the_probe_counts_the_book_the_reconnect_and_keeps_a_sample(tmp_path: Path) -> None:

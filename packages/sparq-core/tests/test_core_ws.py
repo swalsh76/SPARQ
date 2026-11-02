@@ -172,6 +172,27 @@ async def test_a_dropped_link_reconnects_and_resubscribes_like_a_lost_one() -> N
     assert srv.commands[1][0]["params"] == srv.commands[0][0]["params"]
 
 
+async def test_a_second_subscribe_to_a_channel_joins_the_first() -> None:
+    async def both(ws: ServerConnection) -> None:
+        first = await read_command(ws)
+        await ws.send(subscribed(first, 7))
+        second = await read_command(ws)
+        reply = {
+            "id": second["id"],
+            "type": "ok",
+            "sid": 7,
+            "seq": 2,
+            "msg": {"market_tickers": ["A", "B"]},
+        }
+        await ws.send(json.dumps(reply))
+        await ws.wait_closed()
+
+    async with FakeKalshi(both) as srv, feed_for(srv) as feed:
+        assert await feed.subscribe("orderbook_delta", ["A"]) == 7
+        assert await feed.subscribe("orderbook_delta", ["B"]) == 7  # the same subscription
+        assert feed.channel_of(7) == "orderbook_delta"
+
+
 async def test_dropping_with_no_link_does_nothing() -> None:
     async with FakeKalshi(subscribe_then()) as srv:
         feed = feed_for(srv)

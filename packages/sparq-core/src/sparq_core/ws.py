@@ -303,8 +303,13 @@ class KalshiFeed:
 
     @staticmethod
     def _sid_of(reply: Frame) -> int:
+        """The subscription a reply names: in ``msg`` for a new one (``subscribed``), or on the
+        frame itself when Kalshi joined the markets to the channel's existing subscription on this
+        link (an ``ok``: one subscription per channel and link, measured 2026-11-02)."""
         message = reply.raw.get("msg")
         sid = message.get("sid") if isinstance(message, dict) else None
+        if sid is None:
+            sid = reply.sid
         if not isinstance(sid, int) or isinstance(sid, bool):
             raise FeedError("the subscribe reply carried no subscription id")
         return sid

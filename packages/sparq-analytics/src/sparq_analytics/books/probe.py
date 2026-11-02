@@ -7,9 +7,12 @@ and below 97 cents, and that traded under 1,000 contracts a day over the seven d
 its days open so far when it is younger (whole days, at least one).
 
 **The probe** subscribes ``orderbook_delta`` and ``trade`` for those markets in batches that grow
-(``BATCHES``) until Kalshi refuses one with an error code (its per-subscription limit, B6), then
-goes on at the largest size it accepted. It counts every message by type, its bytes as JSON, the
-book messages that carry ``clock``, the snapshots and how long each market waited for its first,
+(``BATCHES``) until Kalshi refuses one with an error code, then goes on at the largest size it
+accepted, halving after each refusal. Kalshi keeps one subscription per channel on a link and joins
+each later batch to it, so a refusal is either a cap on one command or the subscription being full
+(B6): when even one market is refused, the subscription is full and the channel stops there.
+It counts every message by type, its bytes as JSON, the book messages that carry ``clock``, the
+snapshots and how long each market waited for its first,
 the gaps in ``seq``, and the messages in each second; halfway it drops the link on purpose, so the
 reconnect, the restored subscriptions, the snapshots sent again and the ``seq`` that follows are
 seen. The first minutes' messages are kept as a sample (``sample.parquet``, on the analytics
@@ -41,7 +44,7 @@ from sparq_analytics.survey.lag import EXTREME_E6, TIERS, frames_of
 
 CHANNELS = (ORDERBOOK, TRADE)
 BATCHES = (1_000, 5_000, 10_000, 20_000, 50_000)  # markets in one subscription, growing
-MAX_ATTEMPTS = 40  # subscription attempts per channel before the probe gives up
+MAX_ATTEMPTS = 200  # subscription attempts per channel before the probe gives up
 THIN = TIERS[1][0]  # under 1,000 contracts a day (S3.3's thin tiers)
 LOOKBACK_DAYS = 7
 QUOTE_HOURS = 24  # how far back a market's latest quote is looked for
@@ -122,11 +125,13 @@ def choose(live: Path) -> tuple[list[str], dict[str, Any]]:
 async def subscribe_all(
     feed: Feed, channel: str, tickers: list[str], batches: tuple[int, ...] = BATCHES
 ) -> dict[str, Any]:
-    """Subscribe ``channel`` for every ticker, each subscription larger than the last until one is
-    refused with an error code; then on at the largest size accepted (half the refused one when
-    none was). A refusal without a code is the link failing, which ends the probe."""
+    """Subscribe ``channel`` for every ticker, each batch larger than the last until one is
+    refused with an error code; then on at the largest size accepted, or half the refused one. When
+    a single market is refused the subscription is full and the channel stops there. A refusal
+    without a code is the link failing, which ends the probe."""
     sizes, step, done, largest = list(batches), 0, 0, 0
     attempts: list[dict[str, Any]] = []
+    full = False
     while done < len(tickers):
         if len(attempts) >= MAX_ATTEMPTS:
             raise FeedError(f"{channel}: still refused after {MAX_ATTEMPTS} attempts")
@@ -139,7 +144,8 @@ async def subscribe_all(
             attempts.append({"markets": len(chunk), "refused": str(error), "code": error.code})
             smaller = largest if 0 < largest < len(chunk) else len(chunk) // 2
             if smaller < 1:
-                raise
+                full = True  # not even one more market: the subscription holds all it will
+                break
             sizes, step = [smaller], 0
             continue
         attempts.append({"markets": len(chunk), "sid": sid})
@@ -150,7 +156,10 @@ async def subscribe_all(
     return {
         "channel": channel,
         "markets": len(tickers),
-        "subscriptions": len(attempts) - len(refused),
+        "subscribed_markets": done,
+        "full": full,
+        "sids": sorted({a["sid"] for a in attempts if "sid" in a}),
+        "accepted_batches": len(attempts) - len(refused),
         "largest_accepted": largest,
         "refused": refused,
     }
