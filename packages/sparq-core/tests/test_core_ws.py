@@ -224,6 +224,45 @@ async def test_a_joined_subscription_keeps_its_batches_when_its_markets_change()
     assert sent == [["B", "C"]]
 
 
+async def test_a_snapshot_is_asked_for_without_waiting_for_a_reply(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def handler(ws: ServerConnection) -> None:
+        await ws.send(subscribed(await read_command(ws), 4))
+        command = await read_command(ws)  # get_snapshot: Kalshi sends no reply, only a refusal
+        await ws.send(error_reply(command, 8, "market not found"))
+        await ws.wait_closed()
+
+    async with FakeKalshi(handler) as srv, feed_for(srv) as feed:
+        sid = await feed.subscribe("orderbook_delta", ["A", "B"])
+        with caplog.at_level(logging.WARNING, logger="sparq_core"):
+            await feed.request_snapshot(sid, ["B"])  # returns at once: nothing is awaited
+            await asyncio.wait_for(_until_commands(srv, 2), 5)
+            for _ in range(50):
+                if "unmatched error reply" in caplog.text:
+                    break
+                await asyncio.sleep(0.02)
+    command = srv.commands[0][1]
+    assert command["cmd"] == "update_subscription"
+    assert command["params"] == {"sid": 4, "market_tickers": ["B"], "action": "get_snapshot"}
+    assert "unmatched error reply" in caplog.text  # the refusal is not lost silently
+    # the remembered subscription is untouched
+    assert [s.params for s in feed._subscriptions] == [  # noqa: SLF001
+        {"channels": ["orderbook_delta"], "market_tickers": ["A", "B"]}
+    ]
+
+
+async def test_a_snapshot_cannot_be_asked_for_before_the_feed_is_started() -> None:
+    async with FakeKalshi(subscribe_then()) as srv:
+        with pytest.raises(FeedError, match="not connected"):
+            await feed_for(srv).request_snapshot(1, ["A"])
+
+
+async def _until_commands(srv: FakeKalshi, count: int) -> None:
+    while len(srv.commands[0]) < count:  # noqa: ASYNC110 (polling a list on a test fake)
+        await asyncio.sleep(0.01)
+
+
 async def test_dropping_with_no_link_does_nothing() -> None:
     async with FakeKalshi(subscribe_then()) as srv:
         feed = feed_for(srv)

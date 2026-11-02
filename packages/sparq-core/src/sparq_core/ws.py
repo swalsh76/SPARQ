@@ -285,6 +285,27 @@ class KalshiFeed:
                 sub.params = {**sub.params, "market_tickers": list(tickers)}
         return tickers
 
+    async def request_snapshot(self, sid: int, market_tickers: list[str]) -> None:
+        """Ask for a fresh snapshot of ``market_tickers`` on a live order-book subscription
+        (Kalshi's ``get_snapshot``), leaving the subscription as it is.
+
+        Kalshi sends no reply to it (measured 2026-11-02): the snapshots simply follow as data on
+        the subscription, continuing its ``seq``. So nothing is awaited; a refusal would arrive as
+        an unmatched error, which is logged, and as snapshots that never come.
+        """
+        conn = self._conn
+        if conn is None or not self._ready.is_set():
+            raise FeedError("not connected")
+        command_id = self._next_id
+        self._next_id += 1
+        params = {"sid": sid, "market_tickers": market_tickers, "action": "get_snapshot"}
+        try:
+            await conn.send(
+                json.dumps({"id": command_id, "cmd": "update_subscription", "params": params})
+            )
+        except ConnectionClosed:
+            raise FeedError("connection closed") from None
+
     async def unsubscribe(self, sid: int) -> None:
         await self._command("unsubscribe", {"sids": [sid]})
         self._subscriptions = [s for s in self._subscriptions if s.sid != sid]
@@ -548,7 +569,10 @@ class KalshiFeed:
     def _resolve(self, frame: Frame) -> None:
         future = self._pending.pop(frame.id, None) if frame.id is not None else None
         if future is None or future.done():
-            log.debug("unmatched reply: %s", frame.type)
+            if frame.type == "error":  # a command not awaited (a snapshot asked for) was refused
+                log.warning("unmatched error reply: %.300s", frame.raw)
+            else:
+                log.debug("unmatched reply: %s", frame.type)
             return
         if frame.type == "error":
             message = frame.raw.get("msg")

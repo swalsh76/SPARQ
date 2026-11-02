@@ -1,4 +1,5 @@
-"""Typed models for Kalshi's public WebSocket channels: ticker, trade and the lifecycle channels.
+"""Typed models for Kalshi's public WebSocket channels: ticker, trade, the order book and the
+lifecycle channels.
 
 Money and counts become fixed-point integers on the way in (a value more precise than the scale
 is refused, never rounded), exactly as for the REST models. A frame is parsed once, here, with
@@ -18,10 +19,11 @@ the trading client (K7); the data key never subscribes to them.
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import BeforeValidator, Field, ValidationError, model_validator
 
+from sparq_core.fixedpoint import to_e2, to_e6
 from sparq_core.models import (
     Model,
     Moment,
@@ -39,7 +41,8 @@ TRADE = "trade"
 MARKET_LIFECYCLE = "market_lifecycle_v2"
 EVENT_LIFECYCLE = "event_lifecycle"
 COMBO_LIFECYCLE = "multivariate_market_lifecycle"
-ORDERBOOK = "orderbook_delta"  # its first message is a snapshot
+ORDERBOOK = "orderbook_delta"  # the channel, and the type of its changes
+SNAPSHOT = "orderbook_snapshot"  # the channel's first message for each market
 # The channels the data key may subscribe to: market data only. The private channels (fills,
 # orders, positions and the like) carry account data and are never subscribed with this key.
 MARKET_DATA_CHANNELS = frozenset(
@@ -126,10 +129,70 @@ class EventLifecycleMsg(WsModel):
     exchange_index: int | None = None
 
 
-Payload = TickerMsg | TradeMsg | MarketLifecycleMsg | EventLifecycleMsg
+def _levels(value: Any) -> Any:
+    """One side of a snapshot, ``[[price_dollars, count_fp], ...]``, as (price, count) pairs in
+    millionths of a dollar and hundredths of a contract. The price must be text, as everywhere."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ValueError("a side of the book must be a list of levels")
+    levels: list[tuple[int, int]] = []
+    for level in value:
+        if not isinstance(level, list) or len(level) != 2 or not isinstance(level[0], str):
+            raise ValueError("a level must be [price as text, count]")
+        price: str = level[0]
+        count: str | int = level[1]
+        if count is None:
+            raise ValueError("a level's count is missing")
+        try:
+            levels.append((to_e6(price), to_e2(count)))
+        except TypeError as exc:  # a bool or float count
+            raise ValueError(str(exc)) from None
+    return tuple(levels)
+
+
+Levels = Annotated[tuple[tuple[int, int], ...], BeforeValidator(_levels)]
+"""A side of the book: (price_e6, count_e2) pairs, as Kalshi lists them."""
+
+
+class OrderbookSnapshotMsg(WsModel):
+    """The whole book of one market: both sides are bids (the yes ask is a dollar less the best no
+    bid), and a side with no bids is left out. It holds every change up to its ``clock``."""
+
+    market_ticker: str
+    market_id: Text = None
+    clock: int | None = None
+    yes: Levels = Field(default=(), validation_alias="yes_dollars_fp")
+    no: Levels = Field(default=(), validation_alias="no_dollars_fp")
+
+
+class OrderbookDeltaMsg(WsModel):
+    """A change of the size bid at one price on one side; negative when contracts left."""
+
+    market_ticker: str
+    market_id: Text = None
+    clock: int | None = None
+    side: Literal["yes", "no"]
+    price_e6: RequiredDollarsE6 = Field(validation_alias="price_dollars")
+    delta_e2: RequiredCountE2 = Field(validation_alias="delta_fp")
+    client_order_id: Text = None  # only on one's own orders, which the data key never has
+    ts_ms: int | None = None
+    ts: Moment = None  # the same moment as an RFC 3339 text (not seconds, as on the trades)
+
+
+Payload = (
+    TickerMsg
+    | TradeMsg
+    | MarketLifecycleMsg
+    | EventLifecycleMsg
+    | OrderbookSnapshotMsg
+    | OrderbookDeltaMsg
+)
 MODELS: dict[str, type[WsModel]] = {
     TICKER: TickerMsg,
     TRADE: TradeMsg,
+    SNAPSHOT: OrderbookSnapshotMsg,
+    ORDERBOOK: OrderbookDeltaMsg,
     MARKET_LIFECYCLE: MarketLifecycleMsg,
     COMBO_LIFECYCLE: MarketLifecycleMsg,
     EVENT_LIFECYCLE: EventLifecycleMsg,
@@ -209,11 +272,16 @@ __all__ = [
     "EVENT_LIFECYCLE",
     "Frame",
     "MARKET_LIFECYCLE",
+    "ORDERBOOK",
     "RESPONSE_TYPES",
+    "SNAPSHOT",
     "TICKER",
     "TRADE",
     "EventLifecycleMsg",
+    "Levels",
     "MarketLifecycleMsg",
+    "OrderbookDeltaMsg",
+    "OrderbookSnapshotMsg",
     "Payload",
     "TickerMsg",
     "TradeMsg",

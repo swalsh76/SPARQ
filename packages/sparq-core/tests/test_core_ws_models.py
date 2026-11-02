@@ -8,6 +8,8 @@ import pytest
 from sparq_core.ws_models import (
     EventLifecycleMsg,
     MarketLifecycleMsg,
+    OrderbookDeltaMsg,
+    OrderbookSnapshotMsg,
     TickerMsg,
     TradeMsg,
     known_keys,
@@ -157,7 +159,7 @@ def test_a_known_type_whose_message_is_not_an_object_is_kept_with_an_error() -> 
 
 
 def test_an_unmodelled_type_passes_through_untouched_without_an_error() -> None:
-    result = parse_frame(frame("orderbook_delta", {"market_ticker": "M"}, sid=9, seq=3))
+    result = parse_frame(frame("multivariate_lookup", {"market_ticker": "M"}, sid=9, seq=3))
     assert result.payload is None and result.error is None and result.unknown == ()
     assert (result.sid, result.seq) == (9, 3)
 
@@ -332,3 +334,95 @@ def test_a_created_market_carries_its_rules_and_tick_structure() -> None:
     assert message.additional_metadata is not None
     assert message.additional_metadata["rules_primary"] == "If so, Yes."
     assert message.close_ts == datetime(2026, 10, 27, 17, 0, tzinfo=UTC)
+
+
+# The book channel as the real service sent it on 2026-11-02 (S6.1's sample), with invented values.
+REAL_SNAPSHOT = {
+    "type": "orderbook_snapshot",
+    "sid": 1,
+    "seq": 1,
+    "msg": {
+        "market_ticker": "KXTEST-26NOV02-A",
+        "market_id": "00000000-0000-0000-0000-000000000003",
+        "clock": 15_526_840_282,
+        "yes_dollars_fp": [["0.0100", "500.00"], ["0.4500", "12.50"]],
+        "no_dollars_fp": [["0.5000", "3.00"]],
+    },
+    "sending_ts_ms": 1793596678229,
+}
+REAL_DELTA = {
+    "type": "orderbook_delta",
+    "sid": 1,
+    "seq": 2,
+    "msg": {
+        "market_ticker": "KXTEST-26NOV02-A",
+        "market_id": "00000000-0000-0000-0000-000000000003",
+        "clock": 15_526_840_290,
+        "price_dollars": "0.4500",
+        "delta_fp": "-2.50",
+        "side": "yes",
+        "ts": "2026-11-02T17:05:41.865Z",
+        "ts_ms": 1_793_639_141_865,
+    },
+    "sending_ts_ms": 1_793_639_141_870,
+}
+
+
+def test_a_book_snapshot_as_the_real_service_sends_it_has_no_unknown_fields() -> None:
+    result = parse_frame(json.dumps(REAL_SNAPSHOT))
+    assert result.error is None and result.unknown == () and (result.sid, result.seq) == (1, 1)
+    snapshot = result.payload
+    assert isinstance(snapshot, OrderbookSnapshotMsg)
+    assert snapshot.yes == ((10_000, 50_000), (450_000, 1_250))
+    assert snapshot.no == ((500_000, 300),) and snapshot.clock == 15_526_840_282
+
+
+def test_a_snapshot_side_with_no_bids_is_left_out_and_reads_as_empty() -> None:
+    body = {"market_ticker": "KXTEST-26NOV02-A", "clock": 1, "no_dollars_fp": [["0.5", "1"]]}
+    snapshot = parse_frame(frame("orderbook_snapshot", body)).payload
+    assert isinstance(snapshot, OrderbookSnapshotMsg) and snapshot.yes == ()
+    empty = parse_frame(frame("orderbook_snapshot", {"market_ticker": "X"})).payload
+    assert isinstance(empty, OrderbookSnapshotMsg) and empty.yes == empty.no == ()
+
+
+def test_a_book_change_as_the_real_service_sends_it_has_no_unknown_fields() -> None:
+    result = parse_frame(json.dumps(REAL_DELTA))
+    assert result.error is None and result.unknown == ()
+    delta = result.payload
+    assert isinstance(delta, OrderbookDeltaMsg)
+    assert (delta.side, delta.price_e6, delta.delta_e2) == ("yes", 450_000, -250)
+    assert delta.ts == datetime(2026, 11, 2, 17, 5, 41, 865000, tzinfo=UTC)
+    assert delta.ts_ms == 1_793_639_141_865 and delta.clock == 15_526_840_290
+
+
+@pytest.mark.parametrize(
+    "side",
+    [
+        "0.45",  # not a list
+        [["0.45"]],  # a level of one value
+        [[1, "1.00"]],  # a price as a bare number: cents read as dollars?
+        [["0.4500001", "1.00"]],  # more precise than a millionth
+        [["0.45", "1.001"]],  # more precise than a hundredth of a contract
+        [["0.45", True]],  # a count that is no number
+        [["0.45", None]],  # a count that is missing
+    ],
+)
+def test_a_bad_level_is_refused_and_the_frame_kept(side: Any) -> None:
+    result = parse_frame(
+        frame("orderbook_snapshot", {"market_ticker": "X", "yes_dollars_fp": side})
+    )
+    assert result.payload is None and result.error and result.error.startswith("orderbook_snapshot")
+    assert "yes_dollars_fp" in result.raw["msg"]  # what arrived is still there
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"side": "maybe", "price_dollars": "0.45", "delta_fp": "1.00"},
+        {"side": "yes", "price_dollars": 1, "delta_fp": "1.00"},
+        {"side": "yes", "delta_fp": "1.00"},
+    ],
+)
+def test_a_bad_book_change_is_refused_and_the_frame_kept(change: dict[str, Any]) -> None:
+    result = parse_frame(frame("orderbook_delta", {"market_ticker": "X", **change}))
+    assert result.payload is None and result.error and result.error.startswith("orderbook_delta")
