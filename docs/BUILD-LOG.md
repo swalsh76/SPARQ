@@ -839,3 +839,20 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 - A first edit script was not idempotent and stopped halfway after `ruff` reflowed text; later edits re-read the file and appended tests instead of patching reflowed ones.
 
 **Decisions (owner, 2026-10-29).** S5.1 approved as recommended. **Pending:** whether to go on to S5.2 (the default, with the expectation stated in PLAN §6.5 that the probability measurement does not pass), and the word to merge PR #28.
+
+## S1.2r Analysis plumbing on the analytics node (from PLAN §9)
+
+### S1.2r The scratch settings and S1.2a's leftovers (2026-11-02 UTC, built; branch `s1/2r-plumbing`)
+
+**Built.** `sparq_analytics.scratch.configure`, called first by all seven analytics command lines (history, live, study, survey, weather, model, paper): it reads `~/.config/sparq/analytics.toml` (or `SPARQ_ANALYTICS_CONFIG`) and sets `TMPDIR`, `POLARS_TEMP_DIR` and `POLARS_OOC_SPILL_DIR` to its `scratch` folder and `POLARS_OOC_DISK_BUDGET_MB` to its `spill_budget_mb`, leaving any variable the environment already sets; with no file it changes nothing (the workstation); a folder that does not exist, a budget that is not a positive whole number, an unknown setting or bad TOML is refused with an error and exit code 1, so no run falls back to the internal disk. The data drive's path is the machine's, so it lives in the settings file and never in the code. `ScratchError` is a `ValueError`, which every command line already reports (the study's list gained it). S1.2a's leftovers: `live/book.py` uses the shared `E6` instead of its own `ONE_E6`, and the live command line keeps one `HANDLERS` map in place of a second command list. The tests run with `SPARQ_ANALYTICS_CONFIG` pointed at a file that does not exist, so no test reads a machine's own settings. No new package; nothing deployed.
+
+**Re-scoped (owner, 2026-11-02, "build all as recommended").** Built now: the settings and the leftovers. Left in PLAN §9 until S4.2's registered run, because they change the files it reads: the live copies per day and sorted by market, and the streaming-engine measurement. Dropped: `measure` skipping a finished day (S1 is closed).
+
+**Verified (local).** Format, lint and `mypy --strict` are green; the full suite is 1,989 passed and 197 skipped; `scratch.py` is at 100% line and branch coverage (12 tests: no file, the four variables set and Python's own temporary folder moved, a variable already set wins, seven refusals, the settings path, three command lines refusing bad settings).
+
+**Verified (analytics node).** The settings file written as the agent account (mode 600; the data drive's temporary folder and 60,000 MB; it holds no secret), the branch in its own clone so the running S5.2 forecast's clone is untouched. A forced spill (a join and group-by of 60 million rows under an 8 MB memory budget, polars' spill metrics on), started with none of the four variables exported: `configure` set all four, and **polars spilled 171 times, every file in the data drive's folder and none on the internal disk**. The control, the same run with the settings file switched off: 181 spill files on the internal disk.
+
+**Review (PLAN Q8).** `064429e` reviewed at low effort: one possible issue, whether every command line's error list catches a settings error; no change: the shared list and the weather command's both hold `ValueError`, which `ScratchError` is, and the tests show the refusal.
+
+**Problems and fixes.** The first forced spill (a 40-million-row sort under a 64 MB budget) did not spill at all, so it proved nothing; a join and group-by under an 8 MB budget with polars' spill metrics did. The node's run scripts keep their exports for now (harmless: an exported value wins); `s52_run.sh` is not edited while it runs.
+
