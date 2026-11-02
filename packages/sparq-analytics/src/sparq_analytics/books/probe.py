@@ -10,7 +10,8 @@ its days open so far when it is younger (whole days, at least one).
 (``BATCHES``) until Kalshi refuses one with an error code, then goes on at the largest size it
 accepted, halving after each refusal. Kalshi keeps one subscription per channel on a link and joins
 each later batch to it, so a refusal is either a cap on one command or the subscription being full
-(B6): when even one market is refused, the subscription is full and the channel stops there.
+(B6). A single market refused is skipped and listed (it may have closed since the copies were
+made); ``FULL_AFTER`` of them in a row mean the subscription is full, and the channel stops there.
 It counts every message by type, its bytes as JSON, the book messages that carry ``clock``, the
 snapshots and how long each market waited for its first,
 the gaps in ``seq``, and the messages in each second; halfway it drops the link on purpose, so the
@@ -18,6 +19,10 @@ reconnect, the restored subscriptions, the snapshots sent again and the ``seq`` 
 seen. The first minutes' messages are kept as a sample (``sample.parquet``, on the analytics
 node's data drive, never committed) for S6.2's parsers and to measure a stored message's size.
 Nothing else is kept. Subscriptions only: no order, no account channel.
+
+**The sizes are estimates.** A message's bytes are its parsed frame written again as compact
+JSON (the feed keeps no wire bytes), and the stored size of a day applies the sample's
+compression, the first minutes with the first round of snapshots, to the hour's JSON.
 """
 
 import asyncio
@@ -25,7 +30,7 @@ import json
 import math
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -44,7 +49,9 @@ from sparq_analytics.survey.lag import EXTREME_E6, TIERS, frames_of
 
 CHANNELS = (ORDERBOOK, TRADE)
 BATCHES = (1_000, 5_000, 10_000, 20_000, 50_000)  # markets in one subscription, growing
-MAX_ATTEMPTS = 200  # subscription attempts per channel before the probe gives up
+MAX_ATTEMPTS = 400  # subscription attempts per channel before the probe gives up
+FULL_AFTER = 10  # single markets refused in a row: the subscription takes no more
+SAMPLE_LIMIT = 2_000_000  # messages kept in the sample at most (they are held in memory)
 THIN = TIERS[1][0]  # under 1,000 contracts a day (S3.3's thin tiers)
 LOOKBACK_DAYS = 7
 QUOTE_HOURS = 24  # how far back a market's latest quote is looked for
@@ -126,11 +133,13 @@ async def subscribe_all(
     feed: Feed, channel: str, tickers: list[str], batches: tuple[int, ...] = BATCHES
 ) -> dict[str, Any]:
     """Subscribe ``channel`` for every ticker, each batch larger than the last until one is
-    refused with an error code; then on at the largest size accepted, or half the refused one. When
-    a single market is refused the subscription is full and the channel stops there. A refusal
-    without a code is the link failing, which ends the probe."""
-    sizes, step, done, largest = list(batches), 0, 0, 0
+    refused with an error code; then on at the largest size accepted, or half the refused one. A
+    single market refused is skipped; ``FULL_AFTER`` in a row with no batch accepted between mean
+    the subscription is full, and the channel stops there. A refusal without a code is the link
+    failing, which ends the probe."""
+    sizes, step, done, largest, singles = list(batches), 0, 0, 0, 0
     attempts: list[dict[str, Any]] = []
+    skipped: list[str] = []
     full = False
     while done < len(tickers):
         if len(attempts) >= MAX_ATTEMPTS:
@@ -142,12 +151,19 @@ async def subscribe_all(
             if error.code is None:
                 raise
             attempts.append({"markets": len(chunk), "refused": str(error), "code": error.code})
+            if len(chunk) == 1:
+                singles += 1
+                if singles >= FULL_AFTER:
+                    full = True  # one market at a time, refused again and again: it is full
+                    break
+                skipped.append(chunk[0])
+                done += 1
+                sizes, step = [max(largest, 1)], 0
+                continue
             smaller = largest if 0 < largest < len(chunk) else len(chunk) // 2
-            if smaller < 1:
-                full = True  # not even one more market: the subscription holds all it will
-                break
             sizes, step = [smaller], 0
             continue
+        singles = 0
         attempts.append({"markets": len(chunk), "sid": sid})
         done += len(chunk)
         largest = max(largest, len(chunk))
@@ -156,7 +172,8 @@ async def subscribe_all(
     return {
         "channel": channel,
         "markets": len(tickers),
-        "subscribed_markets": done,
+        "subscribed_markets": done - len(skipped),
+        "skipped": skipped,
         "full": full,
         "sids": sorted({a["sid"] for a in attempts if "sid" in a}),
         "accepted_batches": len(attempts) - len(refused),
@@ -184,7 +201,8 @@ class Tally:
     gaps: int = 0
     reconnects: list[dict[str, Any]] = field(default_factory=list)
     resubscribe_failures: list[str] = field(default_factory=list)
-    first_seq_after_reconnect: dict[int, int] = field(default_factory=dict)
+    first_seq_after_reconnect: dict[int, dict[int, int]] = field(default_factory=dict)
+    first_snapshot_bytes: int = 0
     sample: list[dict[str, Any]] = field(default_factory=list)
 
     def add(self, event: FeedEvent) -> None:
@@ -217,9 +235,12 @@ class Tally:
                 self.first_snapshot_ns.setdefault(ticker, event.mono_ns)
             else:
                 self.snapshots_after_reconnect += 1
+        if frame.type == SNAPSHOT and event.generation == 1:
+            self.first_snapshot_bytes += len(text)
         if event.generation > 1 and frame.sid is not None and frame.seq is not None:
-            self.first_seq_after_reconnect.setdefault(frame.sid, frame.seq)
-        if event.mono_ns < self.sample_ns:
+            on_link = self.first_seq_after_reconnect.setdefault(event.generation, {})
+            on_link.setdefault(frame.sid, frame.seq)
+        if event.mono_ns < self.sample_ns and len(self.sample) < SAMPLE_LIMIT:
             self.sample.append(
                 {
                     "received_ns": event.received_ns,
@@ -260,7 +281,6 @@ async def run_probe(
     sample_seconds: float,
     out: Path,
     monotonic_ns: Callable[[], int] = time.monotonic_ns,
-    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> dict[str, Any]:
     """Subscribe, listen for ``seconds`` (dropping the link once after ``reconnect_after``), keep
     the first ``sample_seconds`` of messages in ``out``, and return the measurements."""
@@ -271,13 +291,18 @@ async def run_probe(
         subscriptions = [await subscribe_all(feed, channel, tickers) for channel in CHANNELS]
         subscribed_s = (monotonic_ns() - started) / 1e9
 
-        def left(until: float) -> float:  # every wait is measured from the start
-            return max(0.0, until - (monotonic_ns() - started) / 1e9)
+        async def until(moment: float) -> None:
+            """Wait until ``moment`` seconds from the start, unless the feed fails or ends first."""
+            wait_s = max(0.0, moment - (monotonic_ns() - started) / 1e9)
+            finished, _ = await asyncio.wait({consumer}, timeout=wait_s)
+            if finished:
+                consumer.result()  # the feed's own error, when it failed
+                raise FeedError("the feed ended before the probe did")
 
         if reconnect_after is not None:
-            await sleep(left(reconnect_after))
+            await until(reconnect_after)
             await feed.drop_link()
-        await sleep(left(seconds))
+        await until(seconds)
     finally:
         consumer.cancel()
         await asyncio.gather(consumer, return_exceptions=True)
@@ -322,8 +347,8 @@ def summarize(
     steady_bytes = sum(b for kind, b in tally.bytes_by_type.items() if kind != SNAPSHOT)
     raw_bytes = int(sample["raw"].str.len_bytes().sum()) if sample.height else 0
     stored_ratio = sample_path.stat().st_size / raw_bytes if raw_bytes else None
-    json_a_day = (
-        steady_bytes / elapsed_s * 86_400 + tally.bytes_by_type[SNAPSHOT] if elapsed_s else None
+    json_a_day = (  # a day: the steady messages, and one round of snapshots
+        steady_bytes / elapsed_s * 86_400 + tally.first_snapshot_bytes if elapsed_s else None
     )
     return {
         "markets": len(tickers),
@@ -349,11 +374,15 @@ def summarize(
         "sequence_gaps": tally.gaps,
         "reconnects": tally.reconnects,
         "resubscribe_failures": tally.resubscribe_failures,
-        "first_seq_after_reconnect": sorted(set(tally.first_seq_after_reconnect.values())),
+        "first_seq_after_reconnect": {
+            str(link): sorted(set(seqs.values()))
+            for link, seqs in sorted(tally.first_seq_after_reconnect.items())
+        },
         "sample": {
             "messages": sample.height,
             "json_bytes": raw_bytes,
             "stored_bytes": sample_path.stat().st_size,
+            "capped": sample.height >= SAMPLE_LIMIT,
         },
         "day": {
             "json_bytes": json_a_day,

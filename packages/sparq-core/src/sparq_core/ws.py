@@ -266,10 +266,24 @@ class KalshiFeed:
         current = message.get("market_tickers") if isinstance(message, dict) else None
         if current is None:
             raise FeedError(f"{action}: the reply carried no market set")
-        for sub in self._subscriptions:
-            if sub.sid == sid:
-                sub.params = {**sub.params, "market_tickers": list(current)}
-        return [str(ticker) for ticker in current]
+        tickers = [str(ticker) for ticker in current]
+        joined = [sub for sub in self._subscriptions if sub.sid == sid]
+        if len(joined) > 1 and all("market_tickers" in sub.params for sub in joined):
+            # Several subscribes were joined into this one: keep them as batches, so a restore
+            # after a reconnect sends each market once and not the whole set once per batch.
+            wanted = set(tickers)
+            for sub in joined:
+                kept = [t for t in sub.params["market_tickers"] if t in wanted]
+                sub.params = {**sub.params, "market_tickers": kept}
+            held = {t for sub in joined for t in sub.params["market_tickers"]}
+            joined[-1].params["market_tickers"] += [t for t in tickers if t not in held]
+            self._subscriptions = [
+                sub for sub in self._subscriptions if sub.sid != sid or sub.params["market_tickers"]
+            ]
+        else:
+            for sub in joined:
+                sub.params = {**sub.params, "market_tickers": list(tickers)}
+        return tickers
 
     async def unsubscribe(self, sid: int) -> None:
         await self._command("unsubscribe", {"sids": [sid]})

@@ -208,7 +208,9 @@ async def test_subscriptions_grow_until_refused_then_go_on_at_the_largest() -> N
     assert sum(len(t) for _, t in feed.subscribed) == 30
 
 
-async def test_a_subscription_that_takes_no_more_is_full_and_stops_there() -> None:
+async def test_a_subscription_that_takes_no_more_is_full_and_stops_there(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class Full(FakeFeed):
         """Joins every batch to one subscription that holds three markets at most."""
 
@@ -219,10 +221,27 @@ async def test_a_subscription_that_takes_no_more_is_full_and_stops_there() -> No
             self.subscribed.append((channel, list(market_tickers or [])))
             return 9
 
+    monkeypatch.setattr(probe, "FULL_AFTER", 3)
     feed = Full()
-    result = await probe.subscribe_all(feed, "trade", list("ABCDEF"), batches=(2, 4))
+    result = await probe.subscribe_all(feed, "trade", list("ABCDEFGHIJ"), batches=(2, 4))
     assert result["full"] and result["subscribed_markets"] == 3 and result["sids"] == [9]
     assert [len(t) for _, t in feed.subscribed] == [2, 1]
+    assert result["skipped"] == ["D", "E"]  # two single refusals, then the third says full
+
+
+async def test_one_refused_market_is_skipped_and_the_rest_go_on() -> None:
+    class Picky(FakeFeed):
+        async def subscribe(self, channel: str, market_tickers: list[str] | None = None) -> int:
+            if "BAD" in (market_tickers or []):
+                raise FeedError("market not found", code=8)
+            return await super().subscribe(channel, market_tickers)
+
+    feed = Picky()
+    tickers = ["A", "B", "BAD", "C", "D", "E"]
+    result = await probe.subscribe_all(feed, "trade", tickers, batches=(2, 4))
+    assert result["skipped"] == ["BAD"] and not result["full"]
+    assert result["subscribed_markets"] == 5
+    assert sorted(t for _, batch in feed.subscribed for t in batch) == ["A", "B", "C", "D", "E"]
 
 
 async def test_a_link_failure_while_subscribing_ends_the_probe() -> None:
@@ -258,7 +277,7 @@ async def test_the_probe_counts_the_book_the_reconnect_and_keeps_a_sample(tmp_pa
         {"generation": 2, "reason": "connection_lost", "downtime": 0.25}
     ]
     assert result["sequence_gaps"] == 1 and result["resubscribe_failures"] == ["trade: refused"]
-    assert result["first_seq_after_reconnect"] == [1]
+    assert result["first_seq_after_reconnect"] == {"2": [1]}
     assert result["per_second"]["max"] >= 1 and result["steady_messages_a_second"] > 0
     sample = pl.read_parquet(tmp_path / "sample.parquet")
     assert sample.height == 9 and set(sample["market_ticker"]) == {"A", "B", "C"}
@@ -289,6 +308,41 @@ async def test_silent_seconds_count_and_waits_run_from_the_start(tmp_path: Path)
     # three messages (a snapshot and a delta, then the snapshot again) over two seconds, all in the
     # first: a mean of 1.5 a second, not 3
     assert result["per_second"]["mean"] == pytest.approx(3 / 2)
+
+
+async def test_a_feed_that_fails_or_ends_stops_the_probe(tmp_path: Path) -> None:
+    class Failing(FakeFeed):
+        def events(self) -> Any:
+            class Stream:
+                def __aiter__(self) -> "Stream":
+                    return self
+
+                async def __anext__(self) -> Any:
+                    raise FeedError("reconnect attempts exhausted")
+
+            return Stream()
+
+    class Ending(FakeFeed):
+        def events(self) -> Any:
+            class Stream:
+                def __aiter__(self) -> "Stream":
+                    return self
+
+                async def __anext__(self) -> Any:
+                    raise StopAsyncIteration
+
+            return Stream()
+
+    with pytest.raises(FeedError, match="reconnect attempts exhausted"):
+        await probe.run_probe(Failing(), ["A"], 5.0, 1.0, 0, tmp_path)
+    with pytest.raises(FeedError, match="ended before the probe did"):
+        await probe.run_probe(Ending(), ["A"], 5.0, None, 0, tmp_path)
+
+
+async def test_the_sample_is_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(probe, "SAMPLE_LIMIT", 2)
+    result = await probe.run_probe(FakeFeed(), ["A", "B"], 0.05, None, 60, tmp_path)
+    assert result["sample"]["messages"] == 2 and result["sample"]["capped"]
 
 
 def test_quantiles_of_nothing_are_none() -> None:
@@ -358,6 +412,7 @@ def test_the_feed_is_productions(monkeypatch: pytest.MonkeyPatch) -> None:
 
     feed = cli.make_feed(DataSigner("test-key", Ed25519PrivateKey.generate()))
     assert feed._config.url == WS_URLS[Environment.PRODUCTION]
+    assert feed._config.max_frame_bytes == cli.MAX_FRAME_BYTES  # a joined reply is large
 
 
 def test_the_module_runs_and_refuses_bad_scratch_settings(

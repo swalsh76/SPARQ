@@ -30,6 +30,9 @@ from sparq_analytics.live.source import LiveSourceError
 from sparq_analytics.scratch import ready
 from sparq_analytics.survey.cli import UsageError, need
 
+# Kalshi's reply to a joined subscribe lists the channel's every market: about 3 MB for 91,623
+MAX_FRAME_BYTES = 64 * 1024 * 1024
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -50,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
 def make_feed(signer: DataSigner) -> KalshiFeed:
     """The production feed (tests put a fake in its place)."""
     url = KalshiConfig(environment=Environment.PRODUCTION).ws_url
-    return KalshiFeed(signer, FeedConfig(url=url))
+    return KalshiFeed(signer, FeedConfig(url=url, max_frame_bytes=MAX_FRAME_BYTES))
 
 
 async def _probe(args: argparse.Namespace) -> int:
