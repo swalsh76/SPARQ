@@ -840,9 +840,9 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 
 **Decisions (owner, 2026-10-29).** S5.1 approved as recommended. **Pending:** whether to go on to S5.2 (the default, with the expectation stated in PLAN §6.5 that the probability measurement does not pass), and the word to merge PR #28.
 
-## S6. Recording the order books of the thin tail (proposed 2026-11-02)
+## S6. Recording the order books of the thin tail (approved 2026-11-02)
 
-### S6 proposal (2026-11-02 UTC, documents only; awaiting the owner)
+### S6 proposal (PR #29, 2026-11-02 UTC, documents only; approved by the owner)
 
 **Built.** PLAN §6.6: decisions B1 to B8 and slices S6.1 to S6.3 and S6.c, returning S1.2b's recorder (approved 2026-10-26, parked by D14) aimed at S4's thin tail; the milestone row; the §9 entry points to it. Nothing else changes.
 
@@ -859,3 +859,5 @@ And from the reruns: 11. frames of one market in one millisecond were sorted uns
 8. The build slice would have run the live hour that its own design depends on. **Fixed:** a live probe (S6.1) comes first; the recorder is S6.2, the daemon S6.3.
 9. The full-drive refusal applied only at start. **Fixed:** an hourly check stops the recorder cleanly at 90%.
 10. CLAUDE.md's resume point was not updated on this branch. **Recorded elsewhere:** the resume point is updated in the S5.2 branch's working copy, which carries the session's state, so the two open branches do not conflict on the same lines; the dates are UTC (2026-11-02), as the resume point's rule asks.
+
+**Decisions.** The owner approved S6 on 2026-11-02 ("build all as recommended"): the thin tail only, built now, the 500 GB pause.

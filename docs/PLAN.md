@@ -69,7 +69,7 @@ Each milestone is proposed as a set of decisions and slices and approved before 
 | **S3** | **Three measurements of where the money is** (§6.3): S3.1 the certainty dump and the 99-cent queue; S3.2 where the book is slow; S3.3 the thin tail and the surprise rate; S3.c close-out | Each measurement against its bar in M4; the owner chooses after each | **approved 2026-10-28**; S3.1 and S3.2 below their bars; S3.3 clears both of its bars; **closed 2026-10-29 (BUILD-LOG S3.c)**; its one strand proposal is S4 |
 | **S4** | **A paper quoter in the thin tail** (§6.4): S4.1 the paper quoter on the fit part; S4.2 the registered test on new live days; S4.3 the shadow quoter, on a GO; S4.c close-out | T7's bar on the registered test; the owner approves the rules first | **approved 2026-10-29**; S4.1 done and its four rules registered (PR #24); S4.2 built and merged (PR #25), its registered test to be run once on 2026-11-13 |
 | **S5** | **What a local language model can add** (§6.5): S5.1 the client and the reading check; S5.2 the model against the book; S5.c close-out | N6's bars; the owner chooses after S5.1 | **approved 2026-10-29**; S5.1 done (BUILD-LOG S5.1, PR #28): every bar clears; the owner chooses whether to go on to S5.2 |
-| **S6** | **Recording the order books of the thin tail** (§6.6): S6.1 the live probe; S6.2 the book keeper and the recorder; S6.3 the daemon; S6.c close-out | B5's bar | **proposed 2026-11-02** |
+| **S6** | **Recording the order books of the thin tail** (§6.6): S6.1 the live probe; S6.2 the book keeper and the recorder; S6.3 the daemon; S6.c close-out | B5's bar | **approved 2026-11-02** |
 
 ### 6.1 S1 Evidence for the quoter: decisions and slices (approved 2026-10-25)
 
@@ -266,13 +266,13 @@ The question is whether the book still offers prices on the wrong side of a boun
 
 **The owner's answers (2026-10-29).** S5 is approved as proposed, both measurements, and N2's no-out-of-house rule stands for S5.2. Each slice still gets its own plan before any code.
 
-### 6.6 S6 Recording the order books of the thin tail (proposed 2026-11-02)
+### 6.6 S6 Recording the order books of the thin tail (approved 2026-11-02)
 
 **Why this strand, and why now.** Every study so far has read the ingest's ticker feed: the best bid and ask and their sizes, never the queue behind them. A maker's real questions are about the queue: how much stands at a price, how long it stands, who joins and cancels, and where a new quote would rank. Book depth that is not recorded is lost; unlike trades it cannot be backfilled, so each day without a recorder is a day no later study can read. S1.2b's recorder was planned and approved on 2026-10-26 for the middle tier and parked unbuilt with S1 (D14). This proposal returns it, aimed at S4's thin tail.
 
 **What it is not.** It is not a strategy and makes no claim of an edge. It is not S4.3's prerequisite: T9 defines the shadow quoter on the ingest's ticker tables. S4.2's smoke run (three fit-part days, not the test) marked S4's uncontested rules negative at settlement, so S4 may close with a NO-GO on 2026-11-13. The recorder's value does not rest on S4: it rests on the queue questions every maker direction in the thin tail meets. (The 99-cent queue parked in §9 lies outside B2's band and would need its own decision.)
 
-**Decisions (proposed).**
+**Decisions (approved by the owner, 2026-11-02, as recommended).**
 
 | # | Decision |
 |---|---|
@@ -298,10 +298,7 @@ The question is whether the book still offers prices on the wrong side of a boun
 
 **Known weaknesses, stated before.** The thin tail's books change slowly, so the recording's value per gigabyte may be high, but a quiet book also gives few moments for B5's check. A market list chosen from seven days of trades misses a market that turns thin today. If S4 closes NO-GO the recorder has no study waiting for it, only the queue questions; the owner may prefer to decide after 2026-11-13, at the cost of the days between.
 
-**Open questions for the owner.**
-1. **Scope:** S4's thin tail only (recommended), or also D12's 50 middle-tier markets.
-2. **Timing:** build now, so the recording starts within days (recommended), or wait for S4.2's result on 2026-11-13.
-3. **The pause at 500 GB:** keep it (recommended), or a different cap.
+**The owner's answers (2026-11-02, "build all as recommended").** The thin tail only (B2 as written; the middle tier is not recorded); build now, without waiting for S4.2's result; the pause at 500 GB stands. Each slice still gets its own plan before any code.
 
 ## 7. Risks
 
