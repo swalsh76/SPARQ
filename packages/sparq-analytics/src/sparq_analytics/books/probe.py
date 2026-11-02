@@ -41,7 +41,7 @@ import polars as pl
 from sparq_core.fixedpoint import E6
 from sparq_core.markets import COMBO_PREFIX
 from sparq_core.ws import Data, FeedError, FeedEvent, Reconnected, ResubscribeFailed, SequenceGap
-from sparq_core.ws_models import ORDERBOOK, TRADE
+from sparq_core.ws_models import ORDERBOOK, SNAPSHOT, TRADE
 
 from sparq_analytics.live.source import HOUR, LiveSourceError, hour_files, last_hour_end
 from sparq_analytics.survey.dump import MS_PER_DAY
@@ -55,14 +55,17 @@ SAMPLE_LIMIT = 2_000_000  # messages kept in the sample at most (they are held i
 THIN = TIERS[1][0]  # under 1,000 contracts a day (S3.3's thin tiers)
 LOOKBACK_DAYS = 7
 QUOTE_HOURS = 24  # how far back a market's latest quote is looked for
-SNAPSHOT = "orderbook_snapshot"
 BOOK_TYPES = frozenset({SNAPSHOT, ORDERBOOK})
 
 
-class Feed(Protocol):
-    """What the probe needs of a feed (``sparq_core.ws.KalshiFeed`` in a real run)."""
+class Subscriber(Protocol):
+    """What subscribing in batches needs of a feed (the probe's and the recorder's)."""
 
     async def subscribe(self, channel: str, market_tickers: list[str] | None = None) -> int: ...
+
+
+class Feed(Subscriber, Protocol):
+    """What the probe needs of a feed (``sparq_core.ws.KalshiFeed`` in a real run)."""
 
     async def drop_link(self) -> None: ...
 
@@ -130,7 +133,7 @@ def choose(live: Path) -> tuple[list[str], dict[str, Any]]:
 
 
 async def subscribe_all(
-    feed: Feed, channel: str, tickers: list[str], batches: tuple[int, ...] = BATCHES
+    feed: Subscriber, channel: str, tickers: list[str], batches: tuple[int, ...] = BATCHES
 ) -> dict[str, Any]:
     """Subscribe ``channel`` for every ticker, each batch larger than the last until one is
     refused with an error code; then on at the largest size accepted, or half the refused one. A
@@ -174,6 +177,7 @@ async def subscribe_all(
         "markets": len(tickers),
         "subscribed_markets": done - len(skipped),
         "skipped": skipped,
+        "left_out": tickers[done:],  # never subscribed: the subscription was full first
         "full": full,
         "sids": sorted({a["sid"] for a in attempts if "sid" in a}),
         "accepted_batches": len(attempts) - len(refused),

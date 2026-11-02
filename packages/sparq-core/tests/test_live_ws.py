@@ -15,6 +15,7 @@ by ``SPARQ_LIVE_FRAMES``, if set, for building fixtures. Neither belongs in the 
 
 import asyncio
 import json
+import logging
 import os
 import time
 from collections import Counter
@@ -27,6 +28,7 @@ import pytest
 from sparq_core.auth import AuthError, DataSigner, SigningRefused
 from sparq_core.config import REST_URLS, WS_URLS, Environment
 from sparq_core.ws import Data, FeedConfig, KalshiFeed, Reconnected, SequenceGap
+from sparq_core.ws_models import OrderbookDeltaMsg, OrderbookSnapshotMsg
 
 pytestmark = pytest.mark.integration
 
@@ -205,3 +207,90 @@ async def test_adding_and_removing_markets_does_not_look_like_a_gap(signer: Data
     assert frames_by_phase["before"] > 0
     assert len(added) == len(first) + len(second) and len(removed) == len(first)
     assert not gaps
+
+
+async def test_book_frames_parse_and_a_snapshot_can_be_asked_for_again(
+    signer: DataSigner, caplog: pytest.LogCaptureFixture
+) -> None:
+    """S6.2: real book messages fit their models, and what ``get_snapshot`` answers: the reply,
+    whether the snapshots sent again continue the subscription's ``seq``, and whether a book
+    rebuilt from the first snapshot and its changes equals the fresh one. Measured 2026-11-02:
+    no reply at all, the snapshots continue ``seq``, and the rebuilt books equal the fresh ones
+    (every change applied in ``seq`` order, none left out by its ``clock``, as Kalshi says)."""
+    tickers = busiest_markets(5)
+    books: dict[str, dict[tuple[str, int], int]] = {}
+    clocks: dict[str, int] = {}
+    types: Counter[str] = Counter()
+    errors: list[str] = []
+    gaps: list[tuple[int, int]] = []
+    last_seq: int | None = None
+    config = FeedConfig(url=WS_URLS[Environment.PRODUCTION], max_frame_bytes=64 * 1024 * 1024)
+    async with KalshiFeed(signer, config) as feed:
+        sid = await feed.subscribe("orderbook_delta", tickers)
+        events = feed.events()
+
+        async def watch(seconds: float, until_snapshots: int | None = None) -> list[Any]:
+            nonlocal last_seq
+            fresh: list[Any] = []
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
+                try:
+                    event = await asyncio.wait_for(
+                        anext(events), timeout=deadline - time.monotonic()
+                    )
+                except TimeoutError:
+                    break
+                if isinstance(event, SequenceGap):
+                    gaps.append((event.expected, event.got))
+                if not isinstance(event, Data):
+                    continue
+                frame = event.frame
+                types[frame.type] += 1
+                last_seq = frame.seq if frame.seq is not None else last_seq
+                if frame.error:
+                    errors.append(frame.error)
+                message = frame.payload
+                if isinstance(message, OrderbookSnapshotMsg):
+                    fresh.append((frame.seq, message))
+                    if until_snapshots and len(fresh) >= until_snapshots:
+                        break
+                elif isinstance(message, OrderbookDeltaMsg):
+                    book = books.get(message.market_ticker)
+                    if book is not None:
+                        key = (message.side, message.price_e6)
+                        book[key] = book.get(key, 0) + message.delta_e2
+                        if not book[key]:
+                            del book[key]
+            return fresh
+
+        for _, snap in await watch(20, until_snapshots=len(tickers)):
+            books[snap.market_ticker] = {("yes", p): c for p, c in snap.yes} | {
+                ("no", p): c for p, c in snap.no
+            }
+            clocks[snap.market_ticker] = snap.clock or 0
+        await watch(10)
+        before = last_seq
+        asked = tickers[:2]
+        caplog.set_level(logging.DEBUG, logger="sparq_core")
+        await feed.request_snapshot(sid, asked)
+        again = await watch(10, until_snapshots=len(asked))
+        stats = feed.stats()
+    LINES.append(f"book frames: {dict(types)}; gaps {gaps}")
+    unmatched = [r.getMessage() for r in caplog.records if "unmatched" in r.getMessage()]
+    LINES.append(f"replies to get_snapshot (none expected): {unmatched}")
+    LINES.append(f"seq before asking {before}; the snapshots sent again: {[s for s, _ in again]}")
+    equal = []
+    for _, snap in again:
+        fresh = {("yes", p): c for p, c in snap.yes} | {("no", p): c for p, c in snap.no}
+        kept = books.get(snap.market_ticker)
+        equal.append(kept == fresh)
+        LINES.append(
+            f"rebuilt book equals the fresh snapshot: {kept == fresh} "
+            f"({len(fresh)} levels, clock {clocks.get(snap.market_ticker)} -> {snap.clock})"
+        )
+    LINES.append(f"unknown fields: {stats['unknown_fields_by_type']}")
+    assert not errors, errors[:3]
+    assert len(again) == len(asked) and {s.market_ticker for _, s in again} == set(asked)
+    assert all(equal), "a book rebuilt in seq order differs from Kalshi's fresh snapshot"
+    assert not gaps, "the snapshots asked for broke the subscription's seq"
+    assert not any(name.startswith("orderbook") for name in stats["unknown_fields_by_type"])

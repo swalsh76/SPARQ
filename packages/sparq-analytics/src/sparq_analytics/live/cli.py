@@ -1,6 +1,7 @@
 """Command line for S1.2a, what the live book shows (D11).
 
     python -m sparq_analytics.live extract --data DIR --start 2026-10-24T21 [--end TIME]
+                                           [--recopy-gaps]
     python -m sparq_analytics.live measure --data DIR --rule FILE --busy FILE --start DAY --end DAY
     python -m sparq_analytics.live report  --data DIR [--out FILE]
 
@@ -67,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--busy", type=Path, help="the frozen activity file")
     parser.add_argument("--resamples", type=int, default=2_000)
     parser.add_argument("--out", type=Path, help="report: write to this file instead of stdout")
+    parser.add_argument(
+        "--recopy-gaps",
+        action="store_true",
+        help="extract: copy again every trades hour that overlaps an ingest trades gap",
+    )
     return parser
 
 
@@ -170,13 +176,17 @@ def _extract(args: argparse.Namespace) -> int:
     async def run() -> Any:
         conn = await connect(source)
         try:
-            return await extract(conn, args.data, start, end, now=datetime.now(UTC), log=print)
+            return await extract(
+                conn, args.data, start, end, now=datetime.now(UTC), log=print,
+                recopy_gaps=args.recopy_gaps,
+            )  # fmt: skip
         finally:
             await conn.close()
 
     report = asyncio.run(run())
     print(
-        f"copied {report.hours_copied} hour files, {report.hours_present} already there; "
+        f"copied {report.hours_copied} hour files ({report.recopied} again), "
+        f"{report.hours_present} already there, {report.provisional} provisional; "
         f"rows {report.rows}; markets {report.markets:,}; ticker gaps {report.gaps:,}; "
         f"settlements {report.settlements:,}"
     )

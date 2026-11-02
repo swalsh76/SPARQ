@@ -2,6 +2,7 @@
 
 import asyncio
 import ssl
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -123,3 +124,61 @@ def test_last_hour_end_is_where_both_tables_reach(tmp_path: Path) -> None:
     assert last_hour_end(tmp_path) == T0 + timedelta(hours=3)
     (tmp_path / "trade" / "2026-10-25T02.parquet").unlink()
     assert last_hour_end(tmp_path) == T0 + timedelta(hours=2)
+
+
+def test_a_trades_hour_is_copied_again_until_its_backfill_is_done(tmp_path: Path) -> None:
+    conn = FakeCopier()
+    now, end = T0 + timedelta(hours=5), T0 + timedelta(hours=2)
+    start_ms = int(T0.timestamp() * 1000)
+    conn.trade_gaps = pl.DataFrame(
+        {"kind": ["trades"], "status": ["backfilling"], "start_ms": [start_ms + 600_000],
+         "end_ms": [start_ms + 900_000]},
+    )  # fmt: skip
+    report = asyncio.run(extract(conn, tmp_path, T0, end, now=now))
+    marks = sorted(p.name for p in (tmp_path / "trade").glob("*.provisional"))
+    assert marks == ["2026-10-25T00.provisional"] and report.provisional == 1
+    again = asyncio.run(extract(conn, tmp_path, T0, end, now=now))
+    assert again.recopied == 1 and again.hours_copied == 1 and again.provisional == 1
+    conn.trade_gaps = conn.trade_gaps.with_columns(status=pl.lit("done"))
+    done = asyncio.run(extract(conn, tmp_path, T0, end, now=now))
+    assert done.recopied == 1 and done.provisional == 0
+    assert not list((tmp_path / "trade").glob("*.provisional"))
+    settled = asyncio.run(extract(conn, tmp_path, T0, end, now=now))
+    assert settled.hours_copied == 0  # finished: copied for the last time
+    # hours copied before the rule: --recopy-gaps copies again every one a trades gap overlaps
+    forced = asyncio.run(extract(conn, tmp_path, T0, end, now=now, recopy_gaps=True))
+    assert forced.recopied == 1 and forced.provisional == 0
+    assert pl.read_parquet(tmp_path / "trade-gaps.parquet").height == 1
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the lock is POSIX's")
+def test_one_extract_at_a_time(tmp_path: Path) -> None:
+    from sparq_analytics.live.source import locked
+
+    async def two() -> None:
+        async with locked(tmp_path):
+            with pytest.raises(LiveSourceError, match="held"):
+                async with locked(tmp_path, wait=timedelta(seconds=0)):
+                    pass
+
+    asyncio.run(two())
+
+
+def test_a_provisional_hour_is_marked_before_its_copy(tmp_path: Path) -> None:
+    conn = FakeCopier()
+    start_ms = int(T0.timestamp() * 1000)
+    conn.trade_gaps = pl.DataFrame(
+        {"kind": ["all"], "status": ["open"], "start_ms": [start_ms], "end_ms": [None]},
+        schema={"kind": pl.String, "status": pl.String, "start_ms": pl.Int64, "end_ms": pl.Int64},
+    )
+    seen: list[bool] = []
+    original = conn.copy_from_query
+
+    async def watching(query: str, *args: Any, **kw: Any) -> str:
+        if "FROM trade " in query:
+            seen.append((tmp_path / "trade" / "2026-10-25T00.provisional").exists())
+        return await original(query, *args, **kw)
+
+    conn.copy_from_query = watching  # type: ignore[method-assign]
+    asyncio.run(extract(conn, tmp_path, T0, T0 + timedelta(hours=1), now=T0 + timedelta(hours=2)))
+    assert seen == [True]

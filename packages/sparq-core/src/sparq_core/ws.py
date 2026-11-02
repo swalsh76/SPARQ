@@ -171,6 +171,8 @@ class KalshiFeed:
         self._lost: str | None = None
         self._generation = 0
         self._last_seq: dict[int, int] = {}
+        self._lost_generation = 0
+        self._lost_channels: dict[int, str] = {}  # the last lost link's ids, for gaps queued then
         self._last_frame_at = 0.0
         self._stats: Counter[str] = Counter()
         self._by_type: Counter[str] = Counter()
@@ -240,15 +242,32 @@ class KalshiFeed:
         self._subscriptions.append(_Subscription(channel, params, sid))
         return sid
 
-    def channel_of(self, sid: int) -> str | None:
-        """The channel a subscription id belongs to on the current link, or None if unknown.
+    def channel_of(self, sid: int, generation: int | None = None) -> str | None:
+        """The channel a subscription id belongs to, or None if unknown.
 
-        ``sid`` changes with every link, so a sid taken from an event is only meaningful against
-        the feed's present subscriptions (a gap on a lost link is named by its channel at once).
+        ``sid`` changes with every link: it is read against the link ``generation`` names (an
+        event's own), or the current link when none is given; an id the current link does not
+        know is looked up on the link lost just before, so a gap queued before the loss is still
+        named by its channel.
         """
+        if generation is None or generation == self._generation:
+            for sub in self._subscriptions:
+                if sub.sid == sid:
+                    return sub.channel
+            if generation is not None:
+                return None
+        if generation is None or generation == self._lost_generation:
+            return self._lost_channels.get(sid)
+        return None
+
+    def sid_for(self, channel: str) -> int | None:
+        """The subscription id of ``channel`` on the current link (its first, when Kalshi joined
+        several), or None while the link is down or that subscription is not yet restored."""
+        if not self._ready.is_set():
+            return None
         for sub in self._subscriptions:
-            if sub.sid == sid:
-                return sub.channel
+            if sub.channel == channel and sub.sid is not None:
+                return sub.sid
         return None
 
     async def update_subscription(
@@ -284,6 +303,27 @@ class KalshiFeed:
             for sub in joined:
                 sub.params = {**sub.params, "market_tickers": list(tickers)}
         return tickers
+
+    async def request_snapshot(self, sid: int, market_tickers: list[str]) -> None:
+        """Ask for a fresh snapshot of ``market_tickers`` on a live order-book subscription
+        (Kalshi's ``get_snapshot``), leaving the subscription as it is.
+
+        Kalshi sends no reply to it (measured 2026-11-02): the snapshots simply follow as data on
+        the subscription, continuing its ``seq``. So nothing is awaited; a refusal would arrive as
+        an unmatched error, which is logged, and as snapshots that never come.
+        """
+        conn = self._conn
+        if conn is None or not self._ready.is_set():
+            raise FeedError("not connected")
+        command_id = self._next_id
+        self._next_id += 1
+        params = {"sid": sid, "market_tickers": market_tickers, "action": "get_snapshot"}
+        try:
+            await conn.send(
+                json.dumps({"id": command_id, "cmd": "update_subscription", "params": params})
+            )
+        except ConnectionClosed:
+            raise FeedError("connection closed") from None
 
     async def unsubscribe(self, sid: int) -> None:
         await self._command("unsubscribe", {"sids": [sid]})
@@ -432,6 +472,12 @@ class KalshiFeed:
                 self._ready.clear()
                 self._conn = None
                 self._fail_pending("connection closed")
+                self._lost_generation = self._generation
+                self._lost_channels = {
+                    sub.sid: sub.channel for sub in self._subscriptions if sub.sid is not None
+                }
+                for sub in self._subscriptions:
+                    sub.sid = None  # the lost link's ids mean nothing; the restore sets new ones
                 lost_at = self._monotonic()
                 if lost_at - opened >= STABLE_AFTER:
                     attempt = 0
@@ -548,7 +594,10 @@ class KalshiFeed:
     def _resolve(self, frame: Frame) -> None:
         future = self._pending.pop(frame.id, None) if frame.id is not None else None
         if future is None or future.done():
-            log.debug("unmatched reply: %s", frame.type)
+            if frame.type == "error":  # a command not awaited (a snapshot asked for) was refused
+                log.warning("unmatched error reply: %.300s", frame.raw)
+            else:
+                log.debug("unmatched reply: %s", frame.type)
             return
         if frame.type == "error":
             message = frame.raw.get("msg")

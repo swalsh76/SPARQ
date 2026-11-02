@@ -211,7 +211,11 @@ def test_combo_markets_are_skipped_on_every_channel() -> None:
 
 @pytest.mark.parametrize("kind", ["event_lifecycle", "orderbook_delta", "something_new"])
 def test_other_message_types_are_skipped_with_their_name(kind: str) -> None:
-    outcome = result(data(kind, {"event_ticker": "E"}))
+    # a body each type accepts (the book channel has its own model since S6.2; the ingest never
+    # subscribes to it)
+    body = {"event_ticker": "E", "market_ticker": "M", "side": "yes", "price_dollars": "0.50",
+            "delta_fp": "1.00"}  # fmt: skip
+    outcome = result(data(kind, body))
     assert isinstance(outcome, Skip) and kind in outcome.reason
 
 
