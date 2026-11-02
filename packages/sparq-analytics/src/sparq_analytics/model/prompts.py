@@ -20,8 +20,8 @@ READ_WEATHER = "\n".join(
 
 FORECAST = "\n".join(
     [
-        "You estimate the chance that a prediction market resolves Yes. Today is {day}, the day",
-        "before the market closes. Reply with one JSON object and nothing else, with one key:",
+        "You estimate the chance that a prediction market resolves Yes. Today is {day}. Reply",
+        "with one JSON object and nothing else, with one key:",
         '"probability": the chance that the market resolves Yes, a number from 0 to 1.',
         "",
         "Title: {title}",

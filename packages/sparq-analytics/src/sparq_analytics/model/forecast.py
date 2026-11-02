@@ -8,7 +8,9 @@ a category, at most ``SAMPLE`` in all; the earliest third by closing day is the 
 rest the test part, the day fixed from the drawn closing times alone.
 
 **forecast** shows the model each market's title, its yes and no outcomes, its rules and the date
-of the day before the close, never the price, the volume or the outcome, and asks for the chance
+of the day before the close (the date alone: the prompt does not say the market closes the next
+day, which would hint that an event had happened where a market closes when it does), never the
+price, the volume or the outcome, and asks for the chance
 of yes. It reads no outcome (the draw drops the result before anything else is done); a run cut
 short by ``limit`` is a pilot, reported on its own and never scored.
 
@@ -173,6 +175,12 @@ def draw(markets: pl.DataFrame) -> tuple[pl.DataFrame, date]:
     return kept.with_columns(part=part), split
 
 
+def straddling(drawn: pl.DataFrame) -> int:
+    """The events with markets in both parts (the split is by each market's closing day)."""
+    parts = drawn.group_by("event_ticker").agg(pl.col("part").n_unique().alias("parts"))
+    return int((parts["parts"] > 1).sum())
+
+
 def digest(drawn: pl.DataFrame) -> str:
     """The sample's fingerprint: its tickers and parts."""
     lines = (drawn.sort("ticker")["ticker"] + " " + drawn.sort("ticker")["part"]).to_list()
@@ -283,6 +291,7 @@ def summarize(
         "by_part": counts(drawn, ["part"]),
         "by_category_and_part": counts(drawn, ["category", "part"]),
         "split_day": split.isoformat(),
+        "events_in_both_parts": straddling(drawn),
         "sample_digest": digest(drawn),
         "limit": limit,
         "asked": frame.height,
@@ -435,7 +444,7 @@ def score(
         "enough": total["markets"] >= min_markets and total["events"] >= min_events,
         "lower_above_zero": total["lower"] > 0,
         "gain": total["gain"] >= MIN_GAIN,
-        "placebo": high is not None and high < MIN_GAIN and high < total["gain"],
+        "placebo": stuck == 0 and high is not None and high < MIN_GAIN and high < total["gain"],
     }
     unanswered = rows.filter(~pl.col("parsed"))
     return {
@@ -444,6 +453,7 @@ def score(
         "unanswered_by_part": {
             r["part"]: r["len"] for r in unanswered.group_by("part").len().sort("part").to_dicts()
         },
+        "events_in_both_parts": straddling(rows),
         "fit": {
             "markets": int(fit.sum()),
             "events": data.filter(pl.Series(fit))["event_ticker"].n_unique(),

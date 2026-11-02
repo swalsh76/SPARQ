@@ -429,6 +429,9 @@ def summarize(rows: list[dict[str, Any]], wall_seconds: float) -> dict[str, Any]
     clears = {
         f"{g}_{part}": groups[g][part]["clears"] for g in groups for part in ("site", "bounds")
     }
+    parse_clears = all(  # N6: in the highs and in the rain markets separately
+        groups[g]["parse_rate"] is not None and groups[g]["parse_rate"] >= PARSE for g in groups
+    )
     return {
         "window": [READ_FIRST.isoformat(), READ_LAST.isoformat()],
         "markets": window.height,
@@ -437,6 +440,6 @@ def summarize(rows: list[dict[str, Any]], wall_seconds: float) -> dict[str, Any]
         "parse_rate": parse_rate,
         **speed(frame, wall_seconds),
         "clears": clears,
-        "parse_clears": bool(parse_rate is not None and parse_rate >= PARSE),
-        "passes": bool(all(clears.values()) and parse_rate is not None and parse_rate >= PARSE),
+        "parse_clears": parse_clears,
+        "passes": bool(all(clears.values()) and parse_clears),
     }

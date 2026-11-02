@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -54,6 +55,11 @@ def test_settings_come_from_a_file_and_the_key_stays_out_of_sight(
     with pytest.raises(ModelError, match="not valid TOML") as bad:
         load_settings(write_settings(tmp_path / "bad.toml", f'key = "{KEY}\n'))
     assert KEY not in str(bad.value)
+
+
+def test_the_http_library_does_not_log_the_nodes_address() -> None:
+    for name in ("httpx", "httpcore"):
+        assert logging.getLogger(name).getEffectiveLevel() >= logging.WARNING
 
 
 @pytest.mark.skipif(os.name != "posix", reason="file modes are POSIX")

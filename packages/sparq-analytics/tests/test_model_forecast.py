@@ -73,7 +73,8 @@ def test_the_prompt_shows_the_text_and_the_day_but_never_the_price(tmp_path: Pat
     drawn, _ = forecast.draw(forecast.population(write_forecast_kalshi(tmp_path)))
     row = drawn.filter(pl.col("ticker") == "M001").row(0, named=True)
     text = forecast.prompt_of(row)
-    assert "Today is 2026-08-31" in text  # M001 closes on 09-01
+    assert "Today is 2026-08-31." in text  # M001 closes on 09-01
+    assert "close" not in text.lower()  # it does not say the market closes the next day
     for part in ("Title: Market M001", "Yes outcome: Yes M001", "No outcome: No M001"):
         assert part in text
     assert text.rstrip().endswith("Rules for M001.\nA second rule.")
@@ -135,6 +136,7 @@ def test_the_forecast_summary_reads_no_outcome(tmp_path: Path) -> None:
     assert summary["population"]["markets"] == 241 and summary["population"]["events"] == 121
     assert summary["population"]["by_category"]["unknown"] == {"markets": 1, "events": 1}
     assert summary["by_part"]["test"]["markets"] == 161 and summary["split_day"] == "2026-09-11"
+    assert summary["events_in_both_parts"] == 0  # the world's two markets an event close together
     assert (summary["asked"], summary["parsed"], summary["limit"]) == (241, 240, 100)
     assert summary["calls"] == 241 and summary["markets_a_minute"] == pytest.approx(241.0)
     spread = summary["spread"]
@@ -251,14 +253,22 @@ def test_a_placebo_draw_that_does_not_settle_is_counted(
 
     def flaky(x: Any, y: Any) -> Any:
         calls.append(1)
-        if len(calls) > 2:  # the price alone, then price and model; every placebo after
+        if len(calls) > 2 and len(calls) % 2:  # the price alone, price and model, then placebos
             raise SurveyDataError("did not settle")
         return real(x, y)
 
     monkeypatch.setattr(forecast, "fit_logistic", flaky)
-    result = forecast.score(kalshi, forecast.frame_of(rows), placebos=3)
-    assert result["placebo"]["unsettled"] == 3 and result["placebo"]["upper"] is None
+    monkeypatch.setattr(forecast, "MIN_GAIN", -10.0)  # so only the unsettled draws can fail it
+    result = forecast.score(kalshi, forecast.frame_of(rows), placebos=4)
+    assert result["placebo"]["unsettled"] == 2 and result["placebo"]["upper"] is not None
     assert result["gain"]["markets"] == 161 and not result["clears"]["placebo"]
+
+
+def test_events_with_markets_in_both_parts_are_counted() -> None:
+    drawn = pl.DataFrame(
+        {"event_ticker": ["A", "A", "B", "B", "C"], "part": ["fit", "test", "test", "test", "fit"]}
+    )
+    assert forecast.straddling(drawn) == 1
 
 
 def test_midnight_is_the_start_of_the_day_in_utc() -> None:

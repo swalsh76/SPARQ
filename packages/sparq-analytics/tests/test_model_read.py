@@ -147,6 +147,11 @@ def test_the_reading_check_against_the_hand_figures(tmp_path: Path) -> None:
     assert (older["markets"], older["site"]["agree"], older["bounds"]["agree"]) == (2, 2, 1)
     assert not any(summary["clears"].values()) and not summary["parse_clears"]
     assert summary["passes"] is False
+    with pytest.MonkeyPatch.context() as patch:  # N6 judges the parse rate in each group
+        patch.setattr(read, "PARSE", 0.78)  # the pooled 0.8 would clear; the highs' 0.75 does not
+        assert not read.summarize(rows, wall_seconds=60.0)["parse_clears"]
+        patch.setattr(read, "PARSE", 0.7)
+        assert read.summarize(rows, wall_seconds=60.0)["parse_clears"]
     assert (summary["calls"], summary["cached"]) == (12, 0)
     assert summary["markets_a_minute"] == 12.0 and summary["tokens_a_second"] is not None
     assert highs["site"]["lower"] is not None and highs["site"]["lower"] <= highs["site"]["rate"]

@@ -14,11 +14,13 @@ budget, temperature), so a rerun costs nothing and gives the same figures. The e
 that is too small returns an empty ``content`` (``truncated``), which the caller treats as no
 answer.
 A refused connection, or an answer that asks to be tried again (429, 502, 503, 504), is retried
-a few times; a slow or failed reply is not (the caller records it and moves on).
+a few times; a slow or failed reply is not (the caller records it and moves on). The HTTP
+library's own request log, which names the node's address, is held at warnings.
 """
 
 import hashlib
 import json
+import logging
 import os
 import time
 import tomllib
@@ -29,6 +31,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+
+for _name in ("httpx", "httpcore"):  # their INFO lines name the node's address (N2)
+    logging.getLogger(_name).setLevel(logging.WARNING)
 
 DEFAULT_CONFIG = "~/.config/sparq/model.toml"
 RETRIES = 3  # attempts at a refused connection or a busy answer
