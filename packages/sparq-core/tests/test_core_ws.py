@@ -158,6 +158,79 @@ async def test_after_a_drop_the_feed_reconnects_resubscribes_and_says_so_first()
     )
 
 
+async def test_a_dropped_link_reconnects_and_resubscribes_like_a_lost_one() -> None:
+    first = subscribe_then(trade(1, seq=1))
+    second = subscribe_then(trade(2, seq=1), sid=5)
+    async with FakeKalshi(first, second) as srv, feed_for(srv) as feed:
+        await feed.subscribe("trade", ["M"])
+        events = feed.events()
+        before = await take(events, 1)
+        await feed.drop_link()
+        after = await take(events, 2)
+    assert numbers(before) == ["t-1"] and isinstance(after[0], Reconnected)
+    assert after[0].reason == "connection_lost" and numbers(after) == ["t-2"]
+    assert srv.commands[1][0]["params"] == srv.commands[0][0]["params"]
+
+
+async def test_a_second_subscribe_to_a_channel_joins_the_first() -> None:
+    async def both(ws: ServerConnection) -> None:
+        first = await read_command(ws)
+        await ws.send(subscribed(first, 7))
+        second = await read_command(ws)
+        reply = {
+            "id": second["id"],
+            "type": "ok",
+            "sid": 7,
+            "seq": 2,
+            "msg": {"market_tickers": ["A", "B"]},
+        }
+        await ws.send(json.dumps(reply))
+        await ws.wait_closed()
+
+    async with FakeKalshi(both) as srv, feed_for(srv) as feed:
+        assert await feed.subscribe("orderbook_delta", ["A"]) == 7
+        assert await feed.subscribe("orderbook_delta", ["B"]) == 7  # the same subscription
+        assert feed.channel_of(7) == "orderbook_delta"
+
+
+async def test_a_joined_subscription_keeps_its_batches_when_its_markets_change() -> None:
+    def ok(command: dict[str, Any], tickers: list[str]) -> str:
+        return json.dumps(
+            {"id": command["id"], "type": "ok", "sid": 7, "msg": {"market_tickers": tickers}}
+        )
+
+    async def first(ws: ServerConnection) -> None:
+        await ws.send(subscribed(await read_command(ws), 7))
+        await ws.send(ok(await read_command(ws), ["A", "B"]))
+        await ws.send(ok(await read_command(ws), ["A", "B", "C"]))
+        await ws.send(ok(await read_command(ws), ["B", "C"]))
+        await ws.wait_closed()
+
+    async def second(ws: ServerConnection) -> None:
+        await ws.send(subscribed(await read_command(ws), 3))
+        await ws.wait_closed()
+
+    async with FakeKalshi(first, second) as srv, feed_for(srv) as feed:
+        await feed.subscribe("orderbook_delta", ["A"])
+        await feed.subscribe("orderbook_delta", ["B"])
+        assert await feed.update_subscription(7, "add_markets", ["C"]) == ["A", "B", "C"]
+        assert await feed.update_subscription(7, "delete_markets", ["A"]) == ["B", "C"]
+        events = feed.events()
+        await feed.drop_link()
+        assert isinstance((await take(events, 1))[0], Reconnected)
+        await asyncio.wait_for(_until_subscribed(srv, 1), 5)
+    # the restore sent each market once: the emptied batch went, the added market joined the last
+    sent = [c["params"]["market_tickers"] for c in srv.commands[1] if c["cmd"] == "subscribe"]
+    assert sent == [["B", "C"]]
+
+
+async def test_dropping_with_no_link_does_nothing() -> None:
+    async with FakeKalshi(subscribe_then()) as srv:
+        feed = feed_for(srv)
+        await feed.drop_link()  # never started: nothing to close
+        assert feed.stats()["generation"] == 0
+
+
 async def test_data_that_arrives_before_the_resubscribe_reply_still_follows_the_event() -> None:
     async def second(ws: ServerConnection) -> None:
         command = await read_command(ws)
